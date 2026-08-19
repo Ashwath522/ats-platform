@@ -12,7 +12,7 @@ export default function ScoreDial({ score }) {
   return (
     <div className="score-dial">
       <svg width="88" height="88">
-        <circle cx="44" cy="44" r={radius} stroke="#2a3341" strokeWidth="6" fill="none" />
+        <circle cx="44" cy="44" r={radius} stroke="var(--border)" strokeWidth="6" fill="none" />
         <circle
           cx="44" cy="44" r={radius}
           stroke={color}

@@ -101,11 +101,15 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
   const [newCompanyName, setNewCompanyName] = useState('')
   const [jdTitle, setJdTitle] = useState('')
   const [jdDescription, setJdDescription] = useState('')
+  const [applyUrl, setApplyUrl] = useState('')
   const [savingJd, setSavingJd] = useState(false)
 
   const [matches, setMatches] = useState(null)
   const [matchesLoading, setMatchesLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [minScore, setMinScore] = useState(0)
+  const [minExperience, setMinExperience] = useState(0)
+  const [requiredSkill, setRequiredSkill] = useState('')
 
   // Wraps fetch with the Authorization header, and logs the recruiter out if the
   // token has expired/is invalid (401) rather than showing a confusing error.
@@ -122,9 +126,13 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
   }
 
   async function refreshCompanies() {
-    // Read-only, shared with the candidate side on purpose — no auth needed to list.
-    const res = await fetch('/api/candidate/companies')
-    setCompanies(await res.json())
+    try {
+      const res = await authedFetch('/api/recruiter/companies')
+      if (!res.ok) throw new Error('Could not load companies')
+      setCompanies(await res.json())
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   useEffect(() => { refreshCompanies() }, [])
@@ -173,6 +181,7 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
       const fd = new FormData()
       fd.append('title', jdTitle)
       fd.append('description', jdDescription)
+      fd.append('apply_url', applyUrl)
       const res = await authedFetch(`/api/recruiter/companies/${selectedCompanyId}/job-description`, { method: 'POST', body: fd })
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save')
       await refreshCompanies()
@@ -255,6 +264,9 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
           <label>Job description</label>
           <textarea rows={5} value={jdDescription} onChange={e => setJdDescription(e.target.value)} placeholder="Paste or write the job description…" />
 
+          <label>Apply link</label>
+          <input type="text" value={applyUrl} onChange={e => setApplyUrl(e.target.value)} placeholder="https://company.com/careers/job-id" />
+
           <button className="primary" onClick={saveJobDescription} disabled={savingJd}>
             {savingJd ? 'Saving…' : 'Save & re-rank candidates'}
           </button>
@@ -267,29 +279,46 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
           <h2>Matching resumes {matches?.job_title ? `— ${matches.job_title}` : ''}</h2>
           <p className="panel-desc">Ranked by ATS score against the current job description.</p>
 
+          <div className="filter-grid">
+            <div>
+              <label>Minimum ATS score</label>
+              <input type="number" min="0" max="100" value={minScore} onChange={e => setMinScore(Number(e.target.value) || 0)} />
+            </div>
+            <div>
+              <label>Minimum experience</label>
+              <input type="number" min="0" value={minExperience} onChange={e => setMinExperience(Number(e.target.value) || 0)} />
+            </div>
+            <div>
+              <label>Required matched skill</label>
+              <input type="text" value={requiredSkill} onChange={e => setRequiredSkill(e.target.value)} placeholder="Python, SolidWorks…" />
+            </div>
+          </div>
+
           {matchesLoading && <div className="empty-state">Ranking candidates…</div>}
-          {!matchesLoading && (!matches || matches.results.length === 0) && (
+          {!matchesLoading && (!matches || filteredMatches(matches.results, minScore, minExperience, requiredSkill).length === 0) && (
             <div className="empty-state">No resumes indexed yet. Candidates need to upload via the Candidate tab first.</div>
           )}
-          {!matchesLoading && matches && matches.results.length > 0 && (
+          {!matchesLoading && matches && filteredMatches(matches.results, minScore, minExperience, requiredSkill).length > 0 && (
             <table>
               <thead>
                 <tr>
                   <th>Rank</th>
                   <th>Filename</th>
                   <th>ATS Score</th>
-                  <th>Missing skills</th>
+                  <th>Experience</th>
+                  <th>Matched skills</th>
                 </tr>
               </thead>
               <tbody>
-                {matches.results.map((r, idx) => (
+                {filteredMatches(matches.results, minScore, minExperience, requiredSkill).map((r, idx) => (
                   <tr key={r.resume_id}>
                     <td>{idx + 1}</td>
                     <td>{r.filename}</td>
                     <td className="score-cell">{r.ats_score}</td>
+                    <td>{r.experience_years || 0} yrs</td>
                     <td>
                       <div className="chip-row">
-                        {r.missing_skills.slice(0, 6).map(s => <span key={s} className="chip missing">{s}</span>)}
+                        {r.matched_skills.slice(0, 6).map(s => <span key={s} className="chip matched">{s}</span>)}
                       </div>
                     </td>
                   </tr>
@@ -301,4 +330,12 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
       )}
     </div>
   )
+}
+
+function filteredMatches(results, minScore, minExperience, requiredSkill) {
+  const skill = requiredSkill.trim().toLowerCase()
+  return results.filter(result => {
+    const hasSkill = !skill || result.matched_skills.some(item => item.toLowerCase().includes(skill))
+    return result.ats_score >= minScore && (result.experience_years || 0) >= minExperience && hasSkill
+  })
 }

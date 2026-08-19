@@ -1,22 +1,16 @@
-/* ===== Design tokens =====
-   Palette: deep charcoal-navy console, cyan "scan" accent for matches,
-   amber for gaps/missing skills. Space Grotesk for headers (geometric,
-   console-y), Inter for body copy, IBM Plex Mono for scores/data since
-   this is literally a scanning readout.
-*/
 :root {
-  --bg: #10141b;
-  --bg-panel: #171d27;
-  --bg-panel-raised: #1d2430;
-  --border: #2a3341;
-  --text: #e7ebf0;
-  --text-dim: #8b97a8;
-  --accent: #46d9c6;       /* scan / match cyan */
-  --accent-dim: #2a5c56;
-  --warn: #f5a94e;         /* missing / gap amber */
-  --warn-dim: #6b4c26;
-  --danger: #e0616b;
-  --radius: 10px;
+  --bg: #f3f6f8;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #f7fafd;
+  --border: #d7e0ea;
+  --text: #17212b;
+  --text-dim: #5f6f7f;
+  --accent: #0a66c2;
+  --accent-dim: #b9d8f5;
+  --warn: #b56a00;
+  --warn-dim: #f1d2a8;
+  --danger: #c93535;
+  --radius: 8px;
   --font-display: 'Space Grotesk', sans-serif;
   --font-body: 'Inter', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
@@ -27,15 +21,13 @@
 body {
   margin: 0;
   background: var(--bg);
-  background-image:
-    radial-gradient(ellipse 800px 400px at 50% -10%, rgba(70, 217, 198, 0.08), transparent);
   color: var(--text);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
 
 .app-shell {
-  max-width: 920px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 40px 24px 80px;
 }
@@ -64,12 +56,6 @@ body {
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-dim);
-  animation: pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 .app-subtitle {
@@ -153,6 +139,17 @@ input[type="text"], textarea, select {
   resize: vertical;
 }
 
+input[type="number"] {
+  width: 100%;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
 textarea:focus, input:focus, select:focus {
   outline: none;
   border-color: var(--accent);
@@ -174,7 +171,7 @@ textarea:focus, input:focus, select:focus {
 
 button.primary {
   background: var(--accent);
-  color: #0a1512;
+  color: #ffffff;
   border: none;
   font-family: var(--font-body);
   font-weight: 700;
@@ -301,13 +298,13 @@ input[type="password"]:focus { outline: none; border-color: var(--accent); }
 .chip.matched {
   color: var(--accent);
   border-color: var(--accent-dim);
-  background: rgba(70, 217, 198, 0.08);
+  background: #eef6ff;
 }
 
 .chip.missing {
   color: var(--warn);
   border-color: var(--warn-dim);
-  background: rgba(245, 169, 78, 0.08);
+  background: #fff7ea;
 }
 
 .deep-analysis {
@@ -445,6 +442,80 @@ td.score-cell {
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
   flex-shrink: 0;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+
+.company-match-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  background: var(--bg-panel);
+}
+
+.company-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.company-actions button.secondary {
+  margin-top: 0;
+}
+
+.score-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 30px;
+  border-radius: 15px;
+  background: #eef6ff;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.apply-link {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.company-score-detail {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .analysis-dials,
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .company-match-item {
+    grid-template-columns: 1fr;
+  }
+
+  .company-actions {
+    flex-wrap: wrap;
+  }
 }
 
 .delete-btn:hover {

@@ -2,21 +2,24 @@ import hashlib
 import json
 import os
 import re
+import urllib.parse
 from typing import Any, Dict
 
+import httpx
 from fastapi import HTTPException
 
-SUGGESTIONS_MODEL = os.environ.get("SUGGESTIONS_MODEL", "claude-haiku-4-5-20251001")
+ANTHROPIC_MODEL = os.environ.get("SUGGESTIONS_MODEL", "claude-haiku-4-5-20251001")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 DEFAULT_NOT_CONFIGURED = {
     "llm_configured": False,
     "grammar_score": None,
     "grammar_issues": [],
     "technical_depth_score": None,
-    "technical_depth_notes": "Deep analysis requires ANTHROPIC_API_KEY.",
+    "technical_depth_notes": "Deep analysis requires GEMINI_API_KEY or ANTHROPIC_API_KEY.",
     "experience_score": None,
-    "experience_notes": "Deep analysis requires ANTHROPIC_API_KEY.",
-    "overall_summary": "Set ANTHROPIC_API_KEY to enable grammar, technical depth, and experience analysis.",
+    "experience_notes": "Deep analysis requires GEMINI_API_KEY or ANTHROPIC_API_KEY.",
+    "overall_summary": "Set GEMINI_API_KEY or ANTHROPIC_API_KEY to enable grammar, technical depth, and experience analysis.",
 }
 
 
@@ -75,9 +78,42 @@ Resume:
 
 
 def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return DEFAULT_NOT_CONFIGURED.copy()
+    if os.environ.get("GEMINI_API_KEY"):
+        return _run_gemini_analysis(resume_text, target_text)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return _run_anthropic_analysis(resume_text, target_text)
+    return DEFAULT_NOT_CONFIGURED.copy()
 
+
+def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+    model = urllib.parse.quote(GEMINI_MODEL, safe="")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": _prompt(resume_text, target_text)}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1200,
+            "response_mime_type": "application/json",
+        },
+    }
+    try:
+        response = httpx.post(
+            url,
+            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        return parse_analysis_json(raw)
+    except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Gemini returned invalid deep-analysis JSON") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Gemini deep-analysis request failed") from exc
+
+
+def _run_anthropic_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
     try:
         from anthropic import Anthropic
     except Exception as exc:
@@ -86,7 +122,7 @@ def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
     try:
         client = Anthropic()
         message = client.messages.create(
-            model=SUGGESTIONS_MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=1200,
             temperature=0.1,
             messages=[{"role": "user", "content": _prompt(resume_text, target_text)}],

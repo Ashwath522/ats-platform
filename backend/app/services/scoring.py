@@ -45,6 +45,13 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     return float(sum(a * b for a, b in zip(vec_a, vec_b)) / denom)
 
 
+def estimate_experience_years(text: str) -> float:
+    matches = re.findall(r"(\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)", text, flags=re.IGNORECASE)
+    if not matches:
+        return 0.0
+    return max(float(match) for match in matches)
+
+
 def score_resume_against_jd(
     resume_text: str,
     jd_text: str,
@@ -80,6 +87,7 @@ def score_resume_against_jd(
         "ats_score": ats_score,
         "semantic_similarity": round(semantic_sim, 4),
         "keyword_coverage": round(keyword_coverage, 4),
+        "experience_years": estimate_experience_years(resume_text),
         "matched_skills": matched,
         "missing_skills": missing,
     }

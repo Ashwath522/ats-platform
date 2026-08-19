@@ -4,7 +4,6 @@ import FileDrop from '../components/FileDrop.jsx'
 import ScoreResult from '../components/ScoreResult.jsx'
 
 export default function CandidatePage() {
-  // ---- Flow 1: generic ATS ----
   const [branches, setBranches] = useState([])
   const [roles, setRoles] = useState([])
   const [selectedBranch, setSelectedBranch] = useState('')
@@ -16,10 +15,11 @@ export default function CandidatePage() {
   const [genericTarget, setGenericTarget] = useState(null)
   const [genericLoading, setGenericLoading] = useState(false)
   const [genericError, setGenericError] = useState(null)
+  const [companyScores, setCompanyScores] = useState({})
 
   useEffect(() => {
     fetch('/api/candidate/branches')
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : [])
       .then(setBranches)
       .catch(() => {})
   }, [])
@@ -31,7 +31,7 @@ export default function CandidatePage() {
       return
     }
     fetch(`/api/candidate/roles?branch=${encodeURIComponent(selectedBranch)}`)
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : [])
       .then(items => {
         setRoles(items)
         setSelectedRoleId(items[0]?.id || '')
@@ -64,38 +64,32 @@ export default function CandidatePage() {
     }
   }
 
-  // ---- Flow 2: company-specific ATS ----
   const [companies, setCompanies] = useState([])
-  const [selectedCompanyId, setSelectedCompanyId] = useState(null)
-  const [companyFile, setCompanyFile] = useState(null)
-  const [companyResult, setCompanyResult] = useState(null)
-  const [companyTarget, setCompanyTarget] = useState(null)
   const [companyLoading, setCompanyLoading] = useState(false)
   const [companyError, setCompanyError] = useState(null)
 
   useEffect(() => {
     fetch('/api/candidate/companies')
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : [])
       .then(setCompanies)
       .catch(() => {})
   }, [])
 
-  async function runCompanyCheck() {
-    if (!companyFile || !selectedCompanyId) {
-      setCompanyError('Select a resume and a company.')
+  async function runCompanyCheck(companyId) {
+    if (!genericResult?.resume_id) {
+      setCompanyError('Run your ATS check first.')
       return
     }
     setCompanyError(null)
     setCompanyLoading(true)
     try {
       const fd = new FormData()
-      fd.append('file', companyFile)
-      fd.append('company_id', selectedCompanyId)
-      const res = await fetch('/api/candidate/ats-score-for-company', { method: 'POST', body: fd })
+      fd.append('resume_id', genericResult.resume_id)
+      fd.append('company_id', companyId)
+      const res = await fetch('/api/candidate/ats-score-existing-resume-for-company', { method: 'POST', body: fd })
       if (!res.ok) throw new Error((await res.json()).detail || 'Request failed')
       const data = await res.json()
-      setCompanyResult(data)
-      setCompanyTarget({ company_id: selectedCompanyId })
+      setCompanyScores(prev => ({ ...prev, [companyId]: data }))
     } catch (e) {
       setCompanyError(e.message)
     } finally {
@@ -106,7 +100,7 @@ export default function CandidatePage() {
   return (
     <div>
       <div className="panel">
-        <h2>Generic ATS Check</h2>
+        <h2>Resume ATS Check</h2>
         <p className="panel-desc">Pick your branch and role, or paste a custom job description.</p>
 
         <label>Resume</label>
@@ -147,36 +141,39 @@ export default function CandidatePage() {
         <DeepAnalysisPanel result={genericResult} target={genericTarget} />
       </div>
 
-      <div className="panel">
-        <h2>Company-Specific ATS Check</h2>
-        <p className="panel-desc">Pick a company and get scored against their current, live job posting.</p>
+      {genericResult && (
+        <div className="panel">
+          <h2>Company Matches</h2>
+          <p className="panel-desc">Score the same resume against live company postings, then open the apply link.</p>
 
-        <label>Company</label>
-        {companies.length === 0 && <div className="empty-state">No companies have posted a job description yet.</div>}
-        {companies.map(c => (
-          <div
-            key={c.id}
-            className={`company-list-item ${selectedCompanyId === c.id ? 'selected' : ''}`}
-            onClick={() => setSelectedCompanyId(c.id)}
-          >
-            <div>
-              <div className="company-name">{c.name}</div>
-              <div className="company-jd-title">{c.current_title || 'No open role posted'}</div>
-            </div>
-          </div>
-        ))}
-
-        <label>Resume</label>
-        <FileDrop file={companyFile} onFileSelected={setCompanyFile} />
-
-        <button className="primary" onClick={runCompanyCheck} disabled={companyLoading}>
-          {companyLoading ? 'Scanning…' : 'Run company ATS check'}
-        </button>
-        {companyError && <div className="error-msg">{companyError}</div>}
-
-        <ScoreResult result={companyResult} title={companyResult?.job_title} />
-        <DeepAnalysisPanel result={companyResult} target={companyTarget} />
-      </div>
+          {companies.length === 0 && <div className="empty-state">No companies have posted a job description yet.</div>}
+          {companyError && <div className="error-msg">{companyError}</div>}
+          {companies.map(c => {
+            const score = companyScores[c.id]
+            return (
+              <div key={c.id} className="company-match-item">
+                <div>
+                  <div className="company-name">{c.name}</div>
+                  <div className="company-jd-title">{c.current_title || 'No open role posted'}</div>
+                </div>
+                <div className="company-actions">
+                  {score && <span className="score-pill">{score.ats_score}</span>}
+                  {c.apply_url && <a className="apply-link" href={c.apply_url} target="_blank" rel="noreferrer">Apply</a>}
+                  <button className="secondary" onClick={() => runCompanyCheck(c.id)} disabled={companyLoading || !c.current_title}>
+                    {companyLoading ? 'Scoring…' : 'Score'}
+                  </button>
+                </div>
+                {score && (
+                  <div className="company-score-detail">
+                    <ScoreResult result={score} title={score.job_title} />
+                    <DeepAnalysisPanel result={score} target={{ company_id: c.id }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

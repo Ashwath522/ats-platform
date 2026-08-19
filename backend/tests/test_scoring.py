@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.services.scoring import cosine_similarity, score_resume_against_jd, _extract_skills_present
+from app.services.scoring import cosine_similarity, estimate_experience_years, score_resume_against_jd, _extract_skills_present
 from app.services.skills_vocab import KNOWN_SKILLS
 
 
@@ -93,6 +93,11 @@ def test_score_resume_against_jd_score_is_bounded_0_to_100():
     jd_embedding = [-1.0, 0.0]  # opposite direction -> negative cosine similarity
     result = score_resume_against_jd("nothing relevant", "Python Docker", resume_embedding, jd_embedding)
     assert 0 <= result["ats_score"] <= 100
+
+
+def test_estimate_experience_years():
+    assert estimate_experience_years("Python developer with 3+ years of experience and 2 yrs exp in React") == 3.0
+    assert estimate_experience_years("Final-year student with internship projects") == 0.0
 
 
 def test_known_skills_are_deduplicated():

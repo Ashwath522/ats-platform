@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from sqlmodel import Session, select
@@ -120,7 +121,7 @@ async def candidate_branches():
 
 
 @router.get("/roles")
-async def candidate_roles(branch: str | None = None):
+async def candidate_roles(branch: Optional[str] = None):
     return list_roles(branch)
 
 
@@ -174,6 +175,7 @@ async def list_companies():
                 "id": c.id,
                 "name": c.name,
                 "current_title": jd.title if jd else None,
+                "apply_url": jd.apply_url if jd else None,
             })
         return out
 
@@ -204,11 +206,37 @@ async def company_specific_ats_score(file: UploadFile = File(...), company_id: i
     return result
 
 
+@router.post("/ats-score-existing-resume-for-company")
+async def company_score_existing_resume(resume_id: str = Form(...), company_id: int = Form(...)):
+    resume_doc = vector_store.get_document("resumes", resume_id)
+    if not resume_doc:
+        raise HTTPException(status_code=404, detail="Resume not found. Run ATS scoring first.")
+
+    with Session(engine) as session:
+        jd = session.exec(
+            select(JobDescription)
+            .where(JobDescription.company_id == company_id)
+            .order_by(JobDescription.updated_at.desc())
+        ).first()
+        if not jd:
+            raise HTTPException(status_code=404, detail="This company has no job description posted yet")
+        job_title, job_description = jd.title, jd.description
+
+    resume_embedding = EmbeddingModel.get().embed_text(resume_doc["document"])
+    jd_embedding = EmbeddingModel.get().embed_text(f"{job_title}\n\n{job_description}")
+    result = score_resume_against_jd(resume_doc["document"], job_description, resume_embedding, jd_embedding)
+    result["resume_id"] = resume_id
+    result["company_id"] = company_id
+    result["job_title"] = job_title
+    result["apply_url"] = jd.apply_url
+    return result
+
+
 @router.post("/deep-analysis")
 async def deep_analysis(
     resume_id: str = Form(...),
     role_id: str = Form(""),
-    company_id: int | None = Form(None),
+    company_id: Optional[int] = Form(None),
     job_description: str = Form(""),
 ):
     resume_doc = vector_store.get_document("resumes", resume_id)

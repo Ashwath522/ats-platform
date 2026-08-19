@@ -19,10 +19,43 @@ vector_store = VectorStore(persist_directory=os.path.join(DATA_DIR, "chroma"))
 MAX_TOP_K = 200  # hard ceiling regardless of what the client requests
 
 
+def _require_owned_company(session: Session, company_id: int, recruiter: str) -> Company:
+    company = session.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if company.owner_username != recruiter:
+        raise HTTPException(status_code=403, detail="You do not have access to this company")
+    return company
+
+
+@router.get("/companies")
+async def list_owned_companies(recruiter: str = Depends(get_current_recruiter)):
+    with Session(engine) as session:
+        companies = session.exec(
+            select(Company)
+            .where(Company.owner_username == recruiter)
+            .order_by(Company.created_at.desc())
+        ).all()
+        out = []
+        for company in companies:
+            jd = session.exec(
+                select(JobDescription)
+                .where(JobDescription.company_id == company.id)
+                .order_by(JobDescription.updated_at.desc())
+            ).first()
+            out.append({
+                "id": company.id,
+                "name": company.name,
+                "current_title": jd.title if jd else None,
+                "apply_url": jd.apply_url if jd else None,
+            })
+        return out
+
+
 @router.post("/companies")
 async def create_company(name: str = Form(...), recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        company = Company(name=name)
+        company = Company(name=name, owner_username=recruiter)
         session.add(company)
         session.commit()
         session.refresh(company)
@@ -32,9 +65,7 @@ async def create_company(name: str = Form(...), recruiter: str = Depends(get_cur
 @router.delete("/companies/{company_id}")
 async def delete_company(company_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        company = session.get(Company, company_id)
-        if not company:
-            raise HTTPException(status_code=404, detail="Company not found")
+        company = _require_owned_company(session, company_id, recruiter)
         jds = session.exec(select(JobDescription).where(JobDescription.company_id == company_id)).all()
         for jd in jds:
             session.delete(jd)
@@ -48,6 +79,7 @@ async def set_job_description(
     company_id: int,
     title: str = Form(...),
     description: str = Form(...),
+    apply_url: str = Form(""),
     recruiter: str = Depends(get_current_recruiter),
 ):
     """
@@ -57,9 +89,7 @@ async def set_job_description(
     resync step needed.
     """
     with Session(engine) as session:
-        company = session.get(Company, company_id)
-        if not company:
-            raise HTTPException(status_code=404, detail="Company not found")
+        _require_owned_company(session, company_id, recruiter)
 
         vector_doc_id = str(uuid.uuid4())
         embedding = EmbeddingModel.get().embed_text(f"{title}\n\n{description}")
@@ -75,12 +105,13 @@ async def set_job_description(
             company_id=company_id,
             title=title,
             description=description,
+            apply_url=apply_url.strip() or None,
             vector_doc_id=vector_doc_id,
         )
         session.add(jd)
         session.commit()
         session.refresh(jd)
-        return {"id": jd.id, "company_id": company_id, "title": title}
+        return {"id": jd.id, "company_id": company_id, "title": title, "apply_url": jd.apply_url}
 
 
 @router.get("/companies/{company_id}/matching-resumes")
@@ -102,6 +133,7 @@ async def matching_resumes(
     `offset` provide basic pagination on top of that.
     """
     with Session(engine) as session:
+        _require_owned_company(session, company_id, recruiter)
         jd = session.exec(
             select(JobDescription)
             .where(JobDescription.company_id == company_id)
