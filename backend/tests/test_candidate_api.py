@@ -9,6 +9,8 @@ from app.main import app
 
 
 client = TestClient(app)
+with TestClient(app):
+    pass  # triggers startup (init_db) once; TestClient(app) below reuses the same DB file
 
 
 def test_candidate_branches_endpoint_returns_branch_list():
