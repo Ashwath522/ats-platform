@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+sentence-transformers
+chromadb
+pdfplumber
+python-docx
+python-dotenv
+sqlmodel
+passlib[bcrypt]
+bcrypt==4.0.1
+python-jose[cryptography]
+pytest
+httpx
+anthropic

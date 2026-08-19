@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Data (generated at runtime, not source)
+data/
+backend/data/
+
+# Env
+.env
+*.env.local
+
+# OS
+.DS_Store

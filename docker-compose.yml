@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ats_data:/app/data
+    environment:
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY in your .env before running}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080}
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ats_data:
+    # Persists sqlite DB, chroma vector store, and uploaded resumes across
+    # container restarts/rebuilds. Without this, all data is lost on `docker
+    # compose down` because it lives inside the backend container's /app/data.
