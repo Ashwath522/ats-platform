@@ -13,3 +13,4 @@ python-jose[cryptography]
 pytest
 httpx
 anthropic
+python-magic

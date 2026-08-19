@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from ..db import engine, AnalysisCache, Company, JobDescription, Resume
 from ..services.deep_analysis import make_cache_key, run_deep_analysis
 from ..services.extract import extract_text_from_file
+from ..services.mime_check import validate_file_content_matches_extension
 from ..services.embeddings import EmbeddingModel
 from ..services.role_templates import get_role, list_branches, list_roles
 from ..services.scoring import score_resume_against_jd
@@ -72,6 +73,13 @@ def _save_and_index_resume(file: UploadFile) -> tuple[str, str, list]:
     filename = f"{uid}_{file.filename}"
     dest = os.path.join(RESUME_DIR, filename)
     _write_with_size_limit(file, dest, MAX_UPLOAD_BYTES)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    try:
+        validate_file_content_matches_extension(dest, ext)
+    except ValueError as e:
+        os.remove(dest)
+        raise HTTPException(status_code=400, detail=str(e))
 
     text = extract_text_from_file(dest)
     if not text or not text.strip():

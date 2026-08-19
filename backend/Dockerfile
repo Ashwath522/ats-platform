@@ -3,8 +3,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # System deps needed by some resume-parsing libs (pdfplumber pulls in pillow/etc.)
+# libmagic1 is required at runtime by python-magic (real content-type sniffing,
+# not just trusting the file extension) - without it, resume uploads fail.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

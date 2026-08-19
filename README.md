@@ -1,5 +1,54 @@
 # ATS Platform
 
+**Note for the next agent working on this repo:** `main` was force-pushed at
+one point during development, which discarded some prior work (a real
+content-based MIME validation module, a CI workflow). That work has since
+been restored/re-added where it mattered for correctness. Do not assume
+anything about git history beyond `main`'s current tip — always check
+`git log`, run `pytest`, and verify against actual file contents before
+building on top of a claim in this doc. This section is accurate as of the
+commit it's part of, not a permanent guarantee.
+
+## Verified current state (candidate/recruiter ATS tool only — no portal yet)
+
+- **Recruiter auth**: real (JWT + bcrypt, `backend/app/auth.py` +
+  `backend/app/api/auth.py`), rate-limited via `slowapi`, and
+  ownership-scoped (one recruiter cannot see/edit/delete another
+  recruiter's companies — this was a real security bug, found and fixed;
+  `backend/tests/test_recruiter_ownership.py` proves it).
+- **Resume dedup**: by SHA-256 content hash, in
+  `backend/app/api/candidate.py`.
+- **File upload validation**: extension allowlist AND real content-based
+  MIME sniffing via `python-magic`/libmagic
+  (`backend/app/services/mime_check.py`) — a spoofed extension (e.g. a
+  `.txt` renamed to `.pdf`) is rejected, not silently trusted. 8MB size
+  limit, streamed to disk (never buffers the whole file in memory).
+- **Branch/role selection**: `GET /api/candidate/branches` +
+  `GET /api/candidate/roles?branch=` cover Software, Mechanical, Civil,
+  ECE, EEE, and Aerospace, each with real paragraph-length JDs (see
+  `backend/app/services/role_templates.py`), not just bare titles.
+- **Deep analysis**: `POST /api/candidate/deep-analysis` — optional,
+  on-demand, cached LLM call (grammar/technical-depth/experience scoring)
+  kept OUT of the fast scoring path. Gracefully degrades if
+  `ANTHROPIC_API_KEY` isn't set.
+- **Docker**: `backend/Dockerfile`, `frontend/Dockerfile`,
+  `frontend/nginx.conf`, root `docker-compose.yml` all exist.
+- **Tests**: `backend/tests/` — 30 tests across scoring, auth, ownership,
+  MIME validation, and API integration. Run `pytest` to confirm current
+  pass count, don't trust this number blindly after further changes.
+- **NOT present yet**: candidate accounts/profiles, a job board, job
+  postings, applications, posts, GPS/location matching, or any 4-tab
+  candidate navigation. The only "candidate" concept right now is an
+  anonymous resume upload — there is no candidate login, no persistent
+  candidate identity, and no portal UI beyond the existing single-page ATS
+  checker. If you're building the portal expansion (candidate/recruiter
+  accounts, job postings, applications, profiles), all of that is new
+  work on top of this — don't assume any of it exists already.
+- **CI**: a GitHub Actions workflow may or may not be present depending on
+  push history (a token scope issue previously blocked pushing
+  `.github/workflows/`) — check `.github/workflows/` directly rather than
+  assuming.
+
 Resume screening system with three flows:
 
 1. **Branch/role ATS check** — upload a resume + choose a branch and role template, or paste any custom job description, then get an ATS score and missing keywords/skills.
