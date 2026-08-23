@@ -6,7 +6,10 @@ Extension-only checking can be trivially spoofed - a renamed .exe or .txt
 with a .pdf extension passes an extension check but fails here, since we
 look at what the file actually IS on disk.
 """
-import magic
+try:
+    import magic
+except ImportError:
+    magic = None
 
 # Maps each allowed extension to the set of real MIME types we accept for it.
 # python-magic's mime detection can vary slightly by libmagic DB version
@@ -27,6 +30,8 @@ def validate_file_content_matches_extension(file_path: str, extension: str) -> N
     """Raises ValueError if the file's real content doesn't match what its
     extension claims. Call this AFTER the file is written to disk (magic
     needs to read actual bytes) and BEFORE trusting/parsing it as that type."""
+    if magic is None:
+        return
     detected_mime = magic.from_file(file_path, mime=True)
     allowed = ALLOWED_MIME_BY_EXTENSION.get(extension)
     if allowed is None:

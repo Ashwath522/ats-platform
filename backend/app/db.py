@@ -6,7 +6,7 @@ from typing import Optional
 from sqlmodel import SQLModel, Field, create_engine, Session
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # -> backend/
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.environ.get("ATS_DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DATA_DIR, "ats.db")
@@ -16,7 +16,7 @@ engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 class Company(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    owner_username: Optional[str] = Field(default=None, index=True)
+    owner_username: Optional[str] = Field(default=None, index=True)  # only this recruiter can edit/delete this company
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -52,6 +52,72 @@ class RecruiterUser(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ─── New models for the portal expansion ───────────────────────────────────────
+
+class CandidateUser(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    password_hash: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CandidateProfile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="candidateuser.id", unique=True, index=True)
+    headline: str = ""
+    bio: str = ""
+    skills_json: str = "[]"           # JSON array of skill strings
+    experience_json: str = "[]"       # JSON array of {title, company, start, end, description}
+    education_json: str = "[]"        # JSON array of {degree, institution, year}
+    resume_id: Optional[int] = Field(default=None, foreign_key="resume.id")
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    # Optional EEO self-identification — candidate-controlled, never exposed to recruiters
+    gender: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Post(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="candidateuser.id", index=True)
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Job(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recruiter_id: int = Field(foreign_key="recruiteruser.id", index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="company.id")
+    title: str
+    description: str
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    currency: str = "INR"
+    location_text: str = ""
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    requirements: str = ""            # free-text or comma-separated skills
+    remote_type: str = "onsite"       # "remote" | "onsite" | "hybrid"
+    status: str = "open"              # "open" | "closed"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Application(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="candidateuser.id", index=True)
+    job_id: int = Field(foreign_key="job.id", index=True)
+    resume_id: Optional[int] = Field(default=None, foreign_key="resume.id")
+    ats_score: Optional[int] = None
+    matched_skills_json: str = "[]"
+    missing_skills_json: str = "[]"
+    status: str = "applied"           # "applied" | "reviewed" | "shortlisted" | "rejected"
+    applied_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 def init_db():

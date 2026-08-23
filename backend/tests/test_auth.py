@@ -33,12 +33,13 @@ def test_password_hash_is_not_plaintext():
 
 def test_token_roundtrip_returns_correct_username():
     token = create_access_token("alice")
-    username = decode_access_token(token)
+    username, role = decode_access_token(token)
     assert username == "alice"
+    assert role == "recruiter"  # default role
 
 
 def test_expired_token_is_rejected():
-    token = create_access_token("bob", expires_delta=timedelta(seconds=-1))
+    token = create_access_token("bob", role="recruiter", expires_delta=timedelta(seconds=-1))
     with pytest.raises(HTTPException) as exc_info:
         decode_access_token(token)
     assert exc_info.value.status_code == 401

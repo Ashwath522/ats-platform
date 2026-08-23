@@ -13,7 +13,7 @@ from ..vector_store import VectorStore
 router = APIRouter(prefix="/api/recruiter", tags=["recruiter"])
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # -> backend/
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.environ.get("ATS_DATA_DIR", os.path.join(BASE_DIR, "data"))
 vector_store = VectorStore(persist_directory=os.path.join(DATA_DIR, "chroma"))
 
 MAX_TOP_K = 200  # hard ceiling regardless of what the client requests
@@ -72,6 +72,42 @@ async def delete_company(company_id: int, recruiter: str = Depends(get_current_r
         session.delete(company)
         session.commit()
         return {"deleted": True, "company_id": company_id}
+
+
+@router.put("/companies/{company_id}")
+async def update_company(
+    company_id: int,
+    name: str = Form(...),
+    recruiter: str = Depends(get_current_recruiter),
+):
+    with Session(engine) as session:
+        company = _require_owned_company(session, company_id, recruiter)
+        company.name = name
+        session.add(company)
+        session.commit()
+        session.refresh(company)
+        return {"id": company.id, "name": company.name}
+
+
+@router.get("/companies/{company_id}/job-descriptions")
+async def list_job_descriptions(company_id: int, recruiter: str = Depends(get_current_recruiter)):
+    with Session(engine) as session:
+        _require_owned_company(session, company_id, recruiter)
+        jds = session.exec(
+            select(JobDescription)
+            .where(JobDescription.company_id == company_id)
+            .order_by(JobDescription.updated_at.desc())
+        ).all()
+        return [
+            {
+                "id": jd.id,
+                "title": jd.title,
+                "description": jd.description,
+                "apply_url": jd.apply_url,
+                "updated_at": jd.updated_at
+            }
+            for jd in jds
+        ]
 
 
 @router.post("/companies/{company_id}/job-description")
@@ -134,6 +170,7 @@ async def matching_resumes(
     """
     with Session(engine) as session:
         _require_owned_company(session, company_id, recruiter)
+
         jd = session.exec(
             select(JobDescription)
             .where(JobDescription.company_id == company_id)

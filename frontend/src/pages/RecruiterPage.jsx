@@ -1,35 +1,20 @@
 import React, { useEffect, useState } from 'react'
-
-const TOKEN_KEY = 'ats_recruiter_token'
-const USERNAME_KEY = 'ats_recruiter_username'
+import { useAuth, createAuthedFetch } from '../auth.jsx'
+import { useNavigate } from 'react-router-dom'
 
 export default function RecruiterPage() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
-  const [username, setUsername] = useState(() => localStorage.getItem(USERNAME_KEY))
+  const { recruiterToken, recruiterUsername, loginRecruiter, logoutRecruiter } = useAuth()
+  const navigate = useNavigate()
 
-  function handleLogin(newToken, newUsername) {
-    localStorage.setItem(TOKEN_KEY, newToken)
-    localStorage.setItem(USERNAME_KEY, newUsername)
-    setToken(newToken)
-    setUsername(newUsername)
+  if (!recruiterToken) {
+    return <RecruiterAuthPanel onLogin={loginRecruiter} />
   }
 
-  function handleLogout() {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USERNAME_KEY)
-    setToken(null)
-    setUsername(null)
-  }
-
-  if (!token) {
-    return <AuthPanel onLogin={handleLogin} />
-  }
-
-  return <RecruiterDashboard token={token} username={username} onLogout={handleLogout} onAuthExpired={handleLogout} />
+  return <RecruiterDashboard token={recruiterToken} username={recruiterUsername} onLogout={() => { logoutRecruiter(); navigate('/') }} />
 }
 
-function AuthPanel({ onLogin }) {
-  const [mode, setMode] = useState('login') // 'login' | 'register'
+function RecruiterAuthPanel({ onLogin }) {
+  const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
@@ -63,76 +48,86 @@ function AuthPanel({ onLogin }) {
   }
 
   return (
-    <div className="panel">
-      <h2>{mode === 'login' ? 'Recruiter Login' : 'Create Recruiter Account'}</h2>
-      <p className="panel-desc">
-        {mode === 'login'
-          ? 'Sign in to manage companies, post job descriptions, and view ranked candidates.'
-          : 'Set up an account to start posting job descriptions.'}
-      </p>
+    <div className="auth-page">
+      <div className="auth-card">
+        <div className="auth-card-glow" />
+        <h2>{mode === 'login' ? 'Recruiter Login' : 'Create Recruiter Account'}</h2>
+        <p className="panel-desc">
+          {mode === 'login'
+            ? 'Sign in to manage companies, post jobs, and view ranked candidates.'
+            : 'Set up an account to start posting job descriptions.'}
+        </p>
 
-      <label>Username</label>
-      <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. jordan" />
+        <label>Username</label>
+        <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. jordan" />
 
-      <label>Password</label>
-      <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-        placeholder={mode === 'register' ? 'At least 8 characters' : 'Password'}
-        onKeyDown={e => e.key === 'Enter' && submit()} />
+        <label>Password</label>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+          placeholder={mode === 'register' ? 'At least 8 characters' : 'Password'}
+          onKeyDown={e => e.key === 'Enter' && submit()} />
 
-      <button className="primary" onClick={submit} disabled={loading}>
-        {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
-      </button>
-      {error && <div className="error-msg">{error}</div>}
+        <button className="primary" onClick={submit} disabled={loading}>
+          {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
+        </button>
+        {error && <div className="error-msg">{error}</div>}
 
-      <p className="panel-desc" style={{ marginTop: 16 }}>
-        {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-        <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'register' : 'login'); setError(null) }}>
-          {mode === 'login' ? 'Create one' : 'Log in'}
-        </a>
-      </p>
+        <p className="panel-desc" style={{ marginTop: 16 }}>
+          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+          <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'register' : 'login'); setError(null) }}>
+            {mode === 'login' ? 'Create one' : 'Log in'}
+          </a>
+        </p>
+      </div>
     </div>
   )
 }
 
-function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
+function RecruiterDashboard({ token, username, onLogout }) {
+  const api = createAuthedFetch(token, onLogout)
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState('companies') // 'companies' | 'jobs'
+
+  // Companies state (existing + merged with origin/main)
   const [companies, setCompanies] = useState([])
   const [selectedCompanyId, setSelectedCompanyId] = useState(null)
-
   const [newCompanyName, setNewCompanyName] = useState('')
+  const [editingCompanyId, setEditingCompanyId] = useState(null)
+  const [editCompanyName, setEditCompanyName] = useState('')
   const [jdTitle, setJdTitle] = useState('')
   const [jdDescription, setJdDescription] = useState('')
   const [applyUrl, setApplyUrl] = useState('')
   const [savingJd, setSavingJd] = useState(false)
-
   const [matches, setMatches] = useState(null)
   const [matchesLoading, setMatchesLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [jdHistory, setJdHistory] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  // Filters from origin/main
   const [minScore, setMinScore] = useState(0)
   const [minExperience, setMinExperience] = useState(0)
   const [requiredSkill, setRequiredSkill] = useState('')
 
-  // Wraps fetch with the Authorization header, and logs the recruiter out if the
-  // token has expired/is invalid (401) rather than showing a confusing error.
-  async function authedFetch(url, options = {}) {
-    const res = await fetch(url, {
-      ...options,
-      headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
-    })
-    if (res.status === 401) {
-      onAuthExpired()
-      throw new Error('Session expired — please log in again.')
-    }
-    return res
-  }
+  // Jobs state (new)
+  const [myJobs, setMyJobs] = useState([])
+  const [showJobForm, setShowJobForm] = useState(false)
+  const [jobForm, setJobForm] = useState({
+    title: '', description: '', salary_min: '', salary_max: '', currency: 'INR',
+    location_text: '', requirements: '', remote_type: 'onsite',
+  })
+  const [savingJob, setSavingJob] = useState(false)
+  const [selectedJobId, setSelectedJobId] = useState(null)
+  const [applicants, setApplicants] = useState(null)
+  const [applicantsLoading, setApplicantsLoading] = useState(false)
 
+  // Companies logic
   async function refreshCompanies() {
     try {
-      const res = await authedFetch('/api/recruiter/companies')
+      const res = await api('/api/recruiter/companies')
       if (!res.ok) throw new Error('Could not load companies')
       setCompanies(await res.json())
-    } catch (e) {
-      setError(e.message)
-    }
+    } catch (e) { setError(e.message) }
   }
 
   useEffect(() => { refreshCompanies() }, [])
@@ -142,32 +137,35 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
     try {
       const fd = new FormData()
       fd.append('name', newCompanyName)
-      const res = await authedFetch('/api/recruiter/companies', { method: 'POST', body: fd })
+      const res = await api('/api/recruiter/companies', { method: 'POST', body: fd })
       const c = await res.json()
       setNewCompanyName('')
       await refreshCompanies()
       setSelectedCompanyId(c.id)
-    } catch (e) {
-      setError(e.message)
-    }
+    } catch (e) { setError(e.message) }
+  }
+
+  async function updateCompanyName(companyId) {
+    if (!editCompanyName.trim()) { setEditingCompanyId(null); return }
+    try {
+      const fd = new FormData()
+      fd.append('name', editCompanyName)
+      const res = await api(`/api/recruiter/companies/${companyId}`, { method: 'PUT', body: fd })
+      if (!res.ok) throw new Error('Failed to update company name')
+      await refreshCompanies()
+      setEditingCompanyId(null)
+    } catch (e) { setError(e.message) }
   }
 
   async function deleteCompany(companyId, companyName) {
-    if (!window.confirm(`Delete "${companyName}"? This removes its job description too. This can't be undone.`)) {
-      return
-    }
+    if (!window.confirm(`Delete "${companyName}"? This removes its job description too. This can't be undone.`)) return
     setError(null)
     try {
-      const res = await authedFetch(`/api/recruiter/companies/${companyId}`, { method: 'DELETE' })
+      const res = await api(`/api/recruiter/companies/${companyId}`, { method: 'DELETE' })
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to delete company')
-      if (selectedCompanyId === companyId) {
-        setSelectedCompanyId(null)
-        setMatches(null)
-      }
+      if (selectedCompanyId === companyId) { setSelectedCompanyId(null); setMatches(null) }
       await refreshCompanies()
-    } catch (e) {
-      setError(e.message)
-    }
+    } catch (e) { setError(e.message) }
   }
 
   async function saveJobDescription() {
@@ -182,36 +180,116 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
       fd.append('title', jdTitle)
       fd.append('description', jdDescription)
       fd.append('apply_url', applyUrl)
-      const res = await authedFetch(`/api/recruiter/companies/${selectedCompanyId}/job-description`, { method: 'POST', body: fd })
+      const res = await api(`/api/recruiter/companies/${selectedCompanyId}/job-description`, { method: 'POST', body: fd })
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save')
       await refreshCompanies()
-      // Auto-refresh matches right after the JD updates — this is the "automatic" part.
       await loadMatches(selectedCompanyId)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSavingJd(false)
-    }
+      await loadJdHistory(selectedCompanyId)
+    } catch (e) { setError(e.message) } finally { setSavingJd(false) }
   }
 
   async function loadMatches(companyId) {
     setMatchesLoading(true)
     setError(null)
     try {
-      const res = await authedFetch(`/api/recruiter/companies/${companyId}/matching-resumes`)
+      const res = await api(`/api/recruiter/companies/${companyId}/matching-resumes`)
       if (!res.ok) throw new Error((await res.json()).detail || 'No matches yet')
       setMatches(await res.json())
-    } catch (e) {
-      setError(e.message)
-      setMatches(null)
-    } finally {
-      setMatchesLoading(false)
-    }
+    } catch (e) { setError(e.message); setMatches(null) } finally { setMatchesLoading(false) }
+  }
+
+  async function loadJdHistory(companyId) {
+    try {
+      const res = await api(`/api/recruiter/companies/${companyId}/job-descriptions`)
+      if (res.ok) setJdHistory(await res.json())
+    } catch (e) {}
   }
 
   useEffect(() => {
-    if (selectedCompanyId) loadMatches(selectedCompanyId)
-  }, [selectedCompanyId])
+    if (selectedCompanyId) {
+      loadMatches(selectedCompanyId)
+      loadJdHistory(selectedCompanyId)
+      const comp = companies.find(c => c.id === selectedCompanyId)
+      if (comp) {
+        setApplyUrl(comp.apply_url || '')
+      }
+    } else {
+      setJdHistory([])
+      setShowHistory(false)
+    }
+  }, [selectedCompanyId, companies])
+
+  // Jobs logic (new)
+  async function refreshJobs() {
+    try {
+      const res = await api('/api/recruiter/jobs')
+      if (res.ok) setMyJobs(await res.json())
+    } catch (e) { setError(e.message) }
+  }
+
+  useEffect(() => { if (activeTab === 'jobs') refreshJobs() }, [activeTab])
+
+  async function createJob() {
+    setSavingJob(true)
+    setError(null)
+    try {
+      const fd = new FormData()
+      fd.append('title', jobForm.title)
+      fd.append('description', jobForm.description)
+      if (jobForm.salary_min) fd.append('salary_min', jobForm.salary_min)
+      if (jobForm.salary_max) fd.append('salary_max', jobForm.salary_max)
+      fd.append('currency', jobForm.currency)
+      fd.append('location_text', jobForm.location_text)
+      fd.append('requirements', jobForm.requirements)
+      fd.append('remote_type', jobForm.remote_type)
+      const res = await api('/api/recruiter/jobs', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed')
+      setShowJobForm(false)
+      setJobForm({ title: '', description: '', salary_min: '', salary_max: '', currency: 'INR', location_text: '', requirements: '', remote_type: 'onsite' })
+      await refreshJobs()
+    } catch (e) { setError(e.message) } finally { setSavingJob(false) }
+  }
+
+  async function deleteJob(jobId) {
+    if (!window.confirm('Delete this job posting?')) return
+    try {
+      const res = await api(`/api/recruiter/jobs/${jobId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed')
+      if (selectedJobId === jobId) { setSelectedJobId(null); setApplicants(null) }
+      await refreshJobs()
+    } catch (e) { setError(e.message) }
+  }
+
+  async function closeJob(jobId) {
+    try {
+      const fd = new FormData()
+      fd.append('status', 'closed')
+      const res = await api(`/api/recruiter/jobs/${jobId}`, { method: 'PUT', body: fd })
+      if (!res.ok) throw new Error('Failed')
+      await refreshJobs()
+    } catch (e) { setError(e.message) }
+  }
+
+  async function loadApplicants(jobId) {
+    setApplicantsLoading(true)
+    try {
+      const res = await api(`/api/recruiter/jobs/${jobId}/applicants`)
+      if (res.ok) setApplicants(await res.json())
+    } catch (e) { setError(e.message) } finally { setApplicantsLoading(false) }
+  }
+
+  useEffect(() => {
+    if (selectedJobId) loadApplicants(selectedJobId)
+    else setApplicants(null)
+  }, [selectedJobId])
+
+  function filteredMatches(results, minScore, minExperience, requiredSkill) {
+    const skill = requiredSkill.trim().toLowerCase()
+    return results.filter(result => {
+      const hasSkill = !skill || result.matched_skills.some(item => item.toLowerCase().includes(skill))
+      return result.ats_score >= minScore && (result.experience_years || 0) >= minExperience && hasSkill
+    })
+  }
 
   return (
     <div>
@@ -220,122 +298,277 @@ function RecruiterDashboard({ token, username, onLogout, onAuthExpired }) {
         <button className="primary" style={{ marginTop: 0, padding: '8px 14px' }} onClick={onLogout}>Log out</button>
       </div>
 
-      <div className="panel">
-        <h2>Companies</h2>
-        <p className="panel-desc">Create a company, then post or update its job description below.</p>
-
-        <label>New company name</label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input type="text" value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)} placeholder="Acme Corp" />
-          <button className="primary" style={{ marginTop: 0 }} onClick={createCompany}>Add</button>
-        </div>
-
-        <label style={{ marginTop: 20 }}>Select company</label>
-        {companies.length === 0 && <div className="empty-state">No companies yet — add one above.</div>}
-        {companies.map(c => (
-          <div
-            key={c.id}
-            className={`company-list-item ${selectedCompanyId === c.id ? 'selected' : ''}`}
-            onClick={() => setSelectedCompanyId(c.id)}
-          >
-            <div>
-              <div className="company-name">{c.name}</div>
-              <div className="company-jd-title">{c.current_title || 'No open role posted'}</div>
-            </div>
-            <button
-              className="delete-btn"
-              onClick={(e) => { e.stopPropagation(); deleteCompany(c.id, c.name) }}
-              title={`Delete ${c.name}`}
-            >
-              Delete
-            </button>
-          </div>
-        ))}
+      {/* Tab navigation */}
+      <div className="tabs" style={{ marginBottom: 20 }}>
+        <button className={`tab-btn ${activeTab === 'companies' ? 'active' : ''}`} onClick={() => setActiveTab('companies')}>Companies & JDs</button>
+        <button className={`tab-btn ${activeTab === 'jobs' ? 'active' : ''}`} onClick={() => setActiveTab('jobs')}>Job Postings</button>
       </div>
 
-      {selectedCompanyId && (
-        <div className="panel">
-          <h2>Job description</h2>
-          <p className="panel-desc">Updating this immediately re-ranks every resume below — no manual resync.</p>
+      {error && <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div>}
 
-          <label>Job title</label>
-          <input type="text" value={jdTitle} onChange={e => setJdTitle(e.target.value)} placeholder="Senior Backend Engineer" />
+      {/* ===== Companies Tab ===== */}
+      {activeTab === 'companies' && (
+        <>
+          <div className="panel">
+            <h2>Companies</h2>
+            <p className="panel-desc">Create a company, then post or update its job description below.</p>
 
-          <label>Job description</label>
-          <textarea rows={5} value={jdDescription} onChange={e => setJdDescription(e.target.value)} placeholder="Paste or write the job description…" />
-
-          <label>Apply link</label>
-          <input type="text" value={applyUrl} onChange={e => setApplyUrl(e.target.value)} placeholder="https://company.com/careers/job-id" />
-
-          <button className="primary" onClick={saveJobDescription} disabled={savingJd}>
-            {savingJd ? 'Saving…' : 'Save & re-rank candidates'}
-          </button>
-          {error && <div className="error-msg">{error}</div>}
-        </div>
-      )}
-
-      {selectedCompanyId && (
-        <div className="panel">
-          <h2>Matching resumes {matches?.job_title ? `— ${matches.job_title}` : ''}</h2>
-          <p className="panel-desc">Ranked by ATS score against the current job description.</p>
-
-          <div className="filter-grid">
-            <div>
-              <label>Minimum ATS score</label>
-              <input type="number" min="0" max="100" value={minScore} onChange={e => setMinScore(Number(e.target.value) || 0)} />
+            <label>New company name</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="text" value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)} placeholder="Acme Corp" />
+              <button className="primary" style={{ marginTop: 0 }} onClick={createCompany}>Add</button>
             </div>
-            <div>
-              <label>Minimum experience</label>
-              <input type="number" min="0" value={minExperience} onChange={e => setMinExperience(Number(e.target.value) || 0)} />
-            </div>
-            <div>
-              <label>Required matched skill</label>
-              <input type="text" value={requiredSkill} onChange={e => setRequiredSkill(e.target.value)} placeholder="Python, SolidWorks…" />
-            </div>
+
+            <label style={{ marginTop: 20 }}>Select company</label>
+            {companies.length === 0 && <div className="empty-state">No companies yet — add one above.</div>}
+            {companies.map(c => (
+              <div key={c.id} className={`company-list-item ${selectedCompanyId === c.id ? 'selected' : ''}`} onClick={() => setSelectedCompanyId(c.id)}>
+                <div style={{ flex: 1 }}>
+                  {editingCompanyId === c.id ? (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                      <input type="text" value={editCompanyName} onChange={e => setEditCompanyName(e.target.value)} onKeyDown={e => e.key === 'Enter' && updateCompanyName(c.id)} autoFocus style={{ margin: 0 }} />
+                      <button className="primary" style={{ margin: 0, padding: '4px 8px', fontSize: 12 }} onClick={() => updateCompanyName(c.id)}>Save</button>
+                      <button style={{ margin: 0, padding: '4px 8px', fontSize: 12 }} onClick={() => setEditingCompanyId(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="company-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {c.name}
+                        <button className="delete-btn" style={{ marginLeft: 8 }} onClick={(e) => { e.stopPropagation(); setEditingCompanyId(c.id); setEditCompanyName(c.name) }}>Edit Name</button>
+                      </div>
+                      <div className="company-jd-title">{c.current_title || 'No open role posted'}</div>
+                    </>
+                  )}
+                </div>
+                <button className="delete-btn" onClick={(e) => { e.stopPropagation(); deleteCompany(c.id, c.name) }} title={`Delete ${c.name}`}>Delete</button>
+              </div>
+            ))}
           </div>
 
-          {matchesLoading && <div className="empty-state">Ranking candidates…</div>}
-          {!matchesLoading && (!matches || filteredMatches(matches.results, minScore, minExperience, requiredSkill).length === 0) && (
-            <div className="empty-state">No resumes indexed yet. Candidates need to upload via the Candidate tab first.</div>
-          )}
-          {!matchesLoading && matches && filteredMatches(matches.results, minScore, minExperience, requiredSkill).length > 0 && (
-            <table>
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Filename</th>
-                  <th>ATS Score</th>
-                  <th>Experience</th>
-                  <th>Matched skills</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredMatches(matches.results, minScore, minExperience, requiredSkill).map((r, idx) => (
-                  <tr key={r.resume_id}>
-                    <td>{idx + 1}</td>
-                    <td>{r.filename}</td>
-                    <td className="score-cell">{r.ats_score}</td>
-                    <td>{r.experience_years || 0} yrs</td>
-                    <td>
-                      <div className="chip-row">
-                        {r.matched_skills.slice(0, 6).map(s => <span key={s} className="chip matched">{s}</span>)}
+          {selectedCompanyId && (
+            <div className="panel">
+              <h2>Job description</h2>
+              <p className="panel-desc">Updating this immediately re-ranks every resume below — no manual resync.</p>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <button onClick={() => setShowHistory(!showHistory)}>
+                  {showHistory ? 'Hide JD History' : 'Show JD History'}
+                </button>
+              </div>
+
+              {showHistory && jdHistory.length > 0 && (
+                <div style={{ marginBottom: 20, padding: 15, background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <h3 style={{ marginTop: 0, fontSize: 14 }}>Past Job Descriptions</h3>
+                  <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                    {jdHistory.map((jd, idx) => (
+                      <div key={jd.id} style={{ padding: '8px 0', borderBottom: idx < jdHistory.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{jd.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>{new Date(jd.updated_at).toLocaleString()}</div>
+                        <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{jd.description}</div>
+                        <button style={{ marginTop: 8, fontSize: 12, padding: '4px 8px' }} onClick={() => { setJdTitle(jd.title); setJdDescription(jd.description); setApplyUrl(jd.apply_url || ''); setShowHistory(false) }}>Use this text</button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <label>Job title</label>
+              <input type="text" value={jdTitle} onChange={e => setJdTitle(e.target.value)} placeholder="Senior Backend Engineer" />
+
+              <label>Job description</label>
+              <textarea rows={5} value={jdDescription} onChange={e => setJdDescription(e.target.value)} placeholder="Paste or write the job description…" />
+
+              <label>Apply link</label>
+              <input type="text" value={applyUrl} onChange={e => setApplyUrl(e.target.value)} placeholder="https://company.com/careers/job-id" />
+
+              <button className="primary" onClick={saveJobDescription} disabled={savingJd}>
+                {savingJd ? 'Saving…' : 'Save & re-rank candidates'}
+              </button>
+            </div>
           )}
-        </div>
+
+          {selectedCompanyId && (
+            <div className="panel">
+              <h2>Matching resumes {matches?.job_title ? `— ${matches.job_title}` : ''}</h2>
+              <p className="panel-desc">Ranked by ATS score against the current job description.</p>
+
+              <div className="filter-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label>Minimum ATS score</label>
+                  <input type="number" min="0" max="100" value={minScore} onChange={e => setMinScore(Number(e.target.value) || 0)} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label>Minimum experience</label>
+                  <input type="number" min="0" value={minExperience} onChange={e => setMinExperience(Number(e.target.value) || 0)} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label>Required matched skill</label>
+                  <input type="text" value={requiredSkill} onChange={e => setRequiredSkill(e.target.value)} placeholder="Python, SQL…" style={{ width: '100%' }} />
+                </div>
+              </div>
+
+              {matchesLoading && <div className="empty-state">Ranking candidates…</div>}
+              {!matchesLoading && (!matches || filteredMatches(matches.results, minScore, minExperience, requiredSkill).length === 0) && (
+                <div className="empty-state">No resumes indexed yet. Candidates need to upload via the Candidate tab first.</div>
+              )}
+              {!matchesLoading && matches && filteredMatches(matches.results, minScore, minExperience, requiredSkill).length > 0 && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Filename</th>
+                      <th>ATS Score</th>
+                      <th>Experience</th>
+                      <th>Matched skills</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMatches(matches.results, minScore, minExperience, requiredSkill).map((r, idx) => (
+                      <tr key={r.resume_id}>
+                        <td>{idx + 1}</td>
+                        <td>{r.filename}</td>
+                        <td className="score-cell">{r.ats_score}</td>
+                        <td>{r.experience_years || 0} yrs</td>
+                        <td>
+                          <div className="chip-row">
+                            {r.matched_skills.slice(0, 6).map(s => <span key={s} className="chip matched">{s}</span>)}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ===== Jobs Tab ===== */}
+      {activeTab === 'jobs' && (
+        <>
+          <div className="panel">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2>Your Job Postings</h2>
+              <button className="primary" style={{ marginTop: 0 }} onClick={() => setShowJobForm(!showJobForm)}>
+                {showJobForm ? 'Cancel' : '+ Post a Job'}
+              </button>
+            </div>
+
+            {showJobForm && (
+              <div className="job-post-form">
+                <label>Job title *</label>
+                <input type="text" value={jobForm.title} onChange={e => setJobForm({...jobForm, title: e.target.value})} placeholder="Senior Backend Engineer" />
+
+                <label>Description *</label>
+                <textarea rows={4} value={jobForm.description} onChange={e => setJobForm({...jobForm, description: e.target.value})} placeholder="Describe the role, responsibilities, and team…" />
+
+                <div className="two-col">
+                  <div>
+                    <label>Min salary</label>
+                    <input type="number" value={jobForm.salary_min} onChange={e => setJobForm({...jobForm, salary_min: e.target.value})} placeholder="e.g. 500000" />
+                  </div>
+                  <div>
+                    <label>Max salary</label>
+                    <input type="number" value={jobForm.salary_max} onChange={e => setJobForm({...jobForm, salary_max: e.target.value})} placeholder="e.g. 1200000" />
+                  </div>
+                </div>
+
+                <div className="two-col">
+                  <div>
+                    <label>Currency</label>
+                    <select value={jobForm.currency} onChange={e => setJobForm({...jobForm, currency: e.target.value})}>
+                      <option value="INR">INR</option>
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Work type</label>
+                    <select value={jobForm.remote_type} onChange={e => setJobForm({...jobForm, remote_type: e.target.value})}>
+                      <option value="onsite">On-site</option>
+                      <option value="remote">Remote</option>
+                      <option value="hybrid">Hybrid</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label>Location</label>
+                <input type="text" value={jobForm.location_text} onChange={e => setJobForm({...jobForm, location_text: e.target.value})} placeholder="e.g. Bangalore, India" />
+
+                <label>Required skills (comma-separated)</label>
+                <input type="text" value={jobForm.requirements} onChange={e => setJobForm({...jobForm, requirements: e.target.value})} placeholder="Python, FastAPI, Docker, …" />
+
+                <button className="primary" onClick={createJob} disabled={savingJob || !jobForm.title.trim() || !jobForm.description.trim()}>
+                  {savingJob ? 'Posting…' : 'Post Job'}
+                </button>
+              </div>
+            )}
+
+            {myJobs.length === 0 && !showJobForm && (
+              <div className="empty-state">No job postings yet. Click "Post a Job" to create one.</div>
+            )}
+
+            {myJobs.map(job => (
+              <div key={job.id} className={`company-list-item ${selectedJobId === job.id ? 'selected' : ''}`} onClick={() => setSelectedJobId(job.id === selectedJobId ? null : job.id)}>
+                <div style={{ flex: 1 }}>
+                  <div className="company-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {job.title}
+                    <span className={`job-card-badge ${job.remote_type}`}>
+                      {job.remote_type === 'remote' ? 'Remote' : job.remote_type === 'hybrid' ? 'Hybrid' : 'On-site'}
+                    </span>
+                    <span className={`job-status-badge ${job.status}`}>{job.status}</span>
+                  </div>
+                  <div className="company-jd-title">
+                    {job.location_text && `📍 ${job.location_text}`}
+                    {job.salary_min && ` · 💰 ${job.currency} ${job.salary_min?.toLocaleString()} – ${job.salary_max?.toLocaleString()}`}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {job.status === 'open' && (
+                    <button className="delete-btn" onClick={e => { e.stopPropagation(); closeJob(job.id) }}>Close</button>
+                  )}
+                  <button className="delete-btn" onClick={e => { e.stopPropagation(); deleteJob(job.id) }}>Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Applicants for selected job */}
+          {selectedJobId && applicants && (
+            <div className="panel">
+              <h2>Applicants — {applicants.job_title}</h2>
+              <p className="panel-desc">{applicants.applicant_count} applicant{applicants.applicant_count !== 1 ? 's' : ''}, ranked by ATS score.</p>
+
+              {applicantsLoading && <div className="empty-state">Loading applicants…</div>}
+
+              {!applicantsLoading && applicants.applicants.length === 0 && (
+                <div className="empty-state">No applications received yet.</div>
+              )}
+
+              {!applicantsLoading && applicants.applicants.length > 0 && (
+                <table>
+                  <thead><tr><th>Rank</th><th>Candidate</th><th>Resume</th><th>ATS Score</th><th>Matched</th><th>Missing</th><th>Applied</th></tr></thead>
+                  <tbody>
+                    {applicants.applicants.map((a, idx) => (
+                      <tr key={a.application_id}>
+                        <td>{idx + 1}</td>
+                        <td>{a.candidate_name || '—'}</td>
+                        <td>{a.resume_filename || '—'}</td>
+                        <td className="score-cell">{a.ats_score}</td>
+                        <td><div className="chip-row">{a.matched_skills.slice(0, 4).map(s => <span key={s} className="chip matched">{s}</span>)}</div></td>
+                        <td><div className="chip-row">{a.missing_skills.slice(0, 4).map(s => <span key={s} className="chip missing">{s}</span>)}</div></td>
+                        <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{new Date(a.applied_at).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
-}
-
-function filteredMatches(results, minScore, minExperience, requiredSkill) {
-  const skill = requiredSkill.trim().toLowerCase()
-  return results.filter(result => {
-    const hasSkill = !skill || result.matched_skills.some(item => item.toLowerCase().includes(skill))
-    return result.ats_score >= minScore && (result.experience_years || 0) >= minExperience && hasSkill
-  })
 }

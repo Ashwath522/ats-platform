@@ -10,7 +10,9 @@ import tempfile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest
-from app.services.mime_check import validate_file_content_matches_extension
+from app.services.mime_check import validate_file_content_matches_extension, magic
+
+pytestmark = pytest.mark.skipif(magic is None, reason="python-magic / libmagic not installed on this system")
 
 
 def test_real_pdf_passes_pdf_validation():
