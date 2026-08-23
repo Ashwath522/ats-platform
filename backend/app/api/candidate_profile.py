@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from ..db import engine, CandidateUser, CandidateProfile, Resume
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
+from ..utils.email_utils import send_welcome_email
 
 router = APIRouter(prefix="/api/candidate/profile", tags=["candidate-profile"])
 
@@ -111,6 +112,13 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
         session.add(profile)
         session.commit()
         session.refresh(profile)
+        # Send welcome email if contact email is set
+        if profile.contact_email:
+            try:
+                send_welcome_email(profile.contact_email, candidate)
+            except Exception as e:
+                import logging
+                logging.error(f"Failed to send welcome email: {e}")
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume)
