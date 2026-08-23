@@ -135,3 +135,100 @@ def _run_anthropic_analysis(resume_text: str, target_text: str) -> Dict[str, Any
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Deep analysis provider request failed") from exc
+
+
+def parse_suggestions_json(raw_text: str) -> Dict[str, Any]:
+    text = raw_text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    data = json.loads(text)
+    if "suggestions" not in data:
+        raise ValueError("Missing 'suggestions' key in response JSON")
+    data["llm_configured"] = True
+    return data
+
+
+def _suggestions_prompt(resume_text: str, target_text: str, missing_skills: List[str]) -> str:
+    return f"""
+Analyze the resume and target job description to address the following missing skills/keywords:
+{', '.join(missing_skills)}
+
+Provide a list of specific, highly actionable additions or phrasing changes (e.g. concrete bullet points or sections) the candidate can add to their resume to highlight these skills. Return strict JSON only, with no markdown fences and no preamble.
+
+JSON shape:
+{{
+  "suggestions": [
+    "Specific line/bullet recommendation 1",
+    "Specific line/bullet recommendation 2"
+  ]
+}}
+
+Target job description:
+{target_text[:4000]}
+
+Resume:
+{resume_text[:8000]}
+""".strip()
+
+
+def run_resume_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    if not missing_skills:
+        return {"llm_configured": True, "suggestions": ["Your resume already covers all the keywords identified in the job description!"]}
+    if os.environ.get("GEMINI_API_KEY"):
+        return _run_gemini_suggestions(resume_text, target_text, missing_skills)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return _run_anthropic_suggestions(resume_text, target_text, missing_skills)
+    return {"llm_configured": False, "suggestions": []}
+
+
+def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    model = urllib.parse.quote(GEMINI_MODEL, safe="")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": _suggestions_prompt(resume_text, target_text, missing_skills)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1000,
+            "response_mime_type": "application/json",
+        },
+    }
+    try:
+        response = httpx.post(
+            url,
+            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        return parse_suggestions_json(raw)
+    except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Gemini returned invalid suggestions JSON") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Gemini suggestions request failed") from exc
+
+
+def _run_anthropic_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    try:
+        from anthropic import Anthropic
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Anthropic SDK is not installed") from exc
+
+    try:
+        client = Anthropic()
+        message = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=1000,
+            temperature=0.2,
+            messages=[{"role": "user", "content": _suggestions_prompt(resume_text, target_text, missing_skills)}],
+        )
+        raw = "".join(block.text for block in message.content if getattr(block, "type", None) == "text")
+        return parse_suggestions_json(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="LLM returned invalid suggestions JSON") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Deep analysis provider request failed") from exc

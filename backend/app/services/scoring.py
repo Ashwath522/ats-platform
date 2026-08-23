@@ -25,9 +25,26 @@ def _extract_skills_present(text: str, branch: Optional[str] = None) -> List[str
     found = set()
 
     # Determine match list based on branch
-    active_skills = KNOWN_SKILLS
+    active_skills = list(KNOWN_SKILLS)
     if branch and branch in BRANCH_SKILLS:
-        active_skills = BRANCH_SKILLS[branch]
+        active_skills = list(BRANCH_SKILLS[branch])
+
+    # Dynamic Vocabulary Promotion (seen in 3+ resumes)
+    try:
+        from ..db import engine, DiscoveredSkill
+        from sqlmodel import Session, select
+        with Session(engine) as session:
+            promoted = session.exec(
+                select(DiscoveredSkill)
+                .where(DiscoveredSkill.occurrence_count >= 3)
+            ).all()
+            for ds in promoted:
+                # If branch matches or skill is branch-agnostic (None) or match is global
+                if not branch or not ds.branch or ds.branch == branch:
+                    if ds.term not in active_skills:
+                        active_skills.append(ds.term)
+    except Exception:
+        pass
 
     for skill in active_skills:
         pattern = r"(?<!\w)" + re.escape(skill.lower()) + r"(?!\w)"

@@ -2,7 +2,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlmodel import Session, select
 
 from ..db import engine, Job, Application, CandidateUser, CandidateProfile, Resume
@@ -11,6 +11,7 @@ from ..services.distance import distance_or_none
 from ..services.embeddings import EmbeddingModel
 from ..services.scoring import score_resume_against_jd
 from ..resume_utils import vector_store
+from ..services.vocab_learning import learn_skills_from_resume
 
 router = APIRouter(prefix="/api/candidate/jobs", tags=["candidate-jobs"])
 
@@ -108,7 +109,11 @@ async def get_job_detail(job_id: int, candidate: str = Depends(get_current_candi
 
 
 @router.post("/{job_id}/apply")
-async def apply_to_job(job_id: int, candidate: str = Depends(get_current_candidate)):
+async def apply_to_job(
+    job_id: int,
+    candidate: str = Depends(get_current_candidate),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
     """Apply to a job. Auto-scores the candidate's stored resume against the job description.
     No re-upload needed — uses the resume already linked to the candidate's profile."""
     with Session(engine) as session:
@@ -172,6 +177,8 @@ async def apply_to_job(job_id: int, candidate: str = Depends(get_current_candida
         session.add(application)
         session.commit()
         session.refresh(application)
+
+        background_tasks.add_task(learn_skills_from_resume, resume_text, branch_to_match)
 
         return {
             "message": "Application submitted successfully",
