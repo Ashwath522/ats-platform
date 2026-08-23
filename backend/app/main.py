@@ -13,7 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from .db import init_db
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
-from .api import recruiter_jobs
+from .api import recruiter_jobs, admin
 
 app = FastAPI(title="ATS Platform API")
 
@@ -54,6 +54,7 @@ app.include_router(candidate_profile.router)
 app.include_router(candidate_jobs.router)
 app.include_router(candidate_posts.router)
 app.include_router(recruiter_jobs.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")

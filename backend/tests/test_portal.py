@@ -76,3 +76,30 @@ def test_password_hash_roundtrip():
     hashed = hash_password(pw)
     assert verify_password(pw, hashed)
     assert not verify_password("wrongPassword", hashed)
+
+
+from fastapi.testclient import TestClient
+from app.main import app
+
+
+def test_admin_suggestions_flow(monkeypatch):
+    monkeypatch.setenv("ADMIN_PASSWORD", "secretAdminCode")
+    client = TestClient(app)
+    with client:
+        # Submit suggestion
+        res = client.post("/api/suggestions", data={"text": "This is a great app!", "submitter": "anonymous"})
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+
+        # Try to view suggestions with wrong password
+        res_fail = client.get("/api/admin/suggestions", params={"password": "wrong"})
+        assert res_fail.status_code == 401
+
+        # View suggestions with correct password
+        res_ok = client.get("/api/admin/suggestions", params={"password": "secretAdminCode"})
+        assert res_ok.status_code == 200
+        data = res_ok.json()
+        assert "candidate_count" in data
+        assert "recruiter_count" in data
+        assert len(data["suggestions"]) >= 1
+        assert data["suggestions"][0]["text"] == "This is a great app!"
