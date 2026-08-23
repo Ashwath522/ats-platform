@@ -1,11 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
+import { useOutletContext } from 'react-router-dom'
 
 export default function ProfilePage() {
   const { candidateToken, logoutCandidate } = useAuth()
   const api = createAuthedFetch(candidateToken, logoutCandidate)
+  const { loadParentProfile } = useOutletContext() || {}
 
   const [profile, setProfile] = useState(null)
+  const [branches, setBranches] = useState([])
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
@@ -18,6 +21,14 @@ export default function ProfilePage() {
   const [newPost, setNewPost] = useState('')
   const [postingPost, setPostingPost] = useState(false)
 
+  // Load branches
+  useEffect(() => {
+    fetch('/api/candidate/branches')
+      .then(res => res.json())
+      .then(data => setBranches(data || []))
+      .catch(() => {})
+  }, [])
+
   const loadProfile = useCallback(async () => {
     try {
       const res = await api('/api/candidate/profile')
@@ -27,6 +38,7 @@ export default function ProfilePage() {
         setForm({
           headline: data.headline || '',
           bio: data.bio || '',
+          branch: data.branch || '',
           skills: (data.skills || []).join(', '),
           contact_email: data.contact_email || '',
           contact_phone: data.contact_phone || '',
@@ -56,6 +68,7 @@ export default function ProfilePage() {
       const body = {
         headline: form.headline,
         bio: form.bio,
+        branch: form.branch || null,
         skills: form.skills.split(',').map(s => s.trim()).filter(Boolean),
         contact_email: form.contact_email,
         contact_phone: form.contact_phone,
@@ -69,6 +82,9 @@ export default function ProfilePage() {
       const data = await res.json()
       setProfile(data)
       setEditing(false)
+      if (loadParentProfile) {
+        loadParentProfile() // Sync layout topbar
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -123,6 +139,11 @@ export default function ProfilePage() {
           <div className="profile-avatar">{(profile.headline || '?')[0]?.toUpperCase()}</div>
           <div className="profile-card-info">
             <h2 className="profile-headline">{profile.headline || 'Set your headline'}</h2>
+            {profile.branch && (
+              <span className="profile-branch-badge badge" style={{ display: 'inline-block', marginBottom: 8, background: 'var(--primary-light)', color: 'var(--primary-color)', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 'bold' }}>
+                ⚙️ {branches.find(b => b.id === profile.branch)?.name || profile.branch}
+              </span>
+            )}
             <p className="profile-bio">{profile.bio || 'Add a short bio about yourself'}</p>
           </div>
           <button className="edit-toggle-btn" onClick={() => setEditing(!editing)}>
@@ -133,13 +154,25 @@ export default function ProfilePage() {
         {editing && (
           <div className="profile-edit-form">
             <label>Headline</label>
-            <input type="text" value={form.headline} onChange={e => setForm({...form, headline: e.target.value})} placeholder="e.g. Full Stack Developer" />
+            <input type="text" value={form.headline} onChange={e => setForm({...form, headline: e.target.value})} placeholder="e.g. Mechanical Engineer" />
+
+            <label>Target Core Engineering Branch</label>
+            <select
+              value={form.branch}
+              onChange={e => setForm({...form, branch: e.target.value})}
+              style={{ width: '100%', marginBottom: 12, padding: 8, borderRadius: 6, border: '1px solid var(--border-color)' }}
+            >
+              <option value="">Select branch...</option>
+              {branches.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
 
             <label>Bio</label>
             <textarea rows={3} value={form.bio} onChange={e => setForm({...form, bio: e.target.value})} placeholder="Tell recruiters about yourself…" />
 
             <label>Skills (comma-separated)</label>
-            <input type="text" value={form.skills} onChange={e => setForm({...form, skills: e.target.value})} placeholder="Python, React, Docker, …" />
+            <input type="text" value={form.skills} onChange={e => setForm({...form, skills: e.target.value})} placeholder="MATLAB, SolidWorks, FEA, …" />
 
             <label>Contact Email</label>
             <input type="text" value={form.contact_email} onChange={e => setForm({...form, contact_email: e.target.value})} placeholder="you@example.com" />

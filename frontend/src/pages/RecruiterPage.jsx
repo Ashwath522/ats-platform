@@ -111,15 +111,24 @@ function RecruiterDashboard({ token, username, onLogout }) {
 
   // Jobs state (new)
   const [myJobs, setMyJobs] = useState([])
+  const [branches, setBranches] = useState([])
   const [showJobForm, setShowJobForm] = useState(false)
   const [jobForm, setJobForm] = useState({
-    title: '', description: '', salary_min: '', salary_max: '', currency: 'INR',
+    title: '', description: '', branch: '', salary_min: '', salary_max: '', currency: 'INR',
     location_text: '', requirements: '', remote_type: 'onsite',
   })
   const [savingJob, setSavingJob] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState(null)
   const [applicants, setApplicants] = useState(null)
   const [applicantsLoading, setApplicantsLoading] = useState(false)
+
+  // Fetch branches
+  useEffect(() => {
+    fetch('/api/candidate/branches')
+      .then(res => res.json())
+      .then(data => setBranches(data || []))
+      .catch(() => {})
+  }, [])
 
   // Companies logic
   async function refreshCompanies() {
@@ -236,6 +245,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
       const fd = new FormData()
       fd.append('title', jobForm.title)
       fd.append('description', jobForm.description)
+      if (jobForm.branch) fd.append('branch', jobForm.branch)
       if (jobForm.salary_min) fd.append('salary_min', jobForm.salary_min)
       if (jobForm.salary_max) fd.append('salary_max', jobForm.salary_max)
       fd.append('currency', jobForm.currency)
@@ -245,7 +255,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
       const res = await api('/api/recruiter/jobs', { method: 'POST', body: fd })
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed')
       setShowJobForm(false)
-      setJobForm({ title: '', description: '', salary_min: '', salary_max: '', currency: 'INR', location_text: '', requirements: '', remote_type: 'onsite' })
+      setJobForm({ title: '', description: '', branch: '', salary_min: '', salary_max: '', currency: 'INR', location_text: '', requirements: '', remote_type: 'onsite' })
       await refreshJobs()
     } catch (e) { setError(e.message) } finally { setSavingJob(false) }
   }
@@ -458,7 +468,15 @@ function RecruiterDashboard({ token, username, onLogout }) {
             {showJobForm && (
               <div className="job-post-form">
                 <label>Job title *</label>
-                <input type="text" value={jobForm.title} onChange={e => setJobForm({...jobForm, title: e.target.value})} placeholder="Senior Backend Engineer" />
+                <input type="text" value={jobForm.title} onChange={e => setJobForm({...jobForm, title: e.target.value})} placeholder="Senior Mechanical Engineer" />
+
+                <label>Branch / Specialization *</label>
+                <select value={jobForm.branch} onChange={e => setJobForm({...jobForm, branch: e.target.value})} required style={{ width: '100%', marginBottom: 12 }}>
+                  <option value="">Select branch...</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
 
                 <label>Description *</label>
                 <textarea rows={4} value={jobForm.description} onChange={e => setJobForm({...jobForm, description: e.target.value})} placeholder="Describe the role, responsibilities, and team…" />
@@ -500,7 +518,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
                 <label>Required skills (comma-separated)</label>
                 <input type="text" value={jobForm.requirements} onChange={e => setJobForm({...jobForm, requirements: e.target.value})} placeholder="Python, FastAPI, Docker, …" />
 
-                <button className="primary" onClick={createJob} disabled={savingJob || !jobForm.title.trim() || !jobForm.description.trim()}>
+                <button className="primary" onClick={createJob} disabled={savingJob || !jobForm.title.trim() || !jobForm.description.trim() || !jobForm.branch}>
                   {savingJob ? 'Posting…' : 'Post Job'}
                 </button>
               </div>

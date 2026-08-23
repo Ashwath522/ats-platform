@@ -11,6 +11,24 @@ export default function JobsPage() {
   const [error, setError] = useState(null)
   const [appliedIds, setAppliedIds] = useState(new Set())
   const [applyResult, setApplyResult] = useState(null)
+  const [suggestions, setSuggestions] = useState(null)
+  const [sugLoading, setSugLoading] = useState(false)
+  const [sugError, setSugError] = useState(null)
+
+  async function fetchSuggestions(jobId) {
+    setSugLoading(true)
+    setSugError(null)
+    try {
+      const res = await api(`/api/candidate/jobs/${jobId}/suggestions`, { method: 'POST' })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed')
+      const data = await res.json()
+      setSuggestions(data.suggestions || [])
+    } catch (e) {
+      setSugError(e.message)
+    } finally {
+      setSugLoading(false)
+    }
+  }
 
   // Filters
   const [titleFilter, setTitleFilter] = useState('')
@@ -66,11 +84,13 @@ export default function JobsPage() {
 
   async function handleApply(jobId) {
     setApplyResult(null)
+    setSuggestions(null)
+    setSugError(null)
     try {
       const res = await api(`/api/candidate/jobs/${jobId}/apply`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Apply failed')
-      setApplyResult(data)
+      setApplyResult({ ...data, job_id: jobId })
       setAppliedIds(prev => new Set([...prev, jobId]))
     } catch (e) {
       setError(e.message)
@@ -163,7 +183,31 @@ export default function JobsPage() {
               </div>
             </div>
           </div>
-          <button onClick={() => setApplyResult(null)} style={{ marginTop: 12 }}>Dismiss</button>
+
+          <div className="apply-result-actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {!suggestions && !sugLoading && (
+              <button className="btn btn-secondary" onClick={() => fetchSuggestions(applyResult.job_id)}>
+                💡 How can I improve my score?
+              </button>
+            )}
+            <button onClick={() => setApplyResult(null)} className="btn">Dismiss</button>
+          </div>
+
+          {sugLoading && <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--primary-color)' }}>
+            <div className="socket-loader-small" /> Loading AI resume recommendations...
+          </div>}
+          {sugError && <div className="error-banner" style={{ marginTop: 12 }}>{sugError}</div>}
+
+          {suggestions && (
+            <div className="suggestions-box" style={{ marginTop: 16, padding: 16, background: 'rgba(0,0,0,0.02)', borderRadius: 8, borderLeft: '4px solid var(--primary-color)' }}>
+              <h4 style={{ margin: '0 0 10px 0', color: 'var(--primary-color)' }}>AI Resume Suggestions</h4>
+              <ul style={{ margin: 0, paddingLeft: 20, textAlign: 'left' }}>
+                {suggestions.map((sug, idx) => (
+                  <li key={idx} style={{ marginBottom: 8, fontSize: 14 }}>{sug}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

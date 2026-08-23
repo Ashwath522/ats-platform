@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'
 import { AuthProvider } from './auth.jsx'
 
 // Original pages (preserved for backwards compatibility)
@@ -13,13 +13,16 @@ import ProfilePage from './pages/candidate/ProfilePage.jsx'
 import JobsPage from './pages/candidate/JobsPage.jsx'
 import RepoPage from './pages/candidate/RepoPage.jsx'
 import ContactPage from './pages/candidate/ContactPage.jsx'
+import FeedPage from './pages/candidate/FeedPage.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 
 function LandingPage() {
+  const navigate = useNavigate()
   return (
     <div className="landing-page">
       <div className="landing-hero">
         <div className="landing-glow" />
-        <h1 className="landing-title">
+        <h1 className="landing-title" onDoubleClick={() => navigate('/admin')} style={{ cursor: 'pointer' }} title="Double click for Admin panel">
           <span className="beacon" /> ATS Platform
         </h1>
         <p className="landing-subtitle">
@@ -53,6 +56,18 @@ function LandingPage() {
   )
 }
 
+function AuthedCheckHeader() {
+  const navigate = useNavigate()
+  return (
+    <div className="app-header">
+      <h1 onDoubleClick={() => navigate('/admin')} style={{ cursor: 'pointer' }}>
+        <span className="beacon" /> ATS Platform
+      </h1>
+      <Link to="/" className="back-link">← Home</Link>
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -65,10 +80,7 @@ export default function App() {
             {/* Original ATS check (no auth needed) */}
             <Route path="/ats-check" element={
               <>
-                <div className="app-header">
-                  <h1><span className="beacon" /> ATS Platform</h1>
-                  <Link to="/" className="back-link">← Home</Link>
-                </div>
+                <AuthedCheckHeader />
                 <CandidatePage />
               </>
             } />
@@ -76,7 +88,8 @@ export default function App() {
             {/* Candidate portal */}
             <Route path="/candidate/login" element={<CandidateLogin />} />
             <Route path="/candidate" element={<CandidateLayout />}>
-              <Route index element={<Navigate to="profile" replace />} />
+              <Route index element={<Navigate to="feed" replace />} />
+              <Route path="feed" element={<FeedPage />} />
               <Route path="profile" element={<ProfilePage />} />
               <Route path="jobs" element={<JobsPage />} />
               <Route path="repo" element={<RepoPage />} />
@@ -86,13 +99,13 @@ export default function App() {
             {/* Recruiter portal */}
             <Route path="/recruiter" element={
               <>
-                <div className="app-header">
-                  <h1><span className="beacon" /> ATS Platform</h1>
-                  <Link to="/" className="back-link">← Home</Link>
-                </div>
+                <AuthedCheckHeader />
                 <RecruiterPage />
               </>
             } />
+
+            {/* Admin panel */}
+            <Route path="/admin" element={<AdminPage />} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

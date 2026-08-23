@@ -5,13 +5,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlmodel import Session, select
 
-from ..db import engine, Job, Application, CandidateUser, CandidateProfile, Resume
+from ..db import engine, Job, Application, CandidateUser, CandidateProfile, Resume, AnalysisCache
 from ..auth import get_current_candidate
 from ..services.distance import distance_or_none
 from ..services.embeddings import EmbeddingModel
 from ..services.scoring import score_resume_against_jd
 from ..resume_utils import vector_store
 from ..services.vocab_learning import learn_skills_from_resume
+from ..services.deep_analysis import make_cache_key, run_resume_suggestions
 
 router = APIRouter(prefix="/api/candidate/jobs", tags=["candidate-jobs"])
 
@@ -220,3 +221,45 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
             })
 
         return {"applications": results, "count": len(results)}
+
+
+@router.post("/{job_id}/suggestions")
+async def get_job_suggestions(job_id: int, candidate: str = Depends(get_current_candidate)):
+    """Get personalized AI resume suggestions for a specific job posting."""
+    with Session(engine) as session:
+        user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)).first()
+        if not profile or not profile.resume_id:
+            raise HTTPException(status_code=400, detail="No resume uploaded to profile")
+        resume = session.get(Resume, profile.resume_id)
+        if not resume:
+            raise HTTPException(status_code=400, detail="Resume not found")
+
+        resume_doc = vector_store.get_document("resumes", resume.vector_doc_id)
+        if not resume_doc:
+            raise HTTPException(status_code=500, detail="Resume text not found in store")
+
+    cache_key = make_cache_key(str(resume.id), f"job_suggestions:{job_id}", job.description)
+    with Session(engine) as session:
+        cached = session.exec(select(AnalysisCache).where(AnalysisCache.cache_key == cache_key)).first()
+        if cached:
+            return json.loads(cached.payload_json)
+
+        resume_text = resume_doc["document"]
+        resume_embedding = EmbeddingModel.get().embed_text(resume_text)
+        jd_embedding = EmbeddingModel.get().embed_text(f"{job.title}\n\n{job.description}")
+
+        score_res = score_resume_against_jd(
+            resume_text, job.description, resume_embedding, jd_embedding, branch=(job.branch or profile.branch)
+        )
+        missing_skills = score_res["missing_skills"]
+
+        result = run_resume_suggestions(resume_text, job.description, missing_skills)
+        session.add(AnalysisCache(cache_key=cache_key, payload_json=json.dumps(result)))
+        session.commit()
+        return result

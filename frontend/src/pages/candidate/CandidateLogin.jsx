@@ -31,7 +31,7 @@ export default function CandidateLogin() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Failed')
       loginCandidate(data.access_token, data.username)
-      navigate('/candidate/profile')
+      navigate('/candidate/feed')
     } catch (e) {
       setError(e.message)
     } finally {
