@@ -16,21 +16,32 @@ import re
 import math
 from typing import Dict, List
 
-from .skills_vocab import KNOWN_SKILLS, SKILL_ALIASES
+from .skills_vocab import KNOWN_SKILLS, SKILL_ALIASES, BRANCH_SKILLS
 
 
-def _extract_skills_present(text: str) -> List[str]:
+def _extract_skills_present(text: str, branch: Optional[str] = None) -> List[str]:
     """Which known skills literally appear in this text (case-insensitive, word-boundary safe)."""
     text_lower = text.lower()
     found = set()
-    for skill in KNOWN_SKILLS:
+
+    # Determine match list based on branch
+    active_skills = KNOWN_SKILLS
+    if branch and branch in BRANCH_SKILLS:
+        active_skills = BRANCH_SKILLS[branch]
+
+    for skill in active_skills:
         pattern = r"(?<!\w)" + re.escape(skill.lower()) + r"(?!\w)"
         if re.search(pattern, text_lower):
             found.add(skill)
+
+    # Filter aliases to match only canonical terms in the active branch
+    active_set = set(active_skills)
     for alias, canonical in SKILL_ALIASES.items():
-        pattern = r"(?<!\w)" + re.escape(alias.lower()) + r"(?!\w)"
-        if re.search(pattern, text_lower):
-            found.add(canonical)
+        if canonical in active_set:
+            pattern = r"(?<!\w)" + re.escape(alias.lower()) + r"(?!\w)"
+            if re.search(pattern, text_lower):
+                found.add(canonical)
+
     return sorted(found)
 
 
@@ -57,6 +68,7 @@ def score_resume_against_jd(
     jd_text: str,
     resume_embedding: List[float],
     jd_embedding: List[float],
+    branch: Optional[str] = None,
 ) -> Dict:
     """
     Returns:
@@ -70,8 +82,8 @@ def score_resume_against_jd(
     """
     semantic_sim = cosine_similarity(resume_embedding, jd_embedding)  # roughly 0..1 with normalized embeddings
 
-    jd_skills = set(_extract_skills_present(jd_text))
-    resume_skills = set(_extract_skills_present(resume_text))
+    jd_skills = set(_extract_skills_present(jd_text, branch))
+    resume_skills = set(_extract_skills_present(resume_text, branch))
 
     matched = sorted(jd_skills & resume_skills)
     missing = sorted(jd_skills - resume_skills)

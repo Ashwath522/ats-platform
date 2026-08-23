@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/candidate/profile", tags=["candidate-profile"])
 class ProfileUpdate(BaseModel):
     headline: Optional[str] = None
     bio: Optional[str] = None
+    branch: Optional[str] = None
     skills: Optional[List[str]] = None
     experience: Optional[List[dict]] = None
     education: Optional[List[dict]] = None
@@ -50,6 +51,7 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None) -> dict:
     return {
         "headline": profile.headline,
         "bio": profile.bio,
+        "branch": profile.branch,
         "skills": json.loads(profile.skills_json),
         "experience": json.loads(profile.experience_json),
         "education": json.loads(profile.education_json),
@@ -86,6 +88,8 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
             profile.headline = update.headline
         if update.bio is not None:
             profile.bio = update.bio
+        if update.branch is not None:
+            profile.branch = update.branch
         if update.skills is not None:
             profile.skills_json = json.dumps(update.skills)
         if update.experience is not None:

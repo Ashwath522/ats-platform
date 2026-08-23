@@ -155,8 +155,9 @@ async def apply_to_job(job_id: int, candidate: str = Depends(get_current_candida
         resume_embedding = EmbeddingModel.get().embed_text(resume_text)
         jd_embedding = EmbeddingModel.get().embed_text(f"{job.title}\n\n{job.description}")
 
+        branch_to_match = job.branch or profile.branch
         score_result = score_resume_against_jd(
-            resume_text, job.description, resume_embedding, jd_embedding
+            resume_text, job.description, resume_embedding, jd_embedding, branch=branch_to_match
         )
 
         # Create application with score

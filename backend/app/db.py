@@ -68,6 +68,7 @@ class CandidateProfile(SQLModel, table=True):
     candidate_id: int = Field(foreign_key="candidateuser.id", unique=True, index=True)
     headline: str = ""
     bio: str = ""
+    branch: Optional[str] = None      # candidate's target core branch
     skills_json: str = "[]"           # JSON array of skill strings
     experience_json: str = "[]"       # JSON array of {title, company, start, end, description}
     education_json: str = "[]"        # JSON array of {degree, institution, year}
@@ -95,6 +96,7 @@ class Job(SQLModel, table=True):
     company_id: Optional[int] = Field(default=None, foreign_key="company.id")
     title: str
     description: str
+    branch: Optional[str] = None      # branch this job belongs to
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     currency: str = "INR"
@@ -118,6 +120,22 @@ class Application(SQLModel, table=True):
     missing_skills_json: str = "[]"
     status: str = "applied"           # "applied" | "reviewed" | "shortlisted" | "rejected"
     applied_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DiscoveredSkill(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    term: str = Field(index=True, unique=True)
+    branch: Optional[str] = Field(default=None, index=True)
+    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    occurrence_count: int = Field(default=1)
+
+
+class Suggestion(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    text: str
+    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    submitter: Optional[str] = None
+
 
 
 def init_db():

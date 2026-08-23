@@ -80,6 +80,15 @@ KNOWN_SKILLS = list(dict.fromkeys(
     + AEROSPACE_SKILLS
 ))
 
+BRANCH_SKILLS = {
+    "software": SOFTWARE_SKILLS + BUSINESS_SKILLS,
+    "mechanical": MECHANICAL_SKILLS + BUSINESS_SKILLS,
+    "civil": CIVIL_SKILLS + BUSINESS_SKILLS,
+    "ece": ECE_SKILLS + BUSINESS_SKILLS,
+    "eee": EEE_SKILLS + BUSINESS_SKILLS,
+    "aerospace": AEROSPACE_SKILLS + BUSINESS_SKILLS,
+}
+
 SKILL_ALIASES = {
     "8051": "Microcontrollers",
     "additive manufacturing": "Additive Manufacturing",

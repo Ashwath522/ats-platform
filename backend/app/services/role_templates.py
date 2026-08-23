@@ -3,12 +3,12 @@ from typing import Optional
 
 
 BRANCHES = [
-    {"id": "software", "name": "CS / Software"},
     {"id": "mechanical", "name": "Mechanical"},
     {"id": "civil", "name": "Civil"},
     {"id": "ece", "name": "Electronics & Communication"},
     {"id": "eee", "name": "Electrical / EEE"},
     {"id": "aerospace", "name": "Aerospace"},
+    {"id": "software", "name": "CS / Software"},
 ]
 
 

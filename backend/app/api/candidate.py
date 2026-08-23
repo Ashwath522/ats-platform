@@ -42,19 +42,21 @@ async def generic_ats_score(
     """
     target_description = job_description
     target_title = None
+    branch = None
     if role_id:
         role = get_role(role_id)
         if not role:
             raise HTTPException(status_code=400, detail="Unknown role_id")
         target_title = role.title
         target_description = role.description
+        branch = role.branch
     elif not job_description or not job_description.strip():
         raise HTTPException(status_code=400, detail="Job description or role_id is required")
 
     doc_id, resume_text, resume_embedding, _ = save_and_index_resume(file)
     jd_embedding = EmbeddingModel.get().embed_text(target_description)
 
-    result = score_resume_against_jd(resume_text, target_description, resume_embedding, jd_embedding)
+    result = score_resume_against_jd(resume_text, target_description, resume_embedding, jd_embedding, branch=branch)
     result["resume_id"] = doc_id
     if role_id:
         result["role_id"] = role_id

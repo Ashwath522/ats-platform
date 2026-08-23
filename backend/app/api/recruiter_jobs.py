@@ -37,6 +37,7 @@ def _job_to_dict(job: Job) -> dict:
         "id": job.id,
         "title": job.title,
         "description": job.description,
+        "branch": job.branch,
         "salary_min": job.salary_min,
         "salary_max": job.salary_max,
         "currency": job.currency,
@@ -56,6 +57,7 @@ def _job_to_dict(job: Job) -> dict:
 async def create_job(
     title: str = Form(...),
     description: str = Form(...),
+    branch: Optional[str] = Form(None),
     salary_min: Optional[float] = Form(None),
     salary_max: Optional[float] = Form(None),
     currency: str = Form("INR"),
@@ -82,6 +84,7 @@ async def create_job(
             company_id=company_id,
             title=title,
             description=description,
+            branch=branch,
             salary_min=salary_min,
             salary_max=salary_max,
             currency=currency,
@@ -112,6 +115,7 @@ async def update_job(
     job_id: int,
     title: str = Form(None),
     description: str = Form(None),
+    branch: Optional[str] = Form(None),
     salary_min: Optional[float] = Form(None),
     salary_max: Optional[float] = Form(None),
     currency: str = Form(None),
@@ -129,6 +133,8 @@ async def update_job(
             job.title = title
         if description is not None:
             job.description = description
+        if branch is not None:
+            job.branch = branch
         if salary_min is not None:
             job.salary_min = salary_min
         if salary_max is not None:
