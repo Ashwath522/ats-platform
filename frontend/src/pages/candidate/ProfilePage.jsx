@@ -222,6 +222,11 @@ export default function ProfilePage() {
             {uploadingResume ? 'Uploading…' : profile.resume ? 'Replace resume' : 'Upload resume'}
           </button>
         </div>
+        <div className="ats-action-row" style={{ marginTop: 12 }}>
+          <button className="primary" onClick={checkAts} disabled={!profile.resume || checkingAts}>
+            {checkingAts ? 'Checking ATS…' : 'Check ATS of current resume'}
+          </button>
+        </div>
       </div>
 
       {/* Posts Section */}

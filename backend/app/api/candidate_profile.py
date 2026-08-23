@@ -124,7 +124,19 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
         return _profile_to_dict(profile, resume)
 
 
-@router.post("/resume")
+    @router.get("/ats")
+    async def get_ats(candidate: str = Depends(get_current_candidate)):
+        """Return a placeholder ATS check for the candidate's current resume.
+        In a full implementation this would run the model against a generic job description.
+        """
+        with Session(engine) as session:
+            user = _get_candidate_user(session, candidate)
+            profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)).first()
+            if not profile or not profile.resume_id:
+                raise HTTPException(status_code=400, detail="No resume uploaded for ATS check")
+            # Placeholder: return a static score or message
+            return {"ats_score": None, "message": "ATS check requires a job context – use job-specific ATS endpoints."}
+
 async def upload_resume(
     file: UploadFile = File(...),
     candidate: str = Depends(get_current_candidate),
