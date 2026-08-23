@@ -11,7 +11,21 @@ const STORAGE_KEYS = {
 }
 
 export function AuthProvider({ children }) {
-  const [candidateToken, setCandidateToken] = useState(() => localStorage.getItem(STORAGE_KEYS.candidate.token))
+  const [candidateToken, setCandidateToken] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const token = params.get('token')
+      if (token && token.split('.').length === 3) {
+        localStorage.setItem(STORAGE_KEYS.candidate.token, token)
+        // Clean URL
+        const search = window.location.search.replace(/[?&]token=[^&]+/, '').replace(/^&/, '?')
+        const cleanUrl = window.location.pathname + (search === '?' ? '' : search)
+        window.history.replaceState({}, document.title, cleanUrl)
+        return token
+      }
+    } catch (e) {}
+    return localStorage.getItem(STORAGE_KEYS.candidate.token)
+  })
   const [candidateUsername, setCandidateUsername] = useState(() => localStorage.getItem(STORAGE_KEYS.candidate.username))
   const [recruiterToken, setRecruiterToken] = useState(() => localStorage.getItem(STORAGE_KEYS.recruiter.token))
   const [recruiterUsername, setRecruiterUsername] = useState(() => localStorage.getItem(STORAGE_KEYS.recruiter.username))

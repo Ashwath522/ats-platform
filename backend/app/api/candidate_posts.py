@@ -14,29 +14,30 @@ class PostCreate(BaseModel):
 
 
 @router.get("")
-async def list_my_posts(candidate: str = Depends(get_current_candidate)):
-    """List the current candidate's posts, newest first."""
+async def list_all_posts(candidate: str = Depends(get_current_candidate)):
+    """List posts from all candidates, newest first (global feed)."""
     with Session(engine) as session:
-        user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="Candidate not found")
-
-        posts = session.exec(
-            select(Post)
-            .where(Post.candidate_id == user.id)
+        # Query Post and join with CandidateUser + CandidateProfile
+        query = (
+            select(Post, CandidateUser.username, CandidateProfile.headline)
+            .join(CandidateUser, Post.candidate_id == CandidateUser.id)
+            .outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)
             .order_by(Post.created_at.desc())
-        ).all()
+        )
+        results = session.exec(query).all()
 
         return {
             "posts": [
                 {
-                    "id": p.id,
-                    "content": p.content,
-                    "created_at": p.created_at.isoformat(),
+                    "id": post.id,
+                    "content": post.content,
+                    "created_at": post.created_at.isoformat(),
+                    "username": username,
+                    "headline": headline or "Candidate"
                 }
-                for p in posts
+                for post, username, headline in results
             ],
-            "count": len(posts),
+            "count": len(results),
         }
 
 
