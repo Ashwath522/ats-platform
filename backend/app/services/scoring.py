@@ -14,7 +14,7 @@ prose suggestions - that step is NOT in this file, keep it separate and cache it
 """
 import re
 import math
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .skills_vocab import KNOWN_SKILLS, SKILL_ALIASES, BRANCH_SKILLS
 
