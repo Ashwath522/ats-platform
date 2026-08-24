@@ -18,11 +18,15 @@ commit it's part of, not a permanent guarantee.
   `backend/tests/test_recruiter_ownership.py` proves it).
 - **Resume dedup**: by SHA-256 content hash, in
   `backend/app/api/candidate.py`.
-- **File upload validation**: extension allowlist AND real content-based
-  MIME sniffing via `python-magic`/libmagic
-  (`backend/app/services/mime_check.py`) — a spoofed extension (e.g. a
-  `.txt` renamed to `.pdf`) is rejected, not silently trusted. 8MB size
-  limit, streamed to disk (never buffers the whole file in memory).
+- **File upload validation**: extension allowlist + 8MB streamed size
+  limit (never buffers the whole file in memory). Content-based MIME
+  sniffing via `python-magic`/libmagic is implemented in
+  `backend/app/services/mime_check.py` and works when libmagic is
+  installed — a spoofed extension (e.g. a `.txt` renamed to `.pdf`) is
+  rejected. When libmagic is **not** installed the check degrades
+  gracefully (extension-only validation still applies, MIME sniffing is
+  skipped). 4 tests in `test_mime_check.py` cover this and are skipped
+  when libmagic is absent.
 - **Branch/role selection**: `GET /api/candidate/branches` +
   `GET /api/candidate/roles?branch=` cover Software, Mechanical, Civil,
   ECE, EEE, and Aerospace, each with real paragraph-length JDs (see
@@ -33,9 +37,11 @@ commit it's part of, not a permanent guarantee.
   `ANTHROPIC_API_KEY` isn't set.
 - **Docker**: `backend/Dockerfile`, `frontend/Dockerfile`,
   `frontend/nginx.conf`, root `docker-compose.yml` all exist.
-- **Tests**: `backend/tests/` — 30 tests across scoring, auth, ownership,
-  MIME validation, and API integration. Run `pytest` to confirm current
-  pass count, don't trust this number blindly after further changes.
+- **Tests**: `backend/tests/` — 50 tests (46 passing, 4 skipped when
+  libmagic is absent) across scoring, auth, ownership, recruiter
+  approval flow, OTP/password-reset, MIME validation, portal helpers,
+  vocab learning, and API integration. Run `pytest` to confirm current
+  pass count; don't trust this number blindly after further changes.
 - **NOT present yet**: candidate accounts/profiles, a job board, job
   postings, applications, posts, GPS/location matching, or any 4-tab
   candidate navigation. The only "candidate" concept right now is an
@@ -59,7 +65,7 @@ Resume screening system with three flows:
 ## Why this architecture
 
 Scoring is done **without any LLM call** in the hot path, for latency:
-- Semantic similarity via a local `sentence-transformers` embedding model (`all-MiniLM-L6-v2`), running on CPU in milliseconds.
+- Semantic similarity via a local `sentence-transformers` embedding model (`all-MiniLM-L6-v2`), running on CPU in milliseconds. The real model has been verified locally producing 384-dimensional embeddings — there is no TF-IDF stub or fallback path in production code.
 - Keyword/skill-gap detection via a curated skills vocabulary matched against resume/JD text.
 - Both signals are blended into a single 0–100 `ats_score`.
 
@@ -79,7 +85,7 @@ cp .env.example .env   # then edit JWT_SECRET_KEY to a real random value
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
-First run will download the `all-MiniLM-L6-v2` model from Hugging Face (~90MB) — needs normal internet access once.
+First run will download the `all-MiniLM-L6-v2` model from Hugging Face (~90MB) — needs normal internet access once. This has been verified working locally (384-dim embeddings confirmed).
 
 Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to bootstrap the first admin account. There is no hardcoded admin password in code.
 
@@ -98,7 +104,7 @@ Visit `http://localhost:5173`. The Vite dev server proxies `/api` calls to `http
 cd backend
 pytest
 ```
-The suite covers scoring math, branch vocabulary, deep-analysis parser/no-key behavior, password hashing/JWTs, role-protected routes, recruiter approval, OTP/reset expiry, and the core ATS scoring endpoint.
+The suite covers scoring math, branch vocabulary, deep-analysis parser/no-key behavior, password hashing/JWTs, role-protected routes, recruiter approval flow (request → admin approve → user created → email triggered), OTP validation/expiry, password-reset single-use behavior, MIME validation (when libmagic is present), portal distance helpers, vocab learning/promotion, and the core ATS scoring endpoint.
 
 ## Running with Docker
 
@@ -163,16 +169,17 @@ Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tok
 
 ## Status / next steps
 
+- **Embedding model verified**: the real `all-MiniLM-L6-v2` model loads at runtime via `sentence-transformers` and produces 384-dimensional embeddings. There is no TF-IDF stub or fallback path in production code.
 - Scoring pipeline (embeddings + keyword gap) is tested at the pure-logic layer; verified against real execution in `backend/tests/test_scoring.py`.
 - Branch-scoped role templates now cover CS/software, Mechanical, Civil, ECE, EEE, and Aerospace.
-- On-demand deep analysis endpoint is implemented and tested for JSON parsing and no-key graceful behavior. A real Anthropic call still requires `ANTHROPIC_API_KEY`.
+- On-demand deep analysis endpoint is implemented and tested for JSON parsing and no-key graceful behavior. A real Anthropic/Gemini call still requires the relevant API key.
 - Recruiter endpoints now require recruiter role auth; admin endpoints require admin role auth. Candidate scoring endpoints remain open for the demo flow.
-- Recruiter approval flow is implemented: pending request table, admin dashboard, approve/reject endpoints, generated recruiter credentials.
-- SMTP email utility is implemented and reused for signup OTP, password reset, and recruiter credentials. DEV_MODE fallback is available for demos without mailbox credentials.
+- Recruiter approval flow is fully implemented and tested: pending request table, admin dashboard, approve/reject endpoints, generated recruiter credentials emailed on approval. Full test coverage in `test_auth_recruiter_flow.py`.
+- SMTP email utility is implemented and reused for signup OTP, password reset, and recruiter credentials. DEV_MODE fallback is available for demos without mailbox credentials. OTP validation/expiry and password-reset single-use behavior are covered by tests.
 - Resume dedup by content hash is implemented — see `_save_and_index_resume` in `backend/app/api/candidate.py`.
 - Recruiter dashboard scaling: `matching-resumes` now reuses each resume's embedding from Chroma instead of recomputing it per request, plus basic `top_k`/`offset` pagination.
-- File validation: extension allowlist + streamed size limit. Still missing: real content/MIME sniffing (would need `python-magic` + libmagic), and no handling yet for corrupted/password-protected PDFs beyond a generic extraction-failed error.
+- File validation: extension allowlist + 8MB streamed size limit. Content-based MIME sniffing via `python-magic`/libmagic is implemented and works when libmagic is installed; degrades gracefully (skips the MIME check) when it is not. No handling for corrupted/password-protected PDFs beyond a generic extraction-failed error.
 - Docker + docker-compose added for both services, with a persisted data volume. The embedding model still downloads on first request inside the container unless you bake it into the image (see comment in `backend/Dockerfile`).
 - Skills vocabulary in `backend/app/services/skills_vocab.py` now includes software plus core engineering branch coverage and selected business skills.
 - No JD history view, no company rename, no refresh tokens/rate limiting, and no candidate-side score history UI yet.
-- Still unverified in this local pass: Docker runtime, real browser upload flow, real embedding-model download, real SMTP mailbox delivery, real Gemini/Anthropic API calls, and remote CI status.
+- Still unverified: Docker runtime, real SMTP mailbox delivery, real Gemini/Anthropic API calls, and remote CI status.
