@@ -10,7 +10,7 @@ internet. It is NOT a full identity system: no email verification, no password
 reset flow, no refresh tokens. Add those before a real multi-tenant deployment.
 """
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from fastapi import Depends, HTTPException, status
@@ -55,7 +55,11 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
 ) -> str:
     """Create a JWT with username and role in the payload."""
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    # Timezone-aware, not naive: jwt.encode converts this to a Unix timestamp
+    # via .timestamp(), which for a naive datetime assumes the server's LOCAL
+    # timezone rather than UTC - a real bug if this ever runs on a non-UTC
+    # host. Aware datetimes convert unambiguously regardless of server tz.
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     payload = {"sub": username, "role": role, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 

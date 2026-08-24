@@ -1,6 +1,6 @@
 import os
 from sqlalchemy import inspect, text
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import SQLModel, Field, create_engine, Session
@@ -8,6 +8,16 @@ from sqlmodel import SQLModel, Field, create_engine, Session
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # -> backend/
 DATA_DIR = os.environ.get("ATS_DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def utc_now() -> datetime:
+    """Drop-in replacement for the deprecated datetime.utcnow(). Returns a
+    naive UTC datetime (matching what's already stored throughout the DB and
+    what SQLite expects) while using the non-deprecated timezone-aware API
+    internally, then stripping tzinfo before returning - swapping straight to
+    datetime.now(timezone.utc) without this step would return an AWARE
+    datetime, which breaks comparisons against the naive ones already stored."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 DB_PATH = os.path.join(DATA_DIR, "ats.db")
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
@@ -17,7 +27,7 @@ class Company(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     owner_username: Optional[str] = Field(default=None, index=True)  # only this recruiter can edit/delete this company
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class JobDescription(SQLModel, table=True):
@@ -28,7 +38,7 @@ class JobDescription(SQLModel, table=True):
     description: str
     apply_url: Optional[str] = None
     vector_doc_id: str  # id used in the chroma "jobs" collection
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class Resume(SQLModel, table=True):
@@ -37,21 +47,21 @@ class Resume(SQLModel, table=True):
     file_path: str
     vector_doc_id: str  # id used in the chroma "resumes" collection
     content_hash: str = Field(index=True)  # sha256 of extracted text, used for dedup
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_at: datetime = Field(default_factory=utc_now)
 
 
 class AnalysisCache(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     cache_key: str = Field(index=True, unique=True)
     payload_json: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class RecruiterUser(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
     password_hash: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 # ─── New models for the portal expansion ───────────────────────────────────────
@@ -60,7 +70,7 @@ class CandidateUser(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
     password_hash: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CandidateProfile(SQLModel, table=True):
@@ -79,15 +89,15 @@ class CandidateProfile(SQLModel, table=True):
     gender: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class Post(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     candidate_id: int = Field(foreign_key="candidateuser.id", index=True)
     content: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class Job(SQLModel, table=True):
@@ -106,8 +116,8 @@ class Job(SQLModel, table=True):
     requirements: str = ""            # free-text or comma-separated skills
     remote_type: str = "onsite"       # "remote" | "onsite" | "hybrid"
     status: str = "open"              # "open" | "closed"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class Application(SQLModel, table=True):
@@ -119,21 +129,21 @@ class Application(SQLModel, table=True):
     matched_skills_json: str = "[]"
     missing_skills_json: str = "[]"
     status: str = "applied"           # "applied" | "reviewed" | "shortlisted" | "rejected"
-    applied_at: datetime = Field(default_factory=datetime.utcnow)
+    applied_at: datetime = Field(default_factory=utc_now)
 
 
 class DiscoveredSkill(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     term: str = Field(index=True, unique=True)
     branch: Optional[str] = Field(default=None, index=True)
-    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    first_seen_at: datetime = Field(default_factory=utc_now)
     occurrence_count: int = Field(default=1)
 
 
 class Suggestion(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     text: str
-    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    submitted_at: datetime = Field(default_factory=utc_now)
     submitter: Optional[str] = None
 
 

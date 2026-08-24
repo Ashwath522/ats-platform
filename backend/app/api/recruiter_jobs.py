@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from sqlmodel import Session, select
 
-from ..db import engine, Job, Application, RecruiterUser, Resume, CandidateProfile
+from ..db import engine, Job, Application, RecruiterUser, Resume, CandidateProfile, utc_now
 from ..auth import get_current_recruiter
 from ..services.geocoding import geocode
 from ..services.embeddings import EmbeddingModel
@@ -157,7 +157,7 @@ async def update_job(
                 raise HTTPException(status_code=400, detail="status must be 'open' or 'closed'")
             job.status = status
 
-        job.updated_at = datetime.utcnow()
+        job.updated_at = utc_now()
         session.add(job)
         session.commit()
         session.refresh(job)

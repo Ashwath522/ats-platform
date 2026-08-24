@@ -1,4 +1,6 @@
+import logging
 import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
@@ -15,7 +17,16 @@ from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, admin
 
-app = FastAPI(title="ATS Platform API")
+logger = logging.getLogger("ats-platform")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="ATS Platform API", lifespan=lifespan)
 
 # CORS_ORIGINS env var: comma-separated list of allowed origins, e.g.
 # "https://app.example.com,https://admin.example.com". Defaults to "*" for
@@ -36,12 +47,16 @@ from .api.auth import limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_debug_errors = os.environ.get("DEBUG_ERRORS", "").lower() in ("1", "true", "yes")
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An unexpected server error occurred.", "error": str(exc)},
-    )
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    content = {"detail": "An unexpected server error occurred."}
+    if _debug_errors:
+        content["error"] = str(exc)
+    return JSONResponse(status_code=500, content=content)
 
 # Original routers
 app.include_router(candidate.router)
@@ -55,11 +70,6 @@ app.include_router(candidate_jobs.router)
 app.include_router(candidate_posts.router)
 app.include_router(recruiter_jobs.router)
 app.include_router(admin.router)
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
 
 @app.get("/")

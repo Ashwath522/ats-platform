@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/recruiter/auth", tags=["recruiter-auth"])
 
 
 @router.post("/register")
-@limiter.limit("5/minute")
+@limiter.limit("20/minute")
 async def register(request: Request, username: str = Form(...), password: str = Form(...)):
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")

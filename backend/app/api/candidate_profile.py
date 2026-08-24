@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlmodel import Session, select
 
-from ..db import engine, CandidateUser, CandidateProfile, Resume
+from ..db import engine, CandidateUser, CandidateProfile, Resume, utc_now
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..utils.email_utils import send_welcome_email
@@ -108,7 +108,7 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
         if update.gender is not None:
             profile.gender = update.gender
 
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = utc_now()
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -148,7 +148,7 @@ async def upload_resume(
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
         profile.resume_id = resume_db_id
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = utc_now()
         session.add(profile)
         session.commit()
 
