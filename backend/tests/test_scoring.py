@@ -77,15 +77,18 @@ def test_score_resume_against_jd_missing_skills():
     assert 0 < result["keyword_coverage"] < 1
 
 
-def test_score_resume_against_jd_no_skills_in_jd_gives_full_keyword_coverage():
-    # If the JD mentions no known skills at all, keyword_coverage defaults to 1.0
-    # rather than penalizing the candidate for something the JD never asked for.
+def test_score_resume_against_jd_no_skills_in_jd_gives_null_coverage_not_false_100_percent():
+    # If the JD mentions no known skills at all (e.g. it's just a job title,
+    # not a real description), keyword_coverage must be None, NOT a false
+    # 1.0 - we can't claim "nothing missing" when we simply couldn't check.
     resume_text = "General experience."
     jd_text = "We are a fun team looking for a great teammate."
     resume_embedding = [1.0, 0.0]
     jd_embedding = [1.0, 0.0]
     result = score_resume_against_jd(resume_text, jd_text, resume_embedding, jd_embedding)
-    assert result["keyword_coverage"] == 1.0
+    assert result["keyword_coverage"] is None
+    assert result["jd_has_recognized_skills"] is False
+    assert result["ats_score"] == 100  # falls back to semantic similarity alone (=1.0 here)
 
 
 def test_score_resume_against_jd_score_is_bounded_0_to_100():

@@ -92,9 +92,14 @@ def score_resume_against_jd(
       {
         "ats_score": 0-100 int,
         "semantic_similarity": 0-1 float,
-        "keyword_coverage": 0-1 float,
+        "keyword_coverage": 0-1 float or null (see jd_has_recognized_skills),
         "matched_skills": [...],
         "missing_skills": [...],   # present in JD, absent from resume - the "what's missing"
+        "jd_has_recognized_skills": bool,  # False if the JD text was too short/vague for
+                                            # keyword analysis (e.g. a bare job title) - in
+                                            # that case the score falls back to semantic
+                                            # similarity only, and this flag tells the caller
+                                            # so the UI doesn't imply a false "nothing missing".
       }
     """
     semantic_sim = cosine_similarity(resume_embedding, jd_embedding)  # roughly 0..1 with normalized embeddings
@@ -105,17 +110,25 @@ def score_resume_against_jd(
     matched = sorted(jd_skills & resume_skills)
     missing = sorted(jd_skills - resume_skills)
 
-    keyword_coverage = (len(matched) / len(jd_skills)) if jd_skills else 1.0
+    jd_has_recognized_skills = len(jd_skills) > 0
 
-    # Blend: semantic similarity captures overall fit, keyword coverage captures
-    # literal ATS-style keyword matching (what real ATS systems actually filter on).
-    combined = (0.5 * semantic_sim) + (0.5 * keyword_coverage)
+    if jd_has_recognized_skills:
+        keyword_coverage = len(matched) / len(jd_skills)
+        combined = (0.5 * semantic_sim) + (0.5 * keyword_coverage)
+    else:
+        # Can't claim "0 missing skills" here - that's not "nothing is
+        # missing", it's "we couldn't check". Fall back to semantic
+        # similarity alone rather than a misleading false 1.0.
+        keyword_coverage = None
+        combined = semantic_sim
+
     ats_score = round(max(0.0, min(1.0, combined)) * 100)
 
     return {
         "ats_score": ats_score,
         "semantic_similarity": round(semantic_sim, 4),
-        "keyword_coverage": round(keyword_coverage, 4),
+        "keyword_coverage": round(keyword_coverage, 4) if keyword_coverage is not None else None,
+        "jd_has_recognized_skills": jd_has_recognized_skills,
         "experience_years": estimate_experience_years(resume_text),
         "matched_skills": matched,
         "missing_skills": missing,
