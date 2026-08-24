@@ -16,6 +16,97 @@ export default function ProfilePage() {
   const [resumeFile, setResumeFile] = useState(null)
   const [uploadingResume, setUploadingResume] = useState(false)
 
+  // ATS check against the profile's current resume - branch/role picked
+  // right here since the resume alone has no JD context.
+  const [atsBranch, setAtsBranch] = useState('')
+  const [atsRoles, setAtsRoles] = useState([])
+  const [atsRoleId, setAtsRoleId] = useState('')
+  const [checkingAts, setCheckingAts] = useState(false)
+  const [atsResult, setAtsResult] = useState(null)
+  const [atsError, setAtsError] = useState(null)
+
+  // Deep analysis (grammar / technical depth / experience) - separate,
+  // on-demand LLM call, not part of the fast score above.
+  const [checkingDeepAnalysis, setCheckingDeepAnalysis] = useState(false)
+  const [deepAnalysis, setDeepAnalysis] = useState(null)
+  const [deepAnalysisError, setDeepAnalysisError] = useState(null)
+
+  // "What should I add?" suggestions - also separate/on-demand.
+  const [checkingSuggestions, setCheckingSuggestions] = useState(false)
+  const [suggestions, setSuggestions] = useState(null)
+  const [suggestionsError, setSuggestionsError] = useState(null)
+
+  useEffect(() => {
+    if (!atsBranch) { setAtsRoles([]); setAtsRoleId(''); return }
+    fetch(`/api/candidate/roles?branch=${encodeURIComponent(atsBranch)}`)
+      .then(res => res.json())
+      .then(items => setAtsRoles(items || []))
+      .catch(() => setAtsRoles([]))
+  }, [atsBranch])
+
+  async function checkAts() {
+    if (!profile?.resume || !atsRoleId) {
+      setAtsError('Pick a branch and role first.')
+      return
+    }
+    setAtsError(null)
+    setCheckingAts(true)
+    setAtsResult(null)
+    setDeepAnalysis(null)
+    setSuggestions(null)
+    try {
+      const fd = new FormData()
+      fd.append('resume_id', profile.resume.resume_id)
+      fd.append('role_id', atsRoleId)
+      const res = await api('/api/candidate/ats-score-existing-resume', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'ATS check failed')
+      setAtsResult(data)
+    } catch (e) {
+      setAtsError(e.message)
+    } finally {
+      setCheckingAts(false)
+    }
+  }
+
+  async function runDeepAnalysis() {
+    if (!profile?.resume || !atsRoleId) return
+    setDeepAnalysisError(null)
+    setCheckingDeepAnalysis(true)
+    try {
+      const fd = new FormData()
+      fd.append('resume_id', profile.resume.resume_id)
+      fd.append('role_id', atsRoleId)
+      const res = await api('/api/candidate/deep-analysis', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Deep analysis failed')
+      setDeepAnalysis(data)
+    } catch (e) {
+      setDeepAnalysisError(e.message)
+    } finally {
+      setCheckingDeepAnalysis(false)
+    }
+  }
+
+  async function runSuggestions() {
+    if (!profile?.resume || !atsRoleId) return
+    setSuggestionsError(null)
+    setCheckingSuggestions(true)
+    try {
+      const fd = new FormData()
+      fd.append('resume_id', profile.resume.resume_id)
+      fd.append('role_id', atsRoleId)
+      const res = await api('/api/candidate/resume-suggestions', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Suggestions failed')
+      setSuggestions(data)
+    } catch (e) {
+      setSuggestionsError(e.message)
+    } finally {
+      setCheckingSuggestions(false)
+    }
+  }
+
   // Posts
   const [posts, setPosts] = useState([])
   const [newPost, setNewPost] = useState('')
@@ -223,10 +314,79 @@ export default function ProfilePage() {
           </button>
         </div>
         <div className="ats-action-row" style={{ marginTop: 12 }}>
-          <button className="primary" onClick={checkAts} disabled={!profile.resume || checkingAts}>
+          <div className="ats-target-picker" style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <select value={atsBranch} onChange={e => { setAtsBranch(e.target.value); setAtsRoleId('') }}>
+              <option value="">Select branch</option>
+              {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <select value={atsRoleId} onChange={e => setAtsRoleId(e.target.value)} disabled={!atsBranch}>
+              <option value="">Select role</option>
+              {atsRoles.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
+            </select>
+          </div>
+          <button className="primary" onClick={checkAts} disabled={!profile.resume || !atsRoleId || checkingAts}>
             {checkingAts ? 'Checking ATS…' : 'Check ATS of current resume'}
           </button>
+          {atsError && <p className="error-msg">{atsError}</p>}
         </div>
+
+        {atsResult && (
+          <div className="ats-result-panel" style={{ marginTop: 16 }}>
+            <div className="ats-score-summary" style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+              <span className="chip matched" style={{ fontSize: 16, fontWeight: 700 }}>{atsResult.ats_score}/100</span>
+              <span>{atsResult.job_title}</span>
+            </div>
+            <div className="chip-row">
+              {atsResult.matched_skills?.map(s => <span key={s} className="chip matched">{s}</span>)}
+              {atsResult.missing_skills?.map(s => <span key={s} className="chip missing">{s}</span>)}
+            </div>
+
+            <div className="ats-extra-actions" style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <button onClick={runDeepAnalysis} disabled={checkingDeepAnalysis}>
+                {checkingDeepAnalysis ? 'Analyzing…' : 'Check grammar & technical depth'}
+              </button>
+              <button onClick={runSuggestions} disabled={checkingSuggestions}>
+                {checkingSuggestions ? 'Thinking…' : 'What should I add?'}
+              </button>
+            </div>
+
+            {deepAnalysisError && <p className="error-msg">{deepAnalysisError}</p>}
+            {deepAnalysis && (
+              <div className="deep-analysis-panel" style={{ marginTop: 12 }}>
+                {deepAnalysis.llm_configured === false ? (
+                  <p className="panel-desc">{deepAnalysis.overall_summary}</p>
+                ) : (
+                  <>
+                    <div className="deep-analysis-scores" style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+                      <span>Grammar: {deepAnalysis.grammar_score}/100</span>
+                      <span>Technical depth: {deepAnalysis.technical_depth_score}/100</span>
+                      <span>Experience: {deepAnalysis.experience_score}/100</span>
+                    </div>
+                    {deepAnalysis.grammar_issues?.length > 0 && (
+                      <ul className="grammar-issues-list">
+                        {deepAnalysis.grammar_issues.map((g, i) => (
+                          <li key={i}><strong>{g.issue}</strong> — {g.suggestion}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {deepAnalysis.overall_summary && <p>{deepAnalysis.overall_summary}</p>}
+                  </>
+                )}
+              </div>
+            )}
+
+            {suggestionsError && <p className="error-msg">{suggestionsError}</p>}
+            {suggestions && (
+              suggestions.llm_configured === false ? (
+                <p className="panel-desc" style={{ marginTop: 12 }}>Resume suggestions aren't configured on this server yet (no LLM API key set).</p>
+              ) : (
+                <ul className="resume-suggestions-list" style={{ marginTop: 12 }}>
+                  {suggestions.suggestions?.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              )
+            )}
+          </div>
+        )}
       </div>
 
       {/* Posts Section */}

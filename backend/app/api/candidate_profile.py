@@ -63,6 +63,7 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None) -> dict:
         "gender": profile.gender,
         "resume": {
             "id": resume.id,
+            "resume_id": resume.vector_doc_id,
             "filename": resume.filename,
             "uploaded_at": resume.uploaded_at.isoformat(),
         } if resume else None,
@@ -76,6 +77,28 @@ async def get_profile(candidate: str = Depends(get_current_candidate)):
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
+
+
+@router.post("/resume")
+async def upload_profile_resume(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+    """
+    Upload/replace the resume on the candidate's profile. The frontend has
+    called this endpoint since the Profile page was built, but it never
+    actually existed - reuses the same extraction/dedup/vector-indexing
+    pipeline as every other resume upload path in this app.
+    """
+    _, _, _, resume_db_id = save_and_index_resume(file)
+
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+        profile.resume_id = resume_db_id
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+
+        resume = session.get(Resume, resume_db_id)
         return _profile_to_dict(profile, resume)
 
 
@@ -122,39 +145,3 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume)
-
-
-    @router.get("/ats")
-    async def get_ats(candidate: str = Depends(get_current_candidate)):
-        """Return a placeholder ATS check for the candidate's current resume.
-        In a full implementation this would run the model against a generic job description.
-        """
-        with Session(engine) as session:
-            user = _get_candidate_user(session, candidate)
-            profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)).first()
-            if not profile or not profile.resume_id:
-                raise HTTPException(status_code=400, detail="No resume uploaded for ATS check")
-            # Placeholder: return a static score or message
-            return {"ats_score": None, "message": "ATS check requires a job context – use job-specific ATS endpoints."}
-
-async def upload_resume(
-    file: UploadFile = File(...),
-    candidate: str = Depends(get_current_candidate),
-):
-    """Upload/replace the candidate's resume. Reuses existing extraction + dedup pipeline."""
-    doc_id, text, embedding, resume_db_id = save_and_index_resume(file)
-
-    with Session(engine) as session:
-        user = _get_candidate_user(session, candidate)
-        profile = _get_or_create_profile(session, user.id)
-        profile.resume_id = resume_db_id
-        profile.updated_at = utc_now()
-        session.add(profile)
-        session.commit()
-
-        resume = session.get(Resume, resume_db_id)
-        return {
-            "message": "Resume uploaded successfully",
-            "resume_id": doc_id,
-            "filename": resume.filename if resume else file.filename,
-        }

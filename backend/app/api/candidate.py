@@ -152,6 +152,56 @@ async def company_score_existing_resume(resume_id: str = Form(...), company_id: 
     return result
 
 
+@router.post("/ats-score-existing-resume")
+async def score_existing_resume(
+    resume_id: str = Form(...),
+    role_id: str = Form(""),
+    company_id: Optional[int] = Form(None),
+    job_description: str = Form(""),
+):
+    """
+    Fast ATS check for a resume already stored (e.g. the one on a candidate's
+    profile) against a role, company, or custom JD - no re-upload needed.
+    Mirrors the role_id/company_id/job_description resolution used by
+    /deep-analysis. Pure embeddings+keyword scoring, no LLM call.
+    """
+    resume_doc = vector_store.get_document("resumes", resume_id)
+    if not resume_doc:
+        raise HTTPException(status_code=404, detail="Resume not found. Run ATS scoring first.")
+
+    target_title = None
+    target_branch = None
+    target_text = job_description
+    if role_id:
+        role = get_role(role_id)
+        if not role:
+            raise HTTPException(status_code=400, detail="Unknown role_id")
+        target_title = role.title
+        target_branch = role.branch
+        target_text = role.description
+    elif company_id is not None:
+        with Session(engine) as session:
+            jd = session.exec(
+                select(JobDescription)
+                .where(JobDescription.company_id == company_id)
+                .order_by(JobDescription.updated_at.desc())
+            ).first()
+            if not jd:
+                raise HTTPException(status_code=404, detail="This company has no job description posted yet")
+            target_title = jd.title
+            target_text = jd.description
+    elif not job_description.strip():
+        raise HTTPException(status_code=400, detail="Provide one of role_id, company_id, or job_description")
+
+    resume_embedding = EmbeddingModel.get().embed_text(resume_doc["document"])
+    jd_embedding = EmbeddingModel.get().embed_text(f"{target_title}\n\n{target_text}" if target_title else target_text)
+    result = score_resume_against_jd(resume_doc["document"], target_text, resume_embedding, jd_embedding, branch=target_branch)
+    result["resume_id"] = resume_id
+    if target_title:
+        result["job_title"] = target_title
+    return result
+
+
 @router.post("/deep-analysis")
 async def deep_analysis(
     resume_id: str = Form(...),
