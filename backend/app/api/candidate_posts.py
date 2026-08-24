@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from ..db import engine, CandidateUser, Post
+from ..db import engine, CandidateUser, CandidateProfile, Post
 from ..auth import get_current_candidate
 
 router = APIRouter(prefix="/api/candidate/posts", tags=["candidate-posts"])
