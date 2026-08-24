@@ -29,7 +29,7 @@ found and fixed in the process.
 - Confirmed via live test: uploading the same resume file twice returns
   the identical `resume_id` both times instead of creating a duplicate.
 
-## 4. Auth / access control — DONE, verified (minimal)
+## 4. Auth / access control — DONE, verified
 - Confirmed via live test: unauthenticated/garbage-token requests to
   `/api/recruiter/*` return 401; register -> login -> authenticated
   create-company all work; duplicate username registration returns 409;
@@ -40,9 +40,15 @@ found and fixed in the process.
   crashed real registrations for long passwords. Pinned `bcrypt==4.0.1`
   and added explicit 72-byte truncation in `auth.py` as a backstop so this
   can't regress even if the pin is loosened later.
-- Still intentionally minimal: no password reset, no email verification,
-  no refresh tokens, no login rate limiting. Add before real multi-tenant
-  deployment.
+- Current auth is now role-based on the shared `User` table with JWT role
+  claims for `candidate`, `recruiter`, and `admin`.
+- Recruiter self-registration is disabled. Recruiters submit
+  `recruiter_requests`; admins approve/reject through admin-only endpoints.
+- Candidate signup uses OTP email verification. Password reset uses
+  expiring single-use reset tokens.
+- Still missing before real multi-tenant deployment: refresh tokens, login
+  rate limiting, lockout/abuse controls, audit logs, and a production
+  migration system.
 
 ## 5. Optional LLM-generated improvement suggestions — not started
 - If wanted: add a separate endpoint that takes the existing
@@ -82,16 +88,30 @@ found and fixed in the process.
   Docker available in this sandbox) — build and run `docker compose up`
   once to confirm before relying on it.
 - `CORS_ORIGINS` and `JWT_SECRET_KEY` are environment-configurable.
+- SMTP settings, DEV_MODE, and admin bootstrap credentials are
+  environment-configurable.
 - Still missing: CI/CD, TLS termination, secrets manager integration.
 
 ## 11. Tests — DONE, verified
-- `backend/tests/test_scoring.py` and `backend/tests/test_auth.py`: all 16
-  tests actually executed via `pytest` and passing (after the bcrypt fix
-  in item 4).
-- Still missing: integration tests hitting the actual FastAPI endpoints
-  end-to-end (would need `httpx.AsyncClient` + a test DB — the live curl/
-  browser testing this session covered this manually but it isn't
-  automated), and any frontend component tests.
+- Full backend suite now has 32 passing tests via
+  `./venv/bin/python -m pytest backend/tests`.
+- Coverage includes scoring math, branch vocabulary, deep-analysis parser
+  behavior, password hashing/JWT validation, role separation, admin vs.
+  recruiter route protection, recruiter request -> approve -> user created
+  -> email triggered, OTP validation/expiry, password-reset single-use
+  behavior, and the core ATS scoring endpoint.
+- Still missing: frontend component tests and a dedicated isolated test DB
+  fixture. Current endpoint tests use unique emails against the local SQLite
+  DB.
+
+## 12. Email delivery — implemented, real mailbox unverified
+- One reusable SMTP utility exists in `backend/app/services/email_delivery.py`.
+- It is wired into signup OTP, password reset, and approved recruiter
+  credential delivery.
+- DEV_MODE fallback was exercised with SMTP deliberately disabled and returns
+  OTP/reset/generated password details in `dev_only`.
+- Still unverified: real SMTP delivery to a live mailbox, because no SMTP
+  credentials were configured in this sandbox.
 
 ---
 Recommended next steps, in priority order:
@@ -102,5 +122,6 @@ Recommended next steps, in priority order:
    starts both containers and they can talk to each other.
 3. Add a JD history view (item 7) if you want recruiters to see past
    postings, not just the current one.
-4. Everything else is either done-and-verified or a deliberate scope cut
+4. Configure SMTP and send one real OTP/reset/recruiter credential email.
+5. Everything else is either done-and-verified or a deliberate scope cut
    documented above (auth hardening, LLM suggestions, MIME sniffing).
