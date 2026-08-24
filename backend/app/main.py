@@ -9,13 +9,12 @@ load_dotenv()  # loads backend/.env if present; no-op (and no error) if it doesn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
 
 from .db import init_db
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, admin
+from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
 logger = logging.getLogger("ats-platform")
 
@@ -44,7 +43,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from .api.auth import limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

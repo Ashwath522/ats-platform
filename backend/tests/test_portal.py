@@ -83,6 +83,7 @@ from app.main import app
 
 
 def test_admin_suggestions_flow(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAIL", "portal-admin@example.com")
     monkeypatch.setenv("ADMIN_PASSWORD", "secretAdminCode")
     client = TestClient(app)
     with client:
@@ -91,12 +92,18 @@ def test_admin_suggestions_flow(monkeypatch):
         assert res.status_code == 200
         assert res.json()["success"] is True
 
-        # Try to view suggestions with wrong password
+        # Query-string passwords are no longer accepted.
         res_fail = client.get("/api/admin/suggestions", params={"password": "wrong"})
         assert res_fail.status_code == 401
 
-        # View suggestions with correct password
-        res_ok = client.get("/api/admin/suggestions", params={"password": "secretAdminCode"})
+        login = client.post(
+            "/api/auth/login",
+            data={"email": "portal-admin@example.com", "password": "secretAdminCode"},
+        )
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+
+        res_ok = client.get("/api/admin/suggestions", headers={"Authorization": f"Bearer {token}"})
         assert res_ok.status_code == 200
         data = res_ok.json()
         assert "candidate_count" in data

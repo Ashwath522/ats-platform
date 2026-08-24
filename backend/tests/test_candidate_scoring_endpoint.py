@@ -22,8 +22,8 @@ class FakeEmbeddingModel:
 def test_core_ats_scoring_endpoint_returns_score(monkeypatch):
     monkeypatch.setattr(
         candidate,
-        "_save_and_index_resume",
-        lambda file: ("resume-1", "Python developer with 3 years of Docker experience.", [1.0, 0.0]),
+        "save_and_index_resume",
+        lambda file: ("resume-1", "Python developer with 3 years of Docker experience.", [1.0, 0.0], None),
     )
     monkeypatch.setattr(candidate.EmbeddingModel, "get", lambda: FakeEmbeddingModel())
 

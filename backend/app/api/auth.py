@@ -2,20 +2,17 @@ import hashlib
 import os
 import secrets
 import string
-import sys
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_admin, hash_password, verify_password
 from ..db import EmailToken, RecruiterRequest, RecruiterUser, User, engine
+from ..rate_limit import limiter
 from ..services.email_delivery import EmailDeliveryError, send_email
 
-limiter = Limiter(key_func=get_remote_address, enabled=not ("pytest" in sys.modules or os.getenv("TESTING") == "1"))
 router = APIRouter(tags=["auth"])
 
 

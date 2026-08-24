@@ -42,7 +42,8 @@ def create_access_token(username: str, role: str = "recruiter", expires_delta: O
 
 
 def decode_access_token(token: str) -> str:
-    return decode_token_payload(token)["sub"]
+    payload = decode_token_payload(token)
+    return payload["sub"], payload["role"]
 
 
 def decode_token_payload(token: str) -> dict:
