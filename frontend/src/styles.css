@@ -370,8 +370,22 @@ button.primary.applied {
   opacity: 0.7;
 }
 
+button.secondary:hover { border-color: var(--accent); }
+button.secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary.compact-btn {
+  margin-top: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
 .error-msg {
   color: var(--danger);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.success-msg {
+  color: #1f7a4d;
   font-size: 13px;
   margin-top: 10px;
 }

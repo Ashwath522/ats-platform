@@ -23,6 +23,7 @@ logger = logging.getLogger("ats-platform")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    auth.ensure_admin_user()
     yield
 
 

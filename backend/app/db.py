@@ -57,6 +57,37 @@ class AnalysisCache(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ""
+    email: str = Field(index=True, unique=True)
+    phone: Optional[str] = None
+    role: str = Field(index=True)  # candidate | recruiter | admin
+    password_hash: str
+    email_verified: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class RecruiterRequest(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    email: str = Field(index=True)
+    phone: str
+    status: str = Field(default="pending", index=True)  # pending | approved | rejected
+    submitted_at: datetime = Field(default_factory=utc_now)
+    decided_at: Optional[datetime] = None
+
+
+class EmailToken(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True)
+    purpose: str = Field(index=True)  # signup_otp | password_reset
+    token_hash: str
+    expires_at: datetime
+    used_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class RecruiterUser(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
@@ -166,6 +197,17 @@ def _migrate_sqlite():
     if "jobdescription" in inspector.get_table_names() and "apply_url" not in jd_columns:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE jobdescription ADD COLUMN apply_url VARCHAR"))
+    if "user" in inspector.get_table_names():
+        user_columns = {column["name"] for column in inspector.get_columns("user")}
+        if "name" not in user_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user ADD COLUMN name VARCHAR DEFAULT ''"))
+        if "phone" not in user_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user ADD COLUMN phone VARCHAR"))
+        if "email_verified" not in user_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
 
 
 def get_session():
