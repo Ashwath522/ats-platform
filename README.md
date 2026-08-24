@@ -9,7 +9,7 @@ anything about git history beyond `main`'s current tip — always check
 building on top of a claim in this doc. This section is accurate as of the
 commit it's part of, not a permanent guarantee.
 
-## Verified current state (candidate/recruiter ATS tool only — no portal yet)
+## Verified current state
 
 - **Recruiter auth**: real (JWT + bcrypt, `backend/app/auth.py` +
   `backend/app/api/auth.py`), rate-limited via `slowapi`, and
@@ -42,25 +42,24 @@ commit it's part of, not a permanent guarantee.
   approval flow, OTP/password-reset, MIME validation, portal helpers,
   vocab learning, and API integration. Run `pytest` to confirm current
   pass count; don't trust this number blindly after further changes.
-- **NOT present yet**: candidate accounts/profiles, a job board, job
-  postings, applications, posts, GPS/location matching, or any 4-tab
-  candidate navigation. The only "candidate" concept right now is an
-  anonymous resume upload — there is no candidate login, no persistent
-  candidate identity, and no portal UI beyond the existing single-page ATS
-  checker. If you're building the portal expansion (candidate/recruiter
-  accounts, job postings, applications, profiles), all of that is new
-  work on top of this — don't assume any of it exists already.
+- **Candidate portal**: candidate auth, profile/resume management, job
+  browsing, applications, posts/feed, and contact/profile screens are
+  present in the backend routers and frontend routes.
+- **Recruiter job postings**: approved recruiters can create/manage jobs
+  and review applicants in addition to the original company/JD matching
+  workflow.
 - **CI**: a GitHub Actions workflow may or may not be present depending on
   push history (a token scope issue previously blocked pushing
   `.github/workflows/`) — check `.github/workflows/` directly rather than
   assuming.
 
-Resume screening system with three flows:
+Resume screening system with these main flows:
 
 1. **Branch/role ATS check** — upload a resume + choose a branch and role template, or paste any custom job description, then get an ATS score and missing keywords/skills.
 2. **Company-specific ATS check** — candidate selects a company from a list; gets scored against that company's *current* job title/description.
 3. **Recruiter dashboard** (auth required) — approved recruiters post/update a company's job description; see all indexed resumes ranked by match score. Updating the JD immediately re-ranks candidates — no manual resync step.
-4. **Admin approval queue** — recruiter signups enter a pending request table; admins approve/reject requests and approved recruiters receive generated credentials by email.
+4. **Candidate portal** — candidates sign up/login, maintain a profile and resume, browse jobs, apply, view suggestions, and post updates.
+5. **Admin approval queue** — recruiter signups enter a pending request table; admins approve/reject requests and approved recruiters receive generated credentials by email.
 
 ## Why this architecture
 
@@ -139,6 +138,16 @@ Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tok
 - `GET /api/candidate/companies` — list companies with an open role
 - `POST /api/candidate/ats-score-for-company` — flow 2 (multipart: `file`, `company_id`)
 
+**Candidate portal** (candidate bearer token required)
+- `GET/POST /api/candidate/profile` — read/update profile details
+- `POST /api/candidate/profile/resume` — upload or replace profile resume
+- `GET /api/candidate/jobs` — browse open job postings
+- `GET /api/candidate/jobs/{id}` — view one job
+- `POST /api/candidate/jobs/{id}/apply` — apply with the stored resume and auto-score
+- `GET /api/candidate/jobs/applications/mine` — list this candidate's applications
+- `POST /api/candidate/jobs/{id}/suggestions` — get resume/job suggestions
+- `GET/POST /api/candidate/posts` — global candidate feed
+
 **Auth / requests**
 - `POST /api/auth/register` — create candidate account and send signup OTP (`name`, `email`, `password`)
 - `POST /api/auth/verify-otp` — verify candidate OTP (`email`, `otp`)
@@ -155,6 +164,11 @@ Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tok
 - `DELETE /api/recruiter/companies/{id}` — delete a company and its job descriptions
 - `POST /api/recruiter/companies/{id}/job-description` — set/update JD (`title`, `description`, optional `apply_url`)
 - `GET /api/recruiter/companies/{id}/matching-resumes?top_k=20&offset=0` — flow 3, ranked candidates against the current JD, paginated
+- `GET /api/recruiter/jobs` — list owned job postings
+- `POST /api/recruiter/jobs` — create a job posting
+- `PUT /api/recruiter/jobs/{id}` — update a job posting, including closing it with `status=closed`
+- `DELETE /api/recruiter/jobs/{id}` — delete a job posting and its applications
+- `GET /api/recruiter/jobs/{id}/applicants` — review applicants
 
 **Admin** (admin bearer token required)
 - `GET /api/admin/recruiter-requests` — list pending recruiter requests
@@ -170,7 +184,7 @@ Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tok
 ## Status / next steps
 
 - **Embedding model verified**: the real `all-MiniLM-L6-v2` model loads at runtime via `sentence-transformers` and produces 384-dimensional embeddings. There is no TF-IDF stub or fallback path in production code.
-- Scoring pipeline (embeddings + keyword gap) is tested at the pure-logic layer; verified against real execution in `backend/tests/test_scoring.py`.
+- Scoring pipeline (embeddings + keyword gap) is tested at the pure-logic layer and through API/portal flows; the embedding service itself was also verified locally with the real model.
 - Branch-scoped role templates now cover CS/software, Mechanical, Civil, ECE, EEE, and Aerospace.
 - On-demand deep analysis endpoint is implemented and tested for JSON parsing and no-key graceful behavior. A real Anthropic/Gemini call still requires the relevant API key.
 - Recruiter endpoints now require recruiter role auth; admin endpoints require admin role auth. Candidate scoring endpoints remain open for the demo flow.
@@ -181,5 +195,5 @@ Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tok
 - File validation: extension allowlist + 8MB streamed size limit. Content-based MIME sniffing via `python-magic`/libmagic is implemented and works when libmagic is installed; degrades gracefully (skips the MIME check) when it is not. No handling for corrupted/password-protected PDFs beyond a generic extraction-failed error.
 - Docker + docker-compose added for both services, with a persisted data volume. The embedding model still downloads on first request inside the container unless you bake it into the image (see comment in `backend/Dockerfile`).
 - Skills vocabulary in `backend/app/services/skills_vocab.py` now includes software plus core engineering branch coverage and selected business skills.
-- No JD history view, no company rename, no refresh tokens/rate limiting, and no candidate-side score history UI yet.
+- No company rename, no refresh tokens/lockout/audit-log hardening, no production migration system, and no candidate-side score history UI yet.
 - Still unverified: Docker runtime, real SMTP mailbox delivery, real Gemini/Anthropic API calls, and remote CI status.

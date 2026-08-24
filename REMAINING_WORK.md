@@ -14,11 +14,11 @@ found and fixed in the process.
   loaded the app, registered/logged in as a recruiter, created a company,
   posted a JD, and deleted the company — with screenshots confirming each
   screen rendered correctly. No console/page errors during any of this.
-- This was NOT run against the real embedding model (see item 2) — a
-  TF-IDF stub stood in for `sentence-transformers` for this pass only,
-  since this sandbox can't reach huggingface.co. The API/DB/vector-store/
-  auth wiring is confirmed correct regardless of which embedding backend
-  is behind it.
+- That earlier browser pass used a temporary TF-IDF stand-in because the
+  sandbox could not reach huggingface.co at the time. The actual runtime
+  embedding path has since been verified locally with the real
+  `all-MiniLM-L6-v2` model (see item 2), and the production code has no
+  TF-IDF fallback.
 
 ## 2. Real embedding model download — DONE, verified
 - Confirmed locally: `all-MiniLM-L6-v2` downloads from Hugging Face
@@ -65,9 +65,8 @@ found and fixed in the process.
   the `DELETE /api/recruiter/companies/{id}` endpoint. Verified via a real
   browser test: create a company, click Delete, confirm the dialog, list
   refreshes and the company is gone.
-- Still missing: no JD history view in the UI (only the latest JD per
-  company is ever shown/used — older ones are orphaned rows in the DB with
-  no UI to browse them), no edit-in-place for company name.
+- Past job descriptions are now visible in the recruiter UI. Still
+  missing: no edit-in-place for company name.
 
 ## 8. Recruiter dashboard scaling — DONE, verified
 - Confirmed via live test with `top_k`/`offset` params that pagination
@@ -122,9 +121,7 @@ found and fixed in the process.
 Recommended next steps, in priority order:
 1. Build and run the Docker setup once (item 10) to confirm it actually
    starts both containers and they can talk to each other.
-2. Add a JD history view (item 7) if you want recruiters to see past
-   postings, not just the current one.
-3. Configure SMTP and send one real OTP/reset/recruiter credential email.
-4. Everything else is either done-and-verified or a deliberate scope cut
+2. Configure SMTP and send one real OTP/reset/recruiter credential email.
+3. Everything else is either done-and-verified or a deliberate scope cut
    documented above (auth hardening, LLM suggestions, corrupted-PDF
    handling).
