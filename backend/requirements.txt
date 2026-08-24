@@ -13,5 +13,4 @@ python-jose[cryptography]
 slowapi
 pytest
 httpx
-anthropic
 python-magic

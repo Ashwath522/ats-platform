@@ -85,7 +85,6 @@ def test_parse_suggestions_json():
 
 def test_run_suggestions_not_configured(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     result = run_resume_suggestions("resume text", "jd text", ["PLC Programming"])
     assert result["llm_configured"] is False

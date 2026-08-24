@@ -8,18 +8,17 @@ from typing import Any, Dict, List
 import httpx
 from fastapi import HTTPException
 
-ANTHROPIC_MODEL = os.environ.get("SUGGESTIONS_MODEL", "claude-haiku-4-5-20251001")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 DEFAULT_NOT_CONFIGURED = {
     "llm_configured": False,
     "grammar_score": None,
     "grammar_issues": [],
     "technical_depth_score": None,
-    "technical_depth_notes": "Deep analysis requires GEMINI_API_KEY or ANTHROPIC_API_KEY.",
+    "technical_depth_notes": "Deep analysis requires GEMINI_API_KEY.",
     "experience_score": None,
-    "experience_notes": "Deep analysis requires GEMINI_API_KEY or ANTHROPIC_API_KEY.",
-    "overall_summary": "Set GEMINI_API_KEY or ANTHROPIC_API_KEY to enable grammar, technical depth, and experience analysis.",
+    "experience_notes": "Deep analysis requires GEMINI_API_KEY.",
+    "overall_summary": "Set GEMINI_API_KEY to enable grammar, technical depth, and experience analysis.",
 }
 
 
@@ -80,8 +79,6 @@ Resume:
 def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
     if os.environ.get("GEMINI_API_KEY"):
         return _run_gemini_analysis(resume_text, target_text)
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return _run_anthropic_analysis(resume_text, target_text)
     return DEFAULT_NOT_CONFIGURED.copy()
 
 
@@ -111,30 +108,6 @@ def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail="Gemini returned invalid deep-analysis JSON") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Gemini deep-analysis request failed") from exc
-
-
-def _run_anthropic_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
-    try:
-        from anthropic import Anthropic
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Anthropic SDK is not installed") from exc
-
-    try:
-        client = Anthropic()
-        message = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1200,
-            temperature=0.1,
-            messages=[{"role": "user", "content": _prompt(resume_text, target_text)}],
-        )
-        raw = "".join(block.text for block in message.content if getattr(block, "type", None) == "text")
-        return parse_analysis_json(raw)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="LLM returned invalid deep-analysis JSON") from exc
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Deep analysis provider request failed") from exc
 
 
 def parse_suggestions_json(raw_text: str) -> Dict[str, Any]:
@@ -177,8 +150,6 @@ def run_resume_suggestions(resume_text: str, target_text: str, missing_skills: L
         return {"llm_configured": True, "suggestions": ["Your resume already covers all the keywords identified in the job description!"]}
     if os.environ.get("GEMINI_API_KEY"):
         return _run_gemini_suggestions(resume_text, target_text, missing_skills)
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return _run_anthropic_suggestions(resume_text, target_text, missing_skills)
     return {"llm_configured": False, "suggestions": []}
 
 
@@ -208,27 +179,3 @@ def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: 
         raise HTTPException(status_code=502, detail="Gemini returned invalid suggestions JSON") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Gemini suggestions request failed") from exc
-
-
-def _run_anthropic_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
-    try:
-        from anthropic import Anthropic
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Anthropic SDK is not installed") from exc
-
-    try:
-        client = Anthropic()
-        message = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1000,
-            temperature=0.2,
-            messages=[{"role": "user", "content": _suggestions_prompt(resume_text, target_text, missing_skills)}],
-        )
-        raw = "".join(block.text for block in message.content if getattr(block, "type", None) == "text")
-        return parse_suggestions_json(raw)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="LLM returned invalid suggestions JSON") from exc
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Deep analysis provider request failed") from exc
