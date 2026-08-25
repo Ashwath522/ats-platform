@@ -148,3 +148,45 @@ def test_password_reset_dev_fallback_token_is_single_use(monkeypatch):
 
     assert confirm_response.status_code == 200
     assert replay_response.status_code == 400
+
+
+def test_recruiter_request_approve_db_commits_even_if_email_fails(monkeypatch):
+    monkeypatch.delenv("DEV_MODE", raising=False)
+    
+    def fake_send_email(to, subject, body):
+        raise auth_api.EmailDeliveryError("Simulated failure")
+
+    monkeypatch.setattr(auth_api, "send_email", fake_send_email)
+    admin = _create_user(_email("admin3"), "admin")
+    admin_token = create_access_token(admin.email, "admin")
+    recruiter_email = _email("atomicity-fail")
+
+    request_response = client.post(
+        "/api/recruiter-requests",
+        data={"name": "Atomicity Recruiter", "email": recruiter_email, "phone": "555-0200"},
+    )
+    assert request_response.status_code == 200
+    request_id = request_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/admin/recruiter-requests/{request_id}/approve",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert approve_response.status_code == 200
+    resp_json = approve_response.json()
+    assert resp_json["approved"] is True
+    assert resp_json["email_sent"] is False
+    assert "warning" in resp_json
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.email == recruiter_email)).first()
+        assert user is not None
+        assert user.role == "recruiter"
+
+    retry_response = client.post(
+        f"/api/admin/recruiter-requests/{request_id}/approve",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert retry_response.status_code == 400
+    assert retry_response.json()["detail"] == "Recruiter request already decided"

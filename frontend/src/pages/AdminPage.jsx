@@ -88,12 +88,17 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(data.detail || 'Approval failed')
       
       // Save temp password if returned
-      if (data.temp_password) {
-        setTempPasswords(prev => ({ ...prev, [requestId]: data.temp_password }))
+      if (data.temporary_password) {
+        setTempPasswords(prev => ({ ...prev, [requestId]: data.temporary_password }))
       }
       
       // Update local state to 'approved'
-      setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'approved' } : r))
+      setRequests(prev => prev.map(r => r.id === requestId ? { 
+        ...r, 
+        status: 'approved',
+        email_sent: data.email_sent,
+        warning: data.warning
+      } : r))
       
     } catch (err) {
       alert(err.message)
@@ -253,10 +258,18 @@ export default function AdminPage() {
                           </div>
                         </div>
                       </div>
-                      {tempPasswords[req.id] && (
-                        <div className="temp-password-banner">
-                          Account created! The user has been emailed, but if email delivery fails, their temporary password is: 
-                          <span className="temp-password-value">{tempPasswords[req.id]}</span>
+                      {(tempPasswords[req.id] || req.email_sent === false) && (
+                        <div className="temp-password-banner" style={req.email_sent === false ? { backgroundColor: '#fff3cd', color: '#856404' } : {}}>
+                          {req.email_sent === false ? (
+                            <strong>Account created, but email failed: {req.warning || 'They will need to reset their password.'} </strong>
+                          ) : (
+                            <span>Account created! The user has been emailed. </span>
+                          )}
+                          {tempPasswords[req.id] && (
+                            <span>
+                              If needed, their temporary password is: <span className="temp-password-value">{tempPasswords[req.id]}</span>
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>

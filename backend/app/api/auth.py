@@ -347,14 +347,26 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
         recruiter_request.decided_at = datetime.utcnow()
         session.add(recruiter_request)
         session.commit()
-    delivery = _send_email_or_dev(
-        user_email,
-        "Your ATS Platform recruiter account is approved",
-        f"Your recruiter account is ready.\n\nEmail: {user_email}\nTemporary password: {generated_password}",
-        {"temporary_password": generated_password, "purpose": "recruiter_credentials"},
-    )
-    response = {"approved": True, "user": user_data, **delivery}
-    if _dev_mode_enabled() and "dev_only" in delivery:
+    try:
+        delivery = _send_email_or_dev(
+            user_email,
+            "Your ATS Platform recruiter account is approved",
+            f"Your recruiter account is ready.\n\nEmail: {user_email}\nTemporary password: {generated_password}",
+            {"temporary_password": generated_password, "purpose": "recruiter_credentials"},
+        )
+        response = {"approved": True, "user": user_data, **delivery}
+    except HTTPException as e:
+        if e.status_code == 502:
+            response = {
+                "approved": True,
+                "user": user_data,
+                "email_sent": False,
+                "warning": "Recruiter account created but email delivery failed.",
+            }
+        else:
+            raise
+    
+    if _dev_mode_enabled() and (response.get("dev_only") or not response.get("email_sent")):
         response["temporary_password"] = generated_password
     return response
 
