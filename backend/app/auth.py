@@ -90,9 +90,8 @@ def get_current_recruiter(user: User = Depends(require_role("recruiter"))) -> st
     return user.email
 
 
-def get_current_candidate(user: User = Depends(require_role("candidate"))) -> User:
-    return user
+def get_current_candidate(user: User = Depends(require_role("candidate"))) -> str:
+    return user.email
 
-
-def get_current_admin(user: User = Depends(require_role("admin"))) -> User:
-    return user
+def get_current_admin(user: User = Depends(require_role("admin"))) -> str:
+    return user.email

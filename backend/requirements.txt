@@ -14,3 +14,4 @@ slowapi
 pytest
 httpx
 python-magic
+reportlab

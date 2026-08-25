@@ -54,7 +54,18 @@ Resume screening system with these main flows:
 4. **Candidate portal** — candidates sign up/login, maintain a profile and resume, browse jobs, apply, view suggestions, and post updates.
 5. **Admin approval queue** — recruiter signups enter a pending request table; admins approve/reject requests and approved recruiters receive generated credentials by email.
 
-## Why this architecture
+## Generating Demo Data
+
+To populate the database with a full set of realistic demo data (Admin, Recruiters, Candidates, varied Jobs, dynamic PDF resumes, and scored applications):
+
+```bash
+cd backend
+venv/bin/pip install -r requirements.txt
+PYTHONPATH=. venv/bin/python scripts/seed_demo_data.py
+```
+This will automatically generate realistic PDF resumes, process them through the actual ATS machine-learning embedding pipeline, simulate applications, and output login credentials to a local `demo_credentials.md` file at the repository root.
+
+## Architecture
 
 Scoring is done **without any LLM call** in the hot path, for latency:
 - Semantic similarity via a local `sentence-transformers` embedding model (`all-MiniLM-L6-v2` by default, or configurable via `EMBEDDING_MODEL`), running on CPU in milliseconds.
