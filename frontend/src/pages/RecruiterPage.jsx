@@ -669,17 +669,31 @@ function RecruiterDashboard({ token, username, onLogout }) {
                         <td>{a.candidate_name || '—'}</td>
                         <td>{a.resume_filename || '—'}</td>
                         <td className="score-cell">{a.ats_score}</td>
-                        <td>
-                          <select 
-                            value={a.status} 
-                            onChange={(e) => updateApplicantStatus(selectedJobId, a.application_id, e.target.value)}
-                            style={{ padding: '4px 8px', fontSize: 12 }}
-                          >
-                            <option value="applied">Applied</option>
-                            <option value="reviewed">Reviewed</option>
-                            <option value="shortlisted">Shortlisted</option>
-                            <option value="rejected">Rejected</option>
-                          </select>
+                        <td style={{ minWidth: '180px' }}>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <select 
+                              id={`status-select-${a.application_id}`}
+                              defaultValue={a.status} 
+                              style={{ padding: '4px 8px', fontSize: 12, flex: 1 }}
+                            >
+                              <option value="applied">Applied</option>
+                              <option value="reviewed">Reviewed</option>
+                              <option value="shortlisted">Shortlisted</option>
+                              <option value="rejected">Rejected</option>
+                            </select>
+                            <button 
+                              className="btn btn-primary" 
+                              style={{ padding: '4px 8px', fontSize: 12 }}
+                              onClick={() => {
+                                const el = document.getElementById(`status-select-${a.application_id}`);
+                                if (el && el.value !== a.status) {
+                                  updateApplicantStatus(selectedJobId, a.application_id, el.value);
+                                }
+                              }}
+                            >
+                              Update
+                            </button>
+                          </div>
                         </td>
                         <td><div className="chip-row">{a.matched_skills.slice(0, 4).map(s => <span key={s} className="chip matched">{s}</span>)}</div></td>
                         <td><div className="chip-row">{a.missing_skills.slice(0, 4).map(s => <span key={s} className="chip missing">{s}</span>)}</div></td>

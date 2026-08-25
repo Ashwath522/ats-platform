@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth.jsx'
 
@@ -56,6 +56,17 @@ function GlobalNav() {
 
 function LandingPage() {
   const navigate = useNavigate()
+  const { candidateToken, recruiterToken } = useAuth()
+  
+  // Optional: Auto redirect if they hit the homepage while logged in
+  useEffect(() => {
+    if (candidateToken) {
+      navigate('/candidate')
+    } else if (recruiterToken) {
+      navigate('/recruiter')
+    }
+  }, [candidateToken, recruiterToken, navigate])
+
   return (
     <div className="landing-wrapper">
       <div className="landing-hero">
@@ -68,7 +79,7 @@ function LandingPage() {
         </p>
 
         <div className="landing-cta-row">
-          <Link to="/candidate/login" className="btn btn-primary">I'm a Candidate</Link>
+          <Link to={candidateToken ? "/candidate" : "/candidate/login"} className="btn btn-primary">I'm a Candidate</Link>
           <Link to="/recruiter" className="btn btn-secondary">I'm a Recruiter</Link>
         </div>
       </div>

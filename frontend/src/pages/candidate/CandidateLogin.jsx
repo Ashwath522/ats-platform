@@ -11,6 +11,13 @@ export default function CandidateLogin() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  React.useEffect(() => {
+    const token = localStorage.getItem('ats_candidate_token')
+    if (token) {
+      navigate('/candidate')
+    }
+  }, [navigate])
+
   async function submit() {
     if (!username.trim() || !password) {
       setError('Enter a username and password.')
