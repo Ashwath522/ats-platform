@@ -1,11 +1,67 @@
 import React, { useState } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
+
+const scoutCSS = `
+  @keyframes scoutScan {
+    0% { transform: translateY(0) scale(1); opacity: 0.8; }
+    50% { transform: translateY(-10px) scale(1.05); opacity: 1; }
+    100% { transform: translateY(0) scale(1); opacity: 0.8; }
+  }
+  @keyframes scoutBeam {
+    0% { opacity: 0; height: 0; }
+    50% { opacity: 0.5; height: 60px; }
+    100% { opacity: 0; height: 0; }
+  }
+  .corelink-scout {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: var(--background);
+  }
+  .scout-drone {
+    width: 60px;
+    height: 60px;
+    background: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: 20px 20px 8px 8px;
+    position: relative;
+    animation: scoutScan 2s ease-in-out infinite;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  }
+  .scout-eye {
+    width: 24px;
+    height: 12px;
+    background: var(--primary);
+    border-radius: 6px;
+    box-shadow: 0 0 10px var(--primary);
+  }
+  .scout-beam {
+    width: 40px;
+    background: linear-gradient(to bottom, rgba(59, 130, 246, 0.4) 0%, rgba(59, 130, 246, 0) 100%);
+    animation: scoutBeam 2s ease-in-out infinite;
+    margin-top: 4px;
+    border-radius: 4px;
+  }
+`;
+
 import { useNavigate, Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import Onboarding from '../../components/Onboarding.jsx'
+import { Home, Briefcase, Users, Building, LogOut } from 'lucide-react'
 
 export default function RecruiterLayout() {
   const { recruiterToken, recruiterUsername, loginRecruiter, logoutRecruiter } = useAuth()
   const [role, setRole] = useState(() => localStorage.getItem('ats_recruiter_role') || 'recruiter')
+  const [isInitializing, setIsInitializing] = useState(true)
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setIsInitializing(false), 1500)
+    return () => clearTimeout(timer)
+  }, [])
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -21,6 +77,21 @@ export default function RecruiterLayout() {
     navigate('/')
   }
 
+    if (isInitializing && recruiterToken) {
+    return (
+      <div className="corelink-scout">
+        <style>{scoutCSS}</style>
+        <div className="scout-drone">
+          <div className="scout-eye"></div>
+        </div>
+        <div className="scout-beam"></div>
+        <div style={{ marginTop: 24, fontWeight: 500, color: 'var(--text-secondary)', letterSpacing: 1, textTransform: 'uppercase', fontSize: 13 }}>
+          CoreLink Initializing...
+        </div>
+      </div>
+    )
+  }
+
   if (!recruiterToken) {
     return <RecruiterAuthPanel onLogin={handleLogin} />
   }
@@ -30,11 +101,10 @@ export default function RecruiterLayout() {
   }
 
   const navItems = [
-    { id: 'home', label: 'Home', path: '/recruiter/home', icon: '🏠' },
-    { id: 'jobs', label: 'Jobs', path: '/recruiter/jobs', icon: '💼' },
-    { id: 'talent', label: 'Talent', path: '/recruiter/talent', icon: '👥' },
-    { id: 'messages', label: 'Messages', path: '/recruiter/messages', icon: '💬' },
-    { id: 'profile', label: 'Profile', path: '/recruiter/profile', icon: '🏢' },
+    { id: 'home', label: 'Home', path: '/recruiter/home', icon: <Home size={20} /> },
+    { id: 'jobs', label: 'Jobs', path: '/recruiter/jobs', icon: <Briefcase size={20} /> },
+    { id: 'talent', label: 'Talent', path: '/recruiter/talent', icon: <Users size={20} /> },
+    { id: 'profile', label: 'Profile', path: '/recruiter/profile', icon: <Building size={20} /> },
   ]
 
   return (
@@ -68,7 +138,7 @@ export default function RecruiterLayout() {
 
         <div style={{ padding: 20, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Signed in as <strong style={{ color: 'var(--text)' }}>{recruiterUsername}</strong></span>
-          <button className="btn btn-secondary btn-sm" onClick={handleLogout}>Log out</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ justifyContent: "flex-start", padding: "8px 12px", color: "var(--text-secondary)" }}><LogOut size={16} style={{ marginRight: 8 }} /> Log out</button>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
+import { Plus, MapPin, Briefcase } from 'lucide-react'
 
 export default function RecruiterJobs() {
   const { api } = useOutletContext()
@@ -122,46 +123,53 @@ export default function RecruiterJobs() {
       {error && <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div>}
 
       {!showJobForm && !selectedJobId && (
-        <div className="panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2>Job Selection</h2>
-            <button className="btn btn-primary" style={{ marginTop: 0 }} onClick={() => setShowJobForm(true)}>
-              + Post a Job
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+            <h1 style={{ fontSize: 24, margin: 0 }}>Jobs</h1>
+            <button className="btn btn-primary" onClick={() => setShowJobForm(true)}>
+              <Plus size={16} style={{ marginRight: 6 }} /> Post a Job
             </button>
           </div>
 
           {myJobs.length === 0 && (
-            <div className="empty-state" style={{ border: '2px dashed var(--border)', padding: 64, borderRadius: 16, marginTop: 24 }}>
+            <div className="empty-state panel" style={{ border: '2px dashed var(--border)', padding: 64, borderRadius: 16 }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
               <h3>Let's find your next great hire</h3>
               <p style={{ maxWidth: 400, margin: '0 auto', color: 'var(--text-secondary)' }}>Create your first job posting to start receiving matching CoreLink scored applications instantly.</p>
-              <button className="btn btn-primary" onClick={() => setShowJobForm(true)} style={{ marginTop: 24 }}>+ Create your first job</button>
+              <button className="btn btn-primary" onClick={() => setShowJobForm(true)} style={{ marginTop: 24 }}>
+                <Plus size={16} style={{ marginRight: 6 }} /> Create your first job
+              </button>
             </div>
           )}
 
-          {myJobs.map(job => (
-            <div key={job.id} className="company-list-item" onClick={() => { setSelectedJobId(job.id); setSearchParams({ id: job.id }) }}>
-              <div style={{ flex: 1 }}>
-                <div className="company-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {job.title}
-                  <span className={`job-card-badge ${job.remote_type}`}>
-                    {job.remote_type === 'remote' ? 'Remote' : job.remote_type === 'hybrid' ? 'Hybrid' : 'On-site'}
-                  </span>
-                  <span className={`job-status-badge ${job.status}`}>{job.status}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 20 }}>
+            {myJobs.map(job => (
+              <div key={job.id} className="panel" style={{ padding: 20, cursor: 'pointer', transition: 'all 0.2s ease', position: 'relative', opacity: job.status === 'closed' ? 0.6 : 1 }} onClick={() => { setSelectedJobId(job.id); setSearchParams({ id: job.id }) }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <h3 style={{ margin: 0, fontSize: 18, paddingRight: 32 }}>{job.title}</h3>
+                  <div style={{ position: 'absolute', top: 20, right: 20 }}>
+                    {job.status === 'open' ? (
+                      <span style={{ fontSize: 11, background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '4px 8px', borderRadius: 12, fontWeight: 'bold', textTransform: 'uppercase' }}>Active</span>
+                    ) : (
+                      <span style={{ fontSize: 11, background: 'rgba(156, 163, 175, 0.1)', color: '#9ca3af', padding: '4px 8px', borderRadius: 12, fontWeight: 'bold', textTransform: 'uppercase' }}>Closed</span>
+                    )}
+                  </div>
                 </div>
-                <div className="company-jd-title">
-                  {job.location_text && `📍 ${job.location_text}`}
-                  {job.salary_min && ` · 💰 ${job.currency} ${job.salary_min?.toLocaleString()} – ${job.salary_max?.toLocaleString()}`}
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><MapPin size={14} /> {job.location_text || 'Location not specified'} ({job.remote_type})</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Briefcase size={14} /> {job.salary_min ? `${job.currency} ${job.salary_min.toLocaleString()} - ${job.salary_max.toLocaleString()}` : 'Salary not specified'}</div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  {job.status === 'open' && (
+                    <button className="btn btn-ghost btn-sm" style={{ flex: 1, padding: 8 }} onClick={e => { e.stopPropagation(); closeJob(job.id) }}>Close Job</button>
+                  )}
+                  <button className="btn btn-ghost btn-sm" style={{ flex: 1, padding: 8, color: 'var(--error)' }} onClick={e => { e.stopPropagation(); deleteJob(job.id) }}>Delete</button>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {job.status === 'open' && (
-                  <button className="delete-btn" onClick={e => { e.stopPropagation(); closeJob(job.id) }}>Close</button>
-                )}
-                <button className="delete-btn" onClick={e => { e.stopPropagation(); deleteJob(job.id) }}>Delete</button>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 

@@ -8,7 +8,6 @@ import RecruiterLayout from './pages/recruiter/RecruiterLayout.jsx'
 import RecruiterHome from './pages/recruiter/RecruiterHome.jsx'
 import RecruiterJobs from './pages/recruiter/RecruiterJobs.jsx'
 import RecruiterTalent from './pages/recruiter/RecruiterTalent.jsx'
-import RecruiterMessages from './pages/recruiter/RecruiterMessages.jsx'
 import RecruiterProfile from './pages/recruiter/RecruiterProfile.jsx'
 
 
@@ -169,7 +168,6 @@ export default function App() {
               <Route path="home" element={<RecruiterHome />} />
               <Route path="jobs" element={<RecruiterJobs />} />
               <Route path="talent" element={<RecruiterTalent />} />
-              <Route path="messages" element={<RecruiterMessages />} />
               <Route path="profile" element={<RecruiterProfile />} />
             </Route>
 

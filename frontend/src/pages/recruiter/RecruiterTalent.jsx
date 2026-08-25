@@ -5,8 +5,10 @@ export default function RecruiterTalent() {
   const { api } = useOutletContext()
   const [allApplicants, setAllApplicants] = useState([])
   const [loading, setLoading] = useState(true)
+  const [jobs, setJobs] = useState([])
+  const [selectedJobFilter, setSelectedJobFilter] = useState('all')
   const [selectedCandidate, setSelectedCandidate] = useState(null)
-  
+
   useEffect(() => {
     async function loadTalent() {
       try {
@@ -14,6 +16,7 @@ export default function RecruiterTalent() {
         const jobsRes = await api('/api/recruiter/jobs')
         if (!jobsRes.ok) throw new Error('Failed to load jobs')
         const jobsData = await jobsRes.json()
+        setJobs(jobsData)
 
         // Fetch applicants for all jobs
         const applicantsData = []
@@ -23,7 +26,7 @@ export default function RecruiterTalent() {
             if (appRes.ok) {
               const data = await appRes.json()
               data.applicants.forEach(a => {
-                applicantsData.push({ ...a, job_title: job.title })
+                applicantsData.push({ ...a, job_title: job.title, job_id: job.id })
               })
             }
           } catch (e) {
@@ -43,6 +46,11 @@ export default function RecruiterTalent() {
     loadTalent()
   }, [api])
 
+  const filteredApplicants = selectedJobFilter === 'all' 
+    ? allApplicants 
+    : allApplicants.filter(a => a.job_id.toString() === selectedJobFilter)
+
+
   const handleInterest = () => {
     alert("Interest registered (Feature in development)")
   }
@@ -50,15 +58,27 @@ export default function RecruiterTalent() {
   return (
     <div className="recruiter-talent" style={{ display: 'flex', gap: 24, height: '100%' }}>
       <div style={{ flex: selectedCandidate ? '1' : '1', overflowY: 'auto' }}>
-        <h1 style={{ fontSize: 28, margin: '0 0 24px 0' }}>Talent Discovery</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <h1 style={{ fontSize: 28, margin: 0 }}>Talent Discovery</h1>
+          <select 
+            value={selectedJobFilter} 
+            onChange={(e) => { setSelectedJobFilter(e.target.value); setSelectedCandidate(null) }}
+            style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', minWidth: 200 }}
+          >
+            <option value="all">All Jobs</option>
+            {jobs.map(job => (
+              <option key={job.id} value={job.id}>{job.title}</option>
+            ))}
+          </select>
+        </div>
         
         {loading ? (
           <div className="empty-state">Loading talent pool...</div>
-        ) : allApplicants.length === 0 ? (
-          <div className="empty-state panel">No candidates have applied to your jobs yet.</div>
+        ) : filteredApplicants.length === 0 ? (
+          <div className="empty-state panel">No candidates found for this selection.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {allApplicants.map(a => (
+            {filteredApplicants.map(a => (
               <div 
                 key={a.application_id} 
                 className={`panel ${selectedCandidate?.application_id === a.application_id ? 'selected' : ''}`}
@@ -99,7 +119,7 @@ export default function RecruiterTalent() {
             
             <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
               <button className="btn btn-primary btn-sm" onClick={handleInterest}>Interested</button>
-              <button className="btn btn-secondary btn-sm" disabled title="Messaging Coming Soon">Message</button>
+              <a href={`mailto:${selectedCandidate.candidate_email || ''}`} className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>Email Candidate</a>
             </div>
           </div>
 

@@ -211,3 +211,57 @@ async def matching_resumes(
             "top_k": top_k,
             "returned": len(ranked),
         }
+
+from ..db import RecruiterPost, RecruiterUser
+from pydantic import BaseModel
+import datetime
+
+class PostCreate(BaseModel):
+    content: str
+
+@router.post("/posts")
+async def create_recruiter_post(
+    post_in: PostCreate,
+    recruiter: str = Depends(get_current_recruiter)
+):
+    with Session(engine) as session:
+        user = session.exec(select(RecruiterUser).where(RecruiterUser.username == recruiter)).first()
+        if not user:
+            raise HTTPException(status_code=403, detail="Not authorized")
+            
+        post = RecruiterPost(
+            recruiter_id=user.id,
+            content=post_in.content
+        )
+        session.add(post)
+        session.commit()
+        session.refresh(post)
+        
+        return {
+            "id": post.id,
+            "content": post.content,
+            "created_at": post.created_at,
+            "recruiter_username": recruiter
+        }
+
+@router.get("/posts")
+async def get_recruiter_posts(
+    recruiter: str = Depends(get_current_recruiter)
+):
+    with Session(engine) as session:
+        posts = session.exec(
+            select(RecruiterPost)
+            .order_by(RecruiterPost.created_at.desc())
+            .limit(50)
+        ).all()
+        
+        out = []
+        for post in posts:
+            user = session.get(RecruiterUser, post.recruiter_id)
+            out.append({
+                "id": post.id,
+                "content": post.content,
+                "created_at": post.created_at,
+                "recruiter_username": user.username if user else "Unknown"
+            })
+        return out

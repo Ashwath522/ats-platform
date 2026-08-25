@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
+import { MessageSquare, ThumbsUp, Send } from 'lucide-react'
 
 export default function RecruiterHome() {
   const { api, username } = useOutletContext()
   const [stats, setStats] = useState({ activeJobs: 0, newApplicants: 0, shortlisted: 0 })
   const [loading, setLoading] = useState(true)
   const [jobs, setJobs] = useState([])
+  const [posts, setPosts] = useState([])
+  const [newPostContent, setNewPostContent] = useState('')
+  const [posting, setPosting] = useState(false)
 
   useEffect(() => {
     async function loadData() {
@@ -16,20 +20,36 @@ export default function RecruiterHome() {
         setJobs(jobsData)
 
         let active = 0
-        let applicants = 0
+        let newApp = 0
+        let short = 0
         
         jobsData.forEach(j => {
           if (j.status === 'open') active++
         })
 
-        // Fetch applicants for open jobs to calculate stats
-        // We do this by hitting the status endpoints if needed, but for now just mock stats from jobs
-        // Ideally we fetch actual applicants here.
+        for (const job of jobsData) {
+          try {
+            const appRes = await api(`/api/recruiter/jobs/${job.id}/applicants`)
+            if (appRes.ok) {
+              const appData = await appRes.json()
+              appData.applicants.forEach(a => {
+                if (a.status === 'ats_check') newApp++
+                if (a.status === 'shortlisted') short++
+              })
+            }
+          } catch (e) {}
+        }
+        
         setStats({
           activeJobs: active,
-          newApplicants: 12, // Mock for overview until backend aggregates
-          shortlisted: 4
+          newApplicants: newApp,
+          shortlisted: short
         })
+
+        const postsRes = await api('/api/recruiter/posts')
+        if (postsRes.ok) {
+          setPosts(await postsRes.json())
+        }
       } catch (e) {
         console.error(e)
       } finally {
@@ -38,6 +58,27 @@ export default function RecruiterHome() {
     }
     loadData()
   }, [api])
+
+  async function handlePost() {
+    if (!newPostContent.trim()) return
+    setPosting(true)
+    try {
+      const res = await api('/api/recruiter/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newPostContent })
+      })
+      if (res.ok) {
+        const post = await res.json()
+        setPosts([post, ...posts])
+        setNewPostContent('')
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setPosting(false)
+    }
+  }
 
   return (
     <div className="recruiter-home">
@@ -63,6 +104,51 @@ export default function RecruiterHome() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 32 }}>
         <div>
+          <h2 style={{ marginBottom: 16 }}>CoreLink Feed</h2>
+          
+          <div className="panel" style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 12, color: 'var(--text-secondary)' }}>Share something with your professional network</div>
+            <textarea 
+              rows={3} 
+              style={{ width: '100%', marginBottom: 12 }} 
+              placeholder="What's happening in your company? Share a hiring announcement or update..."
+              value={newPostContent}
+              onChange={e => setNewPostContent(e.target.value)}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary btn-sm" onClick={handlePost} disabled={posting || !newPostContent.trim()}>
+                <Send size={16} style={{ marginRight: 6 }} /> Post
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {posts.length === 0 ? (
+              <div className="empty-state panel">No posts in your network yet. Be the first to share an update!</div>
+            ) : (
+              posts.map(post => (
+                <div key={post.id} className="panel" style={{ padding: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                      {post.recruiter_username.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 'bold' }}>{post.recruiter_username}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{new Date(post.created_at).toLocaleDateString()}</div>
+                    </div>
+                  </div>
+                  <p style={{ margin: '0 0 16px 0', lineHeight: 1.5 }}>{post.content}</p>
+                  <div style={{ display: 'flex', gap: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                    <button className="btn btn-ghost btn-sm" style={{ padding: 4, color: 'var(--text-secondary)' }}><ThumbsUp size={16} style={{ marginRight: 6 }} /> Like</button>
+                    <button className="btn btn-ghost btn-sm" style={{ padding: 4, color: 'var(--text-secondary)' }}><MessageSquare size={16} style={{ marginRight: 6 }} /> Comment</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div>
           <h2 style={{ marginBottom: 16 }}>Hiring Activity</h2>
           <div className="panel">
             {jobs.length === 0 ? (
@@ -78,34 +164,15 @@ export default function RecruiterHome() {
                       <h4 style={{ margin: '0 0 4px 0' }}>{job.title}</h4>
                       <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{job.location_text || 'Remote'}</div>
                     </div>
-                    <Link to={`/recruiter/jobs?id=${job.id}`} className="btn btn-secondary btn-sm">View Pipeline</Link>
+                    <Link to={`/recruiter/jobs?id=${job.id}`} className="btn btn-secondary btn-sm">Pipeline</Link>
                   </div>
                 ))}
               </div>
             )}
           </div>
         </div>
-
-        <div>
-          <h2 style={{ marginBottom: 16 }}>Insights & Updates</h2>
-          <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 16 }}>
-              <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 'bold', marginBottom: 4 }}>💡 Hiring Idea</div>
-              <p style={{ fontSize: 14, margin: '0 0 12px 0' }}>"Should technical hiring focus more on projects than years of experience?"</p>
-              <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--text-dim)' }}>
-                <span style={{ cursor: 'pointer' }}>Like</span>
-                <span style={{ cursor: 'pointer' }}>Comment</span>
-              </div>
-            </div>
-            
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 'bold', marginBottom: 4 }}>📈 CoreLink Tip</div>
-              <p style={{ fontSize: 14, margin: '0 0 12px 0' }}>Job descriptions with explicit salary ranges receive 40% more qualified applicants.</p>
-              <Link to="/recruiter/jobs" style={{ fontSize: 12, textDecoration: 'none' }}>Update Jobs →</Link>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )
 }
+

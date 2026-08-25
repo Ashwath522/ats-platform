@@ -131,6 +131,13 @@ class Post(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class RecruiterPost(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recruiter_id: int = Field(foreign_key="recruiteruser.id", index=True)
+    content: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Job(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     recruiter_id: int = Field(foreign_key="recruiteruser.id", index=True)
