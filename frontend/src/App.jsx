@@ -4,7 +4,13 @@ import { AuthProvider, useAuth } from './auth.jsx'
 
 // Original pages
 import CandidatePage from './pages/CandidatePage.jsx'
-import RecruiterPage from './pages/RecruiterPage.jsx'
+import RecruiterLayout from './pages/recruiter/RecruiterLayout.jsx'
+import RecruiterHome from './pages/recruiter/RecruiterHome.jsx'
+import RecruiterJobs from './pages/recruiter/RecruiterJobs.jsx'
+import RecruiterTalent from './pages/recruiter/RecruiterTalent.jsx'
+import RecruiterMessages from './pages/recruiter/RecruiterMessages.jsx'
+import RecruiterProfile from './pages/recruiter/RecruiterProfile.jsx'
+
 
 // Candidate portal
 import CandidateLogin from './pages/candidate/CandidateLogin.jsx'
@@ -158,7 +164,14 @@ export default function App() {
             </Route>
 
             {/* Recruiter portal */}
-            <Route path="/recruiter" element={<RecruiterPage />} />
+            <Route path="/recruiter" element={<RecruiterLayout />}>
+              <Route index element={<Navigate to="home" replace />} />
+              <Route path="home" element={<RecruiterHome />} />
+              <Route path="jobs" element={<RecruiterJobs />} />
+              <Route path="talent" element={<RecruiterTalent />} />
+              <Route path="messages" element={<RecruiterMessages />} />
+              <Route path="profile" element={<RecruiterProfile />} />
+            </Route>
 
             {/* Admin panel */}
             <Route path="/admin" element={<AdminPage />} />
