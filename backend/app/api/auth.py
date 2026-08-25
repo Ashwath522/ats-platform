@@ -366,7 +366,7 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
         else:
             raise
     
-    if _dev_mode_enabled() and (response.get("dev_only") or not response.get("email_sent")):
+    if _dev_mode_enabled():
         response["temporary_password"] = generated_password
     return response
 
