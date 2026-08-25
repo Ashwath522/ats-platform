@@ -159,7 +159,7 @@ class Application(SQLModel, table=True):
     ats_score: Optional[int] = None
     matched_skills_json: str = "[]"
     missing_skills_json: str = "[]"
-    status: str = "applied"           # "applied" | "reviewed" | "shortlisted" | "rejected"
+    status: str = "ats_check"           # "ats_check" | "repo_verification" | "automated_interview" | "shortlisted" | "rejected"
     applied_at: datetime = Field(default_factory=utc_now)
 
 

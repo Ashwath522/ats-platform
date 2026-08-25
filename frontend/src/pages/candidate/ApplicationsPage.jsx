@@ -19,7 +19,15 @@ export default function ApplicationsPage() {
       .catch(() => setLoading(false))
   }, [candidateToken])
 
-  const statusSteps = ['applied', 'reviewed', 'shortlisted', 'hired', 'rejected']
+  const statusSteps = ['ats_check', 'repo_verification', 'automated_interview', 'shortlisted', 'rejected']
+
+  const statusLabels = {
+    'ats_check': 'ATS Check',
+    'repo_verification': 'Repo Verification',
+    'automated_interview': 'Automated Interview',
+    'shortlisted': 'Shortlisted',
+    'rejected': 'Rejected'
+  }
 
   return (
     <div className="panel">
@@ -52,7 +60,7 @@ export default function ApplicationsPage() {
 
               <div className="status-timeline" style={{ marginTop: 24, display: 'flex', alignItems: 'center' }}>
                 {statusSteps.map((step, i) => {
-                  if (app.status === 'rejected' && step === 'hired') return null
+                  if (app.status === 'rejected' && step === 'shortlisted') return null
                   if (app.status !== 'rejected' && step === 'rejected') return null
                   
                   const isCurrent = app.status === step
@@ -73,7 +81,7 @@ export default function ApplicationsPage() {
                           marginBottom: 8
                         }} />
                         <span style={{ fontSize: 12, textTransform: 'capitalize', fontWeight: isCurrent ? 'bold' : 'normal' }}>
-                          {step}
+                          {statusLabels[step] || step}
                         </span>
                       </div>
                       {i < statusSteps.length - 1 && (

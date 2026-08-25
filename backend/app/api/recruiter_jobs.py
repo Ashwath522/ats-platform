@@ -237,7 +237,7 @@ async def update_applicant_status(
         if not app or app.job_id != job_id:
             raise HTTPException(status_code=404, detail="Application not found for this job")
 
-        valid_statuses = ("applied", "reviewed", "shortlisted", "rejected")
+        valid_statuses = ("ats_check", "repo_verification", "automated_interview", "shortlisted", "rejected")
         if status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
         
