@@ -360,6 +360,23 @@ function RecruiterDashboard({ token, username, onLogout }) {
     else setApplicants(null)
   }, [selectedJobId])
 
+  async function updateApplicantStatus(jobId, appId, status) {
+    try {
+      const fd = new FormData()
+      fd.append('status', status)
+      const res = await api(`/api/recruiter/jobs/${jobId}/applicants/${appId}/status`, { method: 'PUT', body: fd })
+      if (!res.ok) throw new Error('Failed to update status')
+      // Update local state instead of full refetch to keep it snappy
+      setApplicants(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          applicants: prev.applicants.map(a => a.application_id === appId ? { ...a, status } : a)
+        }
+      })
+    } catch (e) { setError(e.message) }
+  }
+
   function filteredMatches(results, minScore, minExperience, requiredSkill) {
     const skill = requiredSkill.trim().toLowerCase()
     return results.filter(result => {
@@ -634,7 +651,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
 
               {!applicantsLoading && applicants.applicants.length > 0 && (
                 <table>
-                  <thead><tr><th>Rank</th><th>Candidate</th><th>Resume</th><th>ATS Score</th><th>Matched</th><th>Missing</th><th>Applied</th></tr></thead>
+                  <thead><tr><th>Rank</th><th>Candidate</th><th>Resume</th><th>ATS Score</th><th>Status</th><th>Matched</th><th>Missing</th><th>Applied</th></tr></thead>
                   <tbody>
                     {applicants.applicants.map((a, idx) => (
                       <tr key={a.application_id}>
@@ -642,6 +659,18 @@ function RecruiterDashboard({ token, username, onLogout }) {
                         <td>{a.candidate_name || '—'}</td>
                         <td>{a.resume_filename || '—'}</td>
                         <td className="score-cell">{a.ats_score}</td>
+                        <td>
+                          <select 
+                            value={a.status} 
+                            onChange={(e) => updateApplicantStatus(selectedJobId, a.application_id, e.target.value)}
+                            style={{ padding: '4px 8px', fontSize: 12 }}
+                          >
+                            <option value="applied">Applied</option>
+                            <option value="reviewed">Reviewed</option>
+                            <option value="shortlisted">Shortlisted</option>
+                            <option value="rejected">Rejected</option>
+                          </select>
+                        </td>
                         <td><div className="chip-row">{a.matched_skills.slice(0, 4).map(s => <span key={s} className="chip matched">{s}</span>)}</div></td>
                         <td><div className="chip-row">{a.missing_skills.slice(0, 4).map(s => <span key={s} className="chip missing">{s}</span>)}</div></td>
                         <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{new Date(a.applied_at).toLocaleDateString()}</td>

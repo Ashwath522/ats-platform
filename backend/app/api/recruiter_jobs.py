@@ -221,3 +221,27 @@ async def list_applicants(
             "applicant_count": len(results),
             "applicants": results,
         }
+
+@router.put("/{job_id}/applicants/{application_id}/status")
+async def update_applicant_status(
+    job_id: int,
+    application_id: int,
+    status: str = Form(...),
+    recruiter: str = Depends(get_current_recruiter),
+):
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        app = session.get(Application, application_id)
+        if not app or app.job_id != job_id:
+            raise HTTPException(status_code=404, detail="Application not found for this job")
+
+        valid_statuses = ("applied", "reviewed", "shortlisted", "rejected")
+        if status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+        
+        app.status = status
+        session.add(app)
+        session.commit()
+        return {"status": "success", "new_status": app.status}
