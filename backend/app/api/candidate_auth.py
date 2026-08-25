@@ -1,15 +1,9 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from sqlmodel import Session, select
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from ..db import engine, CandidateUser
 from ..auth import hash_password, verify_password, create_access_token
-
-import os
-import sys
-
-limiter = Limiter(key_func=get_remote_address, enabled=not ("pytest" in sys.modules or os.getenv("TESTING") == "1"))
+from ..rate_limit import limiter
 router = APIRouter(prefix="/api/candidate/auth", tags=["candidate-auth"])
 
 

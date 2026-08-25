@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 
 export default function AdminPage() {
   const [password, setPassword] = useState('')
+  const [email, setEmail] = useState('')
   const [authed, setAuthed] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -13,14 +14,20 @@ export default function AdminPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/admin/suggestions?password=${encodeURIComponent(password)}`)
-      if (!res.ok) {
-        throw new Error('Invalid admin password')
-      }
-      const data = await res.json()
-      setStats(data)
+      const fd = new FormData()
+      fd.append('email', email)
+      fd.append('password', password)
+      const loginRes = await fetch('/api/auth/login', { method: 'POST', body: fd })
+      const loginData = await loginRes.json()
+      if (!loginRes.ok || loginData.role !== 'admin') throw new Error('Invalid admin credentials')
+      const statsRes = await fetch('/api/admin/suggestions', {
+        headers: { Authorization: `Bearer ${loginData.access_token}` },
+      })
+      if (!statsRes.ok) throw new Error('Could not load admin dashboard')
+      setStats(await statsRes.json())
       setAuthed(true)
-      localStorage.setItem('ats_admin_password', password)
+      localStorage.setItem('ats_admin_token', loginData.access_token)
+      localStorage.setItem('ats_admin_email', loginData.email)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -30,10 +37,13 @@ export default function AdminPage() {
 
   // Auto-auth if password saved in session/localstorage
   useEffect(() => {
-    const saved = localStorage.getItem('ats_admin_password')
-    if (saved) {
-      setPassword(saved)
-      fetch(`/api/admin/suggestions?password=${encodeURIComponent(saved)}`)
+    const savedToken = localStorage.getItem('ats_admin_token')
+    const savedEmail = localStorage.getItem('ats_admin_email')
+    if (savedToken) {
+      setEmail(savedEmail || '')
+      fetch('/api/admin/suggestions', {
+        headers: { Authorization: `Bearer ${savedToken}` },
+      })
         .then(res => {
           if (res.ok) {
             return res.json()
@@ -45,13 +55,16 @@ export default function AdminPage() {
           setAuthed(true)
         })
         .catch(() => {
-          localStorage.removeItem('ats_admin_password')
+          localStorage.removeItem('ats_admin_token')
+          localStorage.removeItem('ats_admin_email')
         })
     }
   }, [])
 
   function handleLogout() {
-    localStorage.removeItem('ats_admin_password')
+    localStorage.removeItem('ats_admin_token')
+    localStorage.removeItem('ats_admin_email')
+    setEmail('')
     setPassword('')
     setAuthed(false)
     setStats(null)
@@ -65,6 +78,15 @@ export default function AdminPage() {
           <p>Please enter the admin password to access statistics and feedback box.</p>
           <form onSubmit={handleLogin}>
             <div className="form-group" style={{ marginBottom: 16 }}>
+              <label>Admin Email</label>
+              <input
+                type="text"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="admin@example.com"
+                required
+                style={{ width: '100%', marginBottom: 12 }}
+              />
               <label>Admin Password</label>
               <input
                 type="password"

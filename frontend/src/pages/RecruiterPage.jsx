@@ -4,42 +4,88 @@ import { useNavigate } from 'react-router-dom'
 
 export default function RecruiterPage() {
   const { recruiterToken, recruiterUsername, loginRecruiter, logoutRecruiter } = useAuth()
+  const [role, setRole] = useState(() => localStorage.getItem('ats_recruiter_role') || 'recruiter')
   const navigate = useNavigate()
 
-  if (!recruiterToken) {
-    return <RecruiterAuthPanel onLogin={loginRecruiter} />
+  function handleLogin(token, username, nextRole) {
+    localStorage.setItem('ats_recruiter_role', nextRole)
+    setRole(nextRole)
+    loginRecruiter(token, username)
   }
 
-  return <RecruiterDashboard token={recruiterToken} username={recruiterUsername} onLogout={() => { logoutRecruiter(); navigate('/') }} />
+  function handleLogout() {
+    localStorage.removeItem('ats_recruiter_role')
+    logoutRecruiter()
+    navigate('/')
+  }
+
+  if (!recruiterToken) {
+    return <RecruiterAuthPanel onLogin={handleLogin} />
+  }
+
+  if (role === 'admin') {
+    return <AdminDashboard token={recruiterToken} username={recruiterUsername} onLogout={handleLogout} />
+  }
+
+  return <RecruiterDashboard token={recruiterToken} username={recruiterUsername} onLogout={handleLogout} />
 }
 
 function RecruiterAuthPanel({ onLogin }) {
-  const [mode, setMode] = useState('login')
-  const [username, setUsername] = useState('')
+  const [mode, setMode] = useState('login') // 'login' | 'request'
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
+  const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
 
   async function submit() {
-    if (!username.trim() || !password) {
-      setError('Enter a username and password.')
-      return
+    if (mode === 'request') {
+      return submitRequest()
     }
-    if (mode === 'register' && password.length < 8) {
-      setError('Password must be at least 8 characters.')
+    if (!email.trim() || !password) {
+      setError('Enter an email and password.')
       return
     }
     setError(null)
+    setMessage(null)
     setLoading(true)
     try {
       const fd = new FormData()
-      fd.append('username', username)
+      fd.append('email', email)
       fd.append('password', password)
-      const endpoint = mode === 'login' ? '/api/recruiter/auth/login' : '/api/recruiter/auth/register'
-      const res = await fetch(endpoint, { method: 'POST', body: fd })
+      const res = await fetch('/api/auth/login', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Failed')
-      onLogin(data.access_token, data.username)
+      onLogin(data.access_token, data.email || data.username, data.role)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submitRequest() {
+    if (!name.trim() || !email.trim() || !phone.trim()) {
+      setError('Enter your name, email, and phone.')
+      return
+    }
+    setError(null)
+    setMessage(null)
+    setLoading(true)
+    try {
+      const fd = new FormData()
+      fd.append('name', name)
+      fd.append('email', email)
+      fd.append('phone', phone)
+      const res = await fetch('/api/recruiter-requests', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed')
+      setMessage('Request submitted. An admin will review it and email credentials after approval.')
+      setName('')
+      setEmail('')
+      setPhone('')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -51,32 +97,132 @@ function RecruiterAuthPanel({ onLogin }) {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-card-glow" />
-        <h2>{mode === 'login' ? 'Recruiter Login' : 'Create Recruiter Account'}</h2>
+        <h2>{mode === 'login' ? 'Login' : 'Recruiter Access Request'}</h2>
         <p className="panel-desc">
           {mode === 'login'
-            ? 'Sign in to manage companies, post jobs, and view ranked candidates.'
-            : 'Set up an account to start posting job descriptions.'}
+            ? 'Sign in as a recruiter or admin.'
+            : 'Send your details for admin approval. This does not create an account yet.'}
         </p>
 
-        <label>Username</label>
-        <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. jordan" />
+        {mode === 'request' && (
+          <>
+            <label>Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Jordan Lee" />
+          </>
+        )}
 
-        <label>Password</label>
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-          placeholder={mode === 'register' ? 'At least 8 characters' : 'Password'}
-          onKeyDown={e => e.key === 'Enter' && submit()} />
+        <label>Email</label>
+        <input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="jordan@company.com" />
+
+        {mode === 'request' && (
+          <>
+            <label>Phone</label>
+            <input type="text" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 555 0100" />
+          </>
+        )}
+
+        {mode === 'login' && (
+          <>
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="Password"
+              onKeyDown={e => e.key === 'Enter' && submit()} />
+          </>
+        )}
 
         <button className="primary" onClick={submit} disabled={loading}>
-          {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
+          {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Submit request'}
         </button>
         {error && <div className="error-msg">{error}</div>}
+        {message && <div className="success-msg">{message}</div>}
 
         <p className="panel-desc" style={{ marginTop: 16 }}>
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'register' : 'login'); setError(null) }}>
-            {mode === 'login' ? 'Create one' : 'Log in'}
+          {mode === 'login' ? "I'm a recruiter without an account. " : 'Already approved? '}
+          <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'request' : 'login'); setError(null); setMessage(null) }}>
+            {mode === 'login' ? 'Request access' : 'Log in'}
           </a>
         </p>
+      </div>
+    </div>
+  )
+}
+
+function AdminDashboard({ token, username, onLogout }) {
+  const api = createAuthedFetch(token, onLogout)
+  const [requests, setRequests] = useState([])
+  const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)
+
+  async function refreshRequests() {
+    try {
+      const res = await api('/api/admin/recruiter-requests')
+      if (!res.ok) throw new Error((await res.json()).detail || 'Could not load requests')
+      setRequests(await res.json())
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  useEffect(() => { refreshRequests() }, [])
+
+  async function decide(id, action) {
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await api(`/api/admin/recruiter-requests/${id}/${action}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Request failed')
+      if (action === 'approve') {
+        setNotice(`Approved ${data.user.email}. Temporary password: ${data.temporary_password || data.dev_only?.temporary_password || 'sent by email'}`)
+      } else {
+        setNotice('Request rejected.')
+      }
+      await refreshRequests()
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  return (
+    <div>
+      <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Admin <strong style={{ color: 'var(--text)' }}>{username}</strong></span>
+        <button className="primary" style={{ marginTop: 0, padding: '8px 14px' }} onClick={onLogout}>Log out</button>
+      </div>
+
+      <div className="panel">
+        <h2>Recruiter Requests</h2>
+        <p className="panel-desc">Review pending recruiter access requests.</p>
+        {error && <div className="error-msg">{error}</div>}
+        {notice && <div className="success-msg">{notice}</div>}
+        {requests.length === 0 && <div className="empty-state">No pending recruiter requests.</div>}
+        {requests.length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Submitted</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map(item => (
+                <tr key={item.id}>
+                  <td>{item.name}</td>
+                  <td>{item.email}</td>
+                  <td>{item.phone}</td>
+                  <td>{new Date(item.submitted_at).toLocaleString()}</td>
+                  <td>
+                    <button className="secondary compact-btn" onClick={() => decide(item.id, 'approve')}>Approve</button>
+                    <button className="delete-btn" onClick={() => decide(item.id, 'reject')}>Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )

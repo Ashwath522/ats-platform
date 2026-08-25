@@ -1,117 +1,78 @@
 # ATS Platform
 
+**Note for the next agent working on this repo:** `main` was force-pushed at
+one point during development, which discarded some prior work (a real
+content-based MIME validation module, a CI workflow). That work has since
+been restored/re-added where it mattered for correctness. Do not assume
+anything about git history beyond `main`'s current tip — always check
+`git log`, run `pytest`, and verify against actual file contents before
+building on top of a claim in this doc. This section is accurate as of the
+commit it's part of, not a permanent guarantee.
+
 ## Verified current state
 
-This has grown well past a resume-scoring tool into a full candidate/
-recruiter portal. As of this doc's commit:
+- **Recruiter auth**: real (JWT + bcrypt, `backend/app/auth.py` +
+  `backend/app/api/auth.py`), rate-limited via `slowapi`, and
+  ownership-scoped (one recruiter cannot see/edit/delete another
+  recruiter's companies — this was a real security bug, found and fixed;
+  `backend/tests/test_recruiter_ownership.py` proves it).
+- **Resume dedup**: by SHA-256 content hash, in
+  `backend/app/api/candidate.py`.
+- **File upload validation**: extension allowlist + 8MB streamed size
+  limit (never buffers the whole file in memory). Content-based MIME
+  sniffing via `python-magic`/libmagic is implemented in
+  `backend/app/services/mime_check.py` and works when libmagic is
+  installed — a spoofed extension (e.g. a `.txt` renamed to `.pdf`) is
+  rejected. When libmagic is **not** installed the check degrades
+  gracefully (extension-only validation still applies, MIME sniffing is
+  skipped). 4 tests in `test_mime_check.py` cover this and are skipped
+  when libmagic is absent.
+- **Branch/role selection**: `GET /api/candidate/branches` +
+  `GET /api/candidate/roles?branch=` cover Software, Mechanical, Civil,
+  ECE, EEE, and Aerospace, each with real paragraph-length JDs (see
+  `backend/app/services/role_templates.py`), not just bare titles.
+- **Deep analysis**: `POST /api/candidate/deep-analysis` — optional,
+  on-demand, cached LLM call (grammar/technical-depth/experience scoring)
+  kept OUT of the fast scoring path. Gracefully degrades if
+  `ANTHROPIC_API_KEY` isn't set.
+- **Docker**: `backend/Dockerfile`, `frontend/Dockerfile`,
+  `frontend/nginx.conf`, root `docker-compose.yml` all exist.
+- **Tests**: `backend/tests/` — 50 tests (46 passing, 4 skipped when
+  libmagic is absent) across scoring, auth, ownership, recruiter
+  approval flow, OTP/password-reset, MIME validation, portal helpers,
+  vocab learning, and API integration. Run `pytest` to confirm current
+  pass count; don't trust this number blindly after further changes.
+- **Candidate portal**: candidate auth, profile/resume management, job
+  browsing, applications, posts/feed, and contact/profile screens are
+  present in the backend routers and frontend routes.
+- **Recruiter job postings**: approved recruiters can create/manage jobs
+  and review applicants in addition to the original company/JD matching
+  workflow.
+- **CI**: a GitHub Actions workflow may or may not be present depending on
+  push history (a token scope issue previously blocked pushing
+  `.github/workflows/`) — check `.github/workflows/` directly rather than
+  assuming.
 
-**Core ATS scoring** (the original feature)
-- Fast, LLM-free scoring: local `sentence-transformers` embeddings +
-  keyword matching. Skills vocabulary covers 6 branches (Software,
-  Mechanical, Civil, ECE, EEE, Aerospace) with real paragraph-length role
-  JDs (`backend/app/services/role_templates.py`), not just bare titles.
-- Dynamic vocabulary learning: unrecognized terms found in real resumes
-  get tracked (`DiscoveredSkill` table) and promoted into matching once
-  seen often enough — the vocabulary grows from real data, not just a
-  hand-maintained list.
-- Honest scoring: if a JD has no recognizable skills, `keyword_coverage`
-  is `null` (not a misleading false 100%), and `jd_has_recognized_skills`
-  tells the caller why.
-- Optional, on-demand, cached LLM features — kept OUT of the fast scoring
-  path: `/deep-analysis` (grammar/technical-depth/experience scores) and
-  `/resume-suggestions` (concrete "add this" suggestions). Support both
-  `GEMINI_API_KEY` and `ANTHROPIC_API_KEY`; gracefully degrade if neither
-  is set.
+Resume screening system with these main flows:
 
-**Candidate portal**
-- Separate candidate auth (`candidate_auth.py`), profile with resume
-  upload, branch selection, skills/experience/education
-  (`candidate_profile.py`).
-- Home feed of posts from all candidates (`candidate_posts.py`).
-- Job browsing + apply with auto-scoring (`candidate_jobs.py`) —
-  applying reuses the candidate's stored resume, scores it against the
-  job automatically, and records an `Application` row.
-- Location: geolocation-based "jobs near me" with haversine distance.
-
-**Recruiter portal**
-- Recruiter auth, ownership-scoped companies (one recruiter cannot
-  see/edit/delete another's — this was a real security bug, found and
-  fixed; `test_recruiter_ownership.py` proves it).
-- Job posting CRUD (`recruiter_jobs.py`): create/edit/delete/list own
-  jobs, view ranked applicants per job.
-
-**Admin**
-- `admin.py`: a public suggestion-box submission endpoint plus an
-  admin-gated listing endpoint. Intentionally minimal (see Known
-  limitations below).
-
-**Security / validation**
-- Real content-based MIME validation (`mime_check.py`, libmagic) — a
-  `.txt` renamed to `.pdf` is rejected, not trusted.
-- Rate limiting on auth endpoints (`slowapi`), disabled during tests via
-  a `TESTING` env-var guard.
-- 8MB upload size limit, resume dedup by SHA-256 content hash.
-
-**Tests**: 44 tests across 9 files (`backend/tests/`) — scoring, auth,
-ownership, MIME validation, portal (haversine/tokens/admin), deep
-analysis, suggestions/vocab learning, candidate API. Run `pytest` to
-confirm the current pass count; don't trust this number blindly after
-further changes.
-
-**Docker**: `backend/Dockerfile`, `frontend/Dockerfile`,
-`frontend/nginx.conf`, root `docker-compose.yml` all exist.
-
-**WebView integration**: `WEBVIEW_INTEGRATION.md` documents the contract
-for embedding this web app in the separate Flutter `Interface` repo.
-
-## Known limitations — documented on purpose, not silent gaps
-
-- **Auth is intentionally minimal**: no email verification, no password
-  reset flow, no refresh tokens (see the comment in `backend/app/auth.py`
-  itself). Fine for a project/demo; add before any real multi-tenant
-  deployment.
-- **SQLite + ad-hoc migrations**: schema changes are applied via raw
-  `ALTER TABLE` statements in `db.py`'s startup path (e.g.
-  `owner_username`, `apply_url` columns), not a real migration tool like
-  Alembic. Works for a single-file demo DB; would need a proper migration
-  story before running against a shared production database.
-- **No CI currently running**: `.github/workflows/ci.yml` exists in this
-  repo's working tree but has repeatedly failed to push — the GitHub
-  token used in this project's development sessions lacks the `workflow`
-  scope required to push changes under `.github/workflows/`. The file is
-  written and correct; someone with appropriate token permissions (or via
-  the GitHub web UI directly) needs to add it.
-- **Frontend has no component library or state management library** —
-  plain React `useState`/`useEffect` throughout, custom CSS. Functional
-  and reasonably styled, not built on top of a design system.
-- **A few rough edges remain**: no JD history view (only the latest JD
-  per job/company is used or shown), backend integration tests exist but
-  aren't exhaustive, no frontend component tests at all, and PDF
-  extraction handles the common cases (multi-column templates, corrupted/
-  password-protected files) but hasn't been stress-tested against a wide
-  variety of real-world resume templates.
+1. **Branch/role ATS check** — upload a resume + choose a branch and role template, or paste any custom job description, then get an ATS score and missing keywords/skills.
+2. **Company-specific ATS check** — candidate selects a company from a list; gets scored against that company's *current* job title/description.
+3. **Recruiter dashboard** (auth required) — approved recruiters post/update a company's job description; see all indexed resumes ranked by match score. Updating the JD immediately re-ranks candidates — no manual resync step.
+4. **Candidate portal** — candidates sign up/login, maintain a profile and resume, browse jobs, apply, view suggestions, and post updates.
+5. **Admin approval queue** — recruiter signups enter a pending request table; admins approve/reject requests and approved recruiters receive generated credentials by email.
 
 ## Why this architecture
 
-Core ATS scoring is done **without any LLM call** in the hot path, for
-latency:
-- Semantic similarity via a local `sentence-transformers` embedding model
-  (`all-MiniLM-L6-v2`), running on CPU in milliseconds.
-- Keyword/skill-gap detection via a branch-scoped skills vocabulary,
-  expanded over time by real resume data (see Dynamic vocabulary
-  learning above).
-- Both signals blend into a single 0–100 `ats_score`.
+Scoring is done **without any LLM call** in the hot path, for latency:
+- Semantic similarity via a local `sentence-transformers` embedding model (`all-MiniLM-L6-v2`), running on CPU in milliseconds. The real model has been verified locally producing 384-dimensional embeddings — there is no TF-IDF stub or fallback path in production code.
+- Keyword/skill-gap detection via a curated skills vocabulary matched against resume/JD text.
+- Both signals are blended into a single 0–100 `ats_score`.
 
-Deep analysis and resume suggestions are intentionally separate from that
-hot path — on-demand LLM calls, cached per (resume, target) pair, only
-triggered when a candidate explicitly asks for them.
+Deep analysis is intentionally separate from that hot path. `POST /api/candidate/deep-analysis` can be triggered on demand after scoring and performs one cached LLM call for grammar, technical depth, and experience assessment. If `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` is not set, the endpoint returns a graceful `llm_configured: false` response.
 
 ## Stack
 
-- **Backend**: FastAPI, SQLModel (SQLite), ChromaDB for vector search,
-  sentence-transformers for embeddings, python-jose + bcrypt for auth,
-  slowapi for rate limiting, python-magic for real file-content
-  validation, Anthropic/Gemini for optional LLM features.
+- **Backend**: FastAPI, SQLModel (SQLite) for users, recruiter requests, companies, JDs, resumes, email tokens, and analysis cache; ChromaDB for vector search; sentence-transformers for embeddings; python-jose + bcrypt for auth; SMTP for email; Gemini or Anthropic for optional deep analysis.
 - **Frontend**: React + Vite.
 
 ## Running locally
@@ -123,8 +84,11 @@ cp .env.example .env   # then edit JWT_SECRET_KEY to a real random value
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
-First run downloads the `all-MiniLM-L6-v2` model from Hugging Face
-(~90MB) — needs normal internet access once.
+First run will download the `all-MiniLM-L6-v2` model from Hugging Face (~90MB) — needs normal internet access once. This has been verified working locally (384-dim embeddings confirmed).
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to bootstrap the first admin account. There is no hardcoded admin password in code.
+
+**Upgrading from an older SQLite file?** Delete `backend/data/ats.db` for a clean dev reset, or run a real migration. The app has lightweight SQLite migrations for some added columns, but it is not a full Alembic migration system.
 
 ### Frontend
 ```bash
@@ -132,21 +96,14 @@ cd frontend
 npm install
 npm run dev
 ```
-Visit `http://localhost:5173`. The Vite dev server proxies `/api` calls
-to `http://localhost:8000`.
+Visit `http://localhost:5173`. The Vite dev server proxies `/api` calls to `http://localhost:8000`.
 
 ### Tests
 ```bash
 cd backend
 pytest
 ```
-44 tests across 9 files: `test_scoring.py` (scoring math + branch
-vocabulary), `test_auth.py` (password hashing + JWT), `test_deep_analysis.py`
-(parser + no-key behavior), `test_suggestions_and_vocab.py` (resume
-suggestions + dynamic vocab learning), `test_mime_check.py` (real
-content-based file validation), `test_recruiter_ownership.py` (the
-ownership/IDOR fix), `test_portal.py` (haversine distance, token roles,
-admin flow), `test_candidate_api.py` (branches/companies endpoints).
+The suite covers scoring math, branch vocabulary, deep-analysis parser/no-key behavior, password hashing/JWTs, role-protected routes, recruiter approval flow (request → admin approve → user created → email triggered), OTP validation/expiry, password-reset single-use behavior, MIME validation (when libmagic is present), portal distance helpers, vocab learning/promotion, and the core ATS scoring endpoint.
 
 ## Running with Docker
 
@@ -154,62 +111,89 @@ admin flow), `test_candidate_api.py` (branches/companies endpoints).
 cp .env.example .env   # then edit JWT_SECRET_KEY
 docker compose up --build
 ```
-Frontend: `http://localhost:8080` · Backend: `http://localhost:8000`.
-Data persists in the `ats_data` volume across restarts.
+Frontend: `http://localhost:8080` · Backend: `http://localhost:8000`. Data (SQLite + Chroma + uploaded resumes) persists in the `ats_data` volume across restarts.
 
-## Auth
+## Auth And Email
 
-Both candidate and recruiter accounts use JWT bearer tokens, issued from
-separate register/login endpoint pairs:
-- `POST /api/recruiter/auth/register`, `/api/recruiter/auth/login`
-- `POST /api/candidate/auth/register`, `/api/candidate/auth/login`
+Auth uses the shared `User` table and JWTs with a `role` claim: `candidate`, `recruiter`, or `admin`.
 
-Send the token as `Authorization: Bearer <access_token>`. Tokens embed a
-`role` claim (`recruiter` or `candidate`) so protected endpoints reject
-the wrong role, not just "not logged in." Tokens expire after 24h.
-Intentionally minimal — see Known limitations above.
+- Candidate signup: `POST /api/auth/register` creates a candidate user and sends a 6-digit OTP.
+- OTP verification: `POST /api/auth/verify-otp` verifies the candidate email and returns a bearer token.
+- Login: `POST /api/auth/login` accepts email/password and routes by JWT role on the frontend.
+- Password reset: `POST /api/auth/password-reset/request` and `POST /api/auth/password-reset/confirm` use 15-minute reset tokens.
+- Recruiter access: `POST /api/recruiter-requests` creates a pending request; it does not create a user.
+- Admin review: admins approve/reject pending recruiter requests. Approval creates a recruiter user with a generated password and emails credentials.
+
+SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWORD`, and optional `SMTP_FROM`. `DEV_MODE=false` by default. If `DEV_MODE=true` and SMTP is unset/fails, OTPs/reset tokens/generated recruiter passwords are returned in the API response under `dev_only` for demos.
+
+Send tokens as `Authorization: Bearer <access_token>` on protected requests. Tokens expire after 24h. Candidate scoring endpoints remain publicly callable for the current demo flow, while candidate identity exists for signup verification and login.
 
 ## API overview
 
-**Candidate — scoring** (no auth)
-- `GET /api/candidate/branches`, `GET /api/candidate/roles?branch=`
-- `POST /api/candidate/ats-score` — generic check (multipart: `file` +
-  `role_id` or `job_description`)
-- `POST /api/candidate/ats-score-existing-resume` — same, for a resume
-  already indexed (e.g. from a profile)
-- `GET /api/candidate/companies`, `POST /api/candidate/ats-score-for-company`
-- `POST /api/candidate/deep-analysis`, `POST /api/candidate/resume-suggestions`
-  — on-demand, cached LLM calls (multipart: `resume_id` + one of
-  `role_id`/`company_id`/`job_description`)
+**Candidate** (no auth)
+- `POST /api/candidate/ats-score` — flow 1, generic check (multipart: `file`, `job_description`)
+- `GET /api/candidate/branches` — list candidate branch options
+- `GET /api/candidate/roles?branch=mechanical` — list role templates, optionally branch-scoped
+- `POST /api/candidate/deep-analysis` — cached on-demand grammar/technical-depth/experience analysis (multipart: `resume_id` plus one of `role_id`, `company_id`, `job_description`)
+- `GET /api/candidate/companies` — list companies with an open role
+- `POST /api/candidate/ats-score-for-company` — flow 2 (multipart: `file`, `company_id`)
 
-**Candidate — portal** (bearer token, `role=candidate`)
-- `GET/PUT /api/candidate/profile`, `POST /api/candidate/profile/resume`
-- `GET/POST /api/candidate/posts` — home feed
-- `GET /api/candidate/jobs`, `GET /api/candidate/jobs/{id}`,
-  `POST /api/candidate/jobs/{id}/apply`,
-  `GET /api/candidate/jobs/applications/mine`
+**Candidate portal** (candidate bearer token required)
+- `GET/POST /api/candidate/profile` — read/update profile details
+- `POST /api/candidate/profile/resume` — upload or replace profile resume
+- `GET /api/candidate/jobs` — browse open job postings
+- `GET /api/candidate/jobs/{id}` — view one job
+- `POST /api/candidate/jobs/{id}/apply` — apply with the stored resume and auto-score
+- `GET /api/candidate/jobs/applications/mine` — list this candidate's applications
+- `POST /api/candidate/jobs/{id}/suggestions` — get resume/job suggestions
+- `GET/POST /api/candidate/posts` — global candidate feed
 
-**Recruiter — companies/scoring** (bearer token, `role=recruiter`,
-ownership-scoped)
-- `POST /api/recruiter/companies`, `DELETE /api/recruiter/companies/{id}`
-- `POST /api/recruiter/companies/{id}/job-description`
-- `GET /api/recruiter/companies/{id}/matching-resumes?top_k=&offset=`
+**Auth / requests**
+- `POST /api/auth/register` — create candidate account and send signup OTP (`name`, `email`, `password`)
+- `POST /api/auth/verify-otp` — verify candidate OTP (`email`, `otp`)
+- `POST /api/auth/login` — get a bearer token (`email`, `password`)
+- `POST /api/auth/password-reset/request` — send reset token (`email`)
+- `POST /api/auth/password-reset/confirm` — reset password (`email`, `token`, `new_password`)
+- `POST /api/recruiter-requests` — submit recruiter request (`name`, `email`, `phone`)
+- `POST /api/recruiter/auth/login` — compatibility alias for recruiter login (`username`, `password`)
+- `POST /api/recruiter/auth/register` — disabled; recruiter accounts require admin approval
 
-**Recruiter — jobs** (bearer token, `role=recruiter`)
-- `POST /api/recruiter/jobs`, `GET /api/recruiter/jobs`,
-  `PUT /api/recruiter/jobs/{id}`, `DELETE /api/recruiter/jobs/{id}`
-- `GET /api/recruiter/jobs/{id}/applicants` — ranked
+**Recruiter** (bearer token required)
+- `GET /api/recruiter/companies` — list owned companies
+- `POST /api/recruiter/companies` — create a company (`name`)
+- `DELETE /api/recruiter/companies/{id}` — delete a company and its job descriptions
+- `POST /api/recruiter/companies/{id}/job-description` — set/update JD (`title`, `description`, optional `apply_url`)
+- `GET /api/recruiter/companies/{id}/matching-resumes?top_k=20&offset=0` — flow 3, ranked candidates against the current JD, paginated
+- `GET /api/recruiter/jobs` — list owned job postings
+- `POST /api/recruiter/jobs` — create a job posting
+- `PUT /api/recruiter/jobs/{id}` — update a job posting, including closing it with `status=closed`
+- `DELETE /api/recruiter/jobs/{id}` — delete a job posting and its applications
+- `GET /api/recruiter/jobs/{id}/applicants` — review applicants
 
-**Admin**
-- `POST /api/suggestions` (public) — submit feedback
-- `GET /api/admin/suggestions` (admin-gated) — list submissions
+**Admin** (admin bearer token required)
+- `GET /api/admin/recruiter-requests` — list pending recruiter requests
+- `POST /api/admin/recruiter-requests/{id}/approve` — approve request, create recruiter user, email credentials
+- `POST /api/admin/recruiter-requests/{id}/reject` — reject request
 
-## Resume upload limits & validation
+## Resume upload limits
 
-- Allowed types: `.pdf`, `.docx`, `.doc`, `.txt`
-- Real content validation: extension check, then actual byte-content
-  sniffed via `python-magic`/libmagic and compared against what the
-  extension claims (`backend/app/services/mime_check.py`)
-- Max size: 8MB, streamed to disk (never buffers the whole file in memory)
-- Duplicate content detected by SHA-256 hash of extracted text — reuses
-  the existing entry instead of creating a duplicate
+- Allowed types: `.pdf`, `.docx`, `.doc`, `.txt` (checked by extension; rejected with 400 otherwise)
+- Max size: 8MB (streamed to disk in chunks, rejected with 413 if exceeded — never buffers the whole file in memory)
+- Duplicate content (same resume text, re-uploaded via either flow) is detected by SHA-256 hash of the extracted text and reuses the existing entry instead of creating a duplicate DB row + vector
+
+## Status / next steps
+
+- **Embedding model verified**: the real `all-MiniLM-L6-v2` model loads at runtime via `sentence-transformers` and produces 384-dimensional embeddings. There is no TF-IDF stub or fallback path in production code.
+- Scoring pipeline (embeddings + keyword gap) is tested at the pure-logic layer and through API/portal flows; the embedding service itself was also verified locally with the real model.
+- Branch-scoped role templates now cover CS/software, Mechanical, Civil, ECE, EEE, and Aerospace.
+- On-demand deep analysis endpoint is implemented and tested for JSON parsing and no-key graceful behavior. A real Anthropic/Gemini call still requires the relevant API key.
+- Recruiter endpoints now require recruiter role auth; admin endpoints require admin role auth. Candidate scoring endpoints remain open for the demo flow.
+- Recruiter approval flow is fully implemented and tested: pending request table, admin dashboard, approve/reject endpoints, generated recruiter credentials emailed on approval. Full test coverage in `test_auth_recruiter_flow.py`.
+- SMTP email utility is implemented and reused for signup OTP, password reset, and recruiter credentials. DEV_MODE fallback is available for demos without mailbox credentials. OTP validation/expiry and password-reset single-use behavior are covered by tests.
+- Resume dedup by content hash is implemented — see `_save_and_index_resume` in `backend/app/api/candidate.py`.
+- Recruiter dashboard scaling: `matching-resumes` now reuses each resume's embedding from Chroma instead of recomputing it per request, plus basic `top_k`/`offset` pagination.
+- File validation: extension allowlist + 8MB streamed size limit. Content-based MIME sniffing via `python-magic`/libmagic is implemented and works when libmagic is installed; degrades gracefully (skips the MIME check) when it is not. No handling for corrupted/password-protected PDFs beyond a generic extraction-failed error.
+- Docker + docker-compose added for both services, with a persisted data volume. The embedding model still downloads on first request inside the container unless you bake it into the image (see comment in `backend/Dockerfile`).
+- Skills vocabulary in `backend/app/services/skills_vocab.py` now includes software plus core engineering branch coverage and selected business skills.
+- No company rename, no refresh tokens/lockout/audit-log hardening, no production migration system, and no candidate-side score history UI yet.
+- Still unverified: Docker runtime, real SMTP mailbox delivery, real Gemini/Anthropic API calls, and remote CI status.

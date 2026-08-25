@@ -1,11 +1,10 @@
-import os
-from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Form, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlmodel import Session, select
 from sqlalchemy import func
 
-from ..db import engine, Suggestion, CandidateUser, RecruiterUser
+from ..auth import get_current_admin
+from ..db import engine, Suggestion, CandidateUser, RecruiterUser, User
 
 router = APIRouter(tags=["admin"])
 
@@ -28,15 +27,9 @@ async def create_suggestion(
 
 @router.get("/api/admin/suggestions")
 async def admin_suggestions(
-    password: Optional[str] = Query(None),
-    x_admin_password: Optional[str] = Header(None, alias="X-Admin-Password"),
+    admin: User = Depends(get_current_admin),
 ):
     """Admin-gated endpoint to see stats and all user suggestions."""
-    expected = os.environ.get("ADMIN_PASSWORD", "admin123")
-    provided = password or x_admin_password
-    if provided != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized: invalid admin password")
-
     with Session(engine) as session:
         candidate_count = session.exec(select(func.count()).select_from(CandidateUser)).one()
         recruiter_count = session.exec(select(func.count()).select_from(RecruiterUser)).one()
