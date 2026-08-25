@@ -173,9 +173,9 @@ export default function AdminPage() {
     <div className="admin-page">
       <div className="admin-topbar">
         <div className="admin-topbar-brand">
-          <div className="admin-topbar-logo">A</div>
+          <div className="admin-topbar-logo">C</div>
           <div>
-            <div className="admin-topbar-title">ATS Platform Admin</div>
+            <div className="admin-topbar-title">CoreLink Admin</div>
             <div className="admin-topbar-subtitle">System Dashboard</div>
           </div>
         </div>

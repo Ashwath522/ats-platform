@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth, createAuthedFetch } from '../auth.jsx'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
+import Onboarding from '../components/Onboarding.jsx'
 
 export default function RecruiterPage() {
   const { recruiterToken, recruiterUsername, loginRecruiter, logoutRecruiter } = useAuth()
@@ -387,6 +388,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
 
   return (
     <div>
+      <Onboarding type="recruiter" />
       <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Signed in as <strong style={{ color: 'var(--text)' }}>{username}</strong></span>
         <button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button>
@@ -609,7 +611,12 @@ function RecruiterDashboard({ token, username, onLogout }) {
             )}
 
             {myJobs.length === 0 && !showJobForm && (
-              <div className="empty-state">No job postings yet. Click "Post a Job" to create one.</div>
+              <div className="empty-state" style={{ border: '2px dashed var(--border)', padding: 64, borderRadius: 16, marginTop: 24 }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
+                <h3>Let's find your next great hire</h3>
+                <p style={{ maxWidth: 400, margin: '0 auto', color: 'var(--text-secondary)' }}>Create your first job posting to start receiving matching CoreLink scored applications instantly.</p>
+                <button className="btn btn-primary" onClick={() => setShowJobForm(true)} style={{ marginTop: 24 }}>+ Create your first job</button>
+              </div>
             )}
 
             {myJobs.map(job => (
@@ -646,7 +653,10 @@ function RecruiterDashboard({ token, username, onLogout }) {
               {applicantsLoading && <div className="empty-state">Loading applicants…</div>}
 
               {!applicantsLoading && applicants.applicants.length === 0 && (
-                <div className="empty-state">No applications received yet.</div>
+                <div className="empty-state" style={{ border: '2px dashed var(--border)', padding: 48, borderRadius: 12 }}>
+                  <h3 style={{ marginBottom: 12 }}>No applications yet</h3>
+                  <p style={{ color: 'var(--text-secondary)' }}>When candidates apply to this role, their CoreLink scored profiles will automatically appear here.</p>
+                </div>
               )}
 
               {!applicantsLoading && applicants.applicants.length > 0 && (

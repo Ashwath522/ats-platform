@@ -378,7 +378,7 @@ export default function ProfilePage() {
             {suggestionsError && <p className="error-msg">{suggestionsError}</p>}
             {suggestions && (
               suggestions.llm_configured === false ? (
-                <p className="panel-desc" style={{ marginTop: 12 }}>Resume suggestions aren't configured on this server yet (no LLM API key set).</p>
+                <p className="panel-desc" style={{ marginTop: 12 }}>AI Resume Insights are currently unavailable. Your CoreLink matching score is still available.</p>
               ) : (
                 <ul className="resume-suggestions-list" style={{ marginTop: 12 }}>
                   {suggestions.suggestions?.map((s, i) => <li key={i}>{s}</li>)}

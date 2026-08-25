@@ -5,7 +5,7 @@ const tabs = [
   { path: '/candidate/feed', label: 'Feed', icon: '📰' },
   { path: '/candidate/profile', label: 'Profile', icon: '👤' },
   { path: '/candidate/jobs', label: 'Jobs', icon: '💼' },
-  { path: '/candidate/repo', label: 'Repo', icon: '📦' },
+  { path: '/candidate/repo', label: 'Applications', icon: '📋' },
   { path: '/candidate/contact', label: 'Contact', icon: '📧' },
 ]
 

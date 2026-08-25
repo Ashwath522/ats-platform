@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Outlet, Navigate, Link, useNavigate } from 'react-router-dom'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import BottomNav from '../../components/BottomNav.jsx'
+import Onboarding from '../../components/Onboarding.jsx'
 
 export default function CandidateLayout() {
   const { candidateToken, candidateUsername, logoutCandidate } = useAuth()
@@ -32,6 +33,7 @@ export default function CandidateLayout() {
 
   return (
     <div className="candidate-layout">
+      <Onboarding type="candidate" />
       <div className="candidate-topbar">
         {/* Compact persistent profile indicator top-left */}
         <div className="topbar-profile-indicator" onClick={() => navigate('/candidate/profile')} style={{ cursor: 'pointer' }}>
@@ -44,7 +46,7 @@ export default function CandidateLayout() {
 
         {/* Double click title for admin gesture */}
         <h2 className="topbar-app-logo" onDoubleClick={() => navigate('/admin')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Double click for Admin panel">
-          ATS Portal
+          CoreLink
         </h2>
 
         <div className="topbar-actions">

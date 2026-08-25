@@ -32,21 +32,12 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "auto").lower()  # auto | ollama |
 DEFAULT_NOT_CONFIGURED = {
     "llm_configured": False,
     "grammar_score": None,
-    "grammar_issues": [],
+    "grammar_notes": "AI Resume Insights are currently unavailable.",
     "technical_depth_score": None,
-    "technical_depth_notes": (
-        "Deep analysis requires a free LLM. Options: "
-        "(1) Install Ollama (https://ollama.com) and run `ollama pull llama3.2`, or "
-        "(2) Set GEMINI_API_KEY for Google Gemini free tier."
-    ),
+    "technical_depth_notes": "AI Resume Insights are currently unavailable.",
     "experience_score": None,
-    "experience_notes": (
-        "Set LLM_PROVIDER=ollama (with Ollama running) or GEMINI_API_KEY to enable."
-    ),
-    "overall_summary": (
-        "Deep analysis is disabled. The ATS score above is fully accurate — "
-        "this section only adds qualitative grammar, depth, and experience notes."
-    ),
+    "experience_notes": "AI Resume Insights are currently unavailable.",
+    "overall_summary": "AI Resume Insights are currently unavailable. Your CoreLink matching score is still fully accurate.",
 }
 
 
