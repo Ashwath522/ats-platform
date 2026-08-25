@@ -24,7 +24,7 @@ export default function RecruiterPage() {
   }
 
   if (role === 'admin') {
-    return <AdminDashboard token={recruiterToken} username={recruiterUsername} onLogout={handleLogout} />
+    return <Navigate to="/admin" replace />
   }
 
   return <RecruiterDashboard token={recruiterToken} username={recruiterUsername} onLogout={handleLogout} />
@@ -130,13 +130,13 @@ function RecruiterAuthPanel({ onLogin }) {
           </>
         )}
 
-        <button className="primary" onClick={submit} disabled={loading}>
+        <button className="btn btn-primary" onClick={submit} disabled={loading} style={{ width: '100%', justifyContent: 'center' }}>
           {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Submit request'}
         </button>
-        {error && <div className="error-msg">{error}</div>}
-        {message && <div className="success-msg">{message}</div>}
+        {error && <div className="error-banner" style={{ marginTop: 16 }}>{error}</div>}
+        {message && <div className="success-msg" style={{ marginTop: 16 }}>{message}</div>}
 
-        <p className="panel-desc" style={{ marginTop: 16 }}>
+        <p className="panel-desc" style={{ marginTop: 16, textAlign: 'center' }}>
           {mode === 'login' ? "I'm a recruiter without an account. " : 'Already approved? '}
           <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'request' : 'login'); setError(null); setMessage(null) }}>
             {mode === 'login' ? 'Request access' : 'Log in'}
@@ -147,86 +147,7 @@ function RecruiterAuthPanel({ onLogin }) {
   )
 }
 
-function AdminDashboard({ token, username, onLogout }) {
-  const api = createAuthedFetch(token, onLogout)
-  const [requests, setRequests] = useState([])
-  const [error, setError] = useState(null)
-  const [notice, setNotice] = useState(null)
-
-  async function refreshRequests() {
-    try {
-      const res = await api('/api/admin/recruiter-requests')
-      if (!res.ok) throw new Error((await res.json()).detail || 'Could not load requests')
-      setRequests(await res.json())
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  useEffect(() => { refreshRequests() }, [])
-
-  async function decide(id, action) {
-    setError(null)
-    setNotice(null)
-    try {
-      const res = await api(`/api/admin/recruiter-requests/${id}/${action}`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Request failed')
-      if (action === 'approve') {
-        setNotice(`Approved ${data.user.email}. Temporary password: ${data.temporary_password || data.dev_only?.temporary_password || 'sent by email'}`)
-      } else {
-        setNotice('Request rejected.')
-      }
-      await refreshRequests()
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  return (
-    <div>
-      <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Admin <strong style={{ color: 'var(--text)' }}>{username}</strong></span>
-        <button className="primary" style={{ marginTop: 0, padding: '8px 14px' }} onClick={onLogout}>Log out</button>
-      </div>
-
-      <div className="panel">
-        <h2>Recruiter Requests</h2>
-        <p className="panel-desc">Review pending recruiter access requests.</p>
-        {error && <div className="error-msg">{error}</div>}
-        {notice && <div className="success-msg">{notice}</div>}
-        {requests.length === 0 && <div className="empty-state">No pending recruiter requests.</div>}
-        {requests.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>Submitted</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.map(item => (
-                <tr key={item.id}>
-                  <td>{item.name}</td>
-                  <td>{item.email}</td>
-                  <td>{item.phone}</td>
-                  <td>{new Date(item.submitted_at).toLocaleString()}</td>
-                  <td>
-                    <button className="secondary compact-btn" onClick={() => decide(item.id, 'approve')}>Approve</button>
-                    <button className="delete-btn" onClick={() => decide(item.id, 'reject')}>Reject</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  )
-}
+// AdminDashboard removed, now in AdminPage.jsx
 
 function RecruiterDashboard({ token, username, onLogout }) {
   const api = createAuthedFetch(token, onLogout)
@@ -450,8 +371,8 @@ function RecruiterDashboard({ token, username, onLogout }) {
   return (
     <div>
       <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Signed in as <strong style={{ color: 'var(--text)' }}>{username}</strong></span>
-        <button className="primary" style={{ marginTop: 0, padding: '8px 14px' }} onClick={onLogout}>Log out</button>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Signed in as <strong style={{ color: 'var(--text)' }}>{username}</strong></span>
+        <button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button>
       </div>
 
       {/* Tab navigation */}
@@ -483,8 +404,8 @@ function RecruiterDashboard({ token, username, onLogout }) {
                   {editingCompanyId === c.id ? (
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                       <input type="text" value={editCompanyName} onChange={e => setEditCompanyName(e.target.value)} onKeyDown={e => e.key === 'Enter' && updateCompanyName(c.id)} autoFocus style={{ margin: 0 }} />
-                      <button className="primary" style={{ margin: 0, padding: '4px 8px', fontSize: 12 }} onClick={() => updateCompanyName(c.id)}>Save</button>
-                      <button style={{ margin: 0, padding: '4px 8px', fontSize: 12 }} onClick={() => setEditingCompanyId(null)}>Cancel</button>
+                      <button className="btn btn-primary btn-sm" style={{ margin: 0 }} onClick={() => updateCompanyName(c.id)}>Save</button>
+                      <button className="btn btn-ghost btn-sm" style={{ margin: 0 }} onClick={() => setEditingCompanyId(null)}>Cancel</button>
                     </div>
                   ) : (
                     <>
@@ -537,7 +458,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
               <label>Apply link</label>
               <input type="text" value={applyUrl} onChange={e => setApplyUrl(e.target.value)} placeholder="https://company.com/careers/job-id" />
 
-              <button className="primary" onClick={saveJobDescription} disabled={savingJd}>
+              <button className="btn btn-primary" onClick={saveJobDescription} disabled={savingJd}>
                 {savingJd ? 'Saving…' : 'Save & re-rank candidates'}
               </button>
             </div>
@@ -606,7 +527,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
           <div className="panel">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2>Your Job Postings</h2>
-              <button className="primary" style={{ marginTop: 0 }} onClick={() => setShowJobForm(!showJobForm)}>
+              <button className="btn btn-primary" style={{ marginTop: 0 }} onClick={() => setShowJobForm(!showJobForm)}>
                 {showJobForm ? 'Cancel' : '+ Post a Job'}
               </button>
             </div>
@@ -664,7 +585,7 @@ function RecruiterDashboard({ token, username, onLogout }) {
                 <label>Required skills (comma-separated)</label>
                 <input type="text" value={jobForm.requirements} onChange={e => setJobForm({...jobForm, requirements: e.target.value})} placeholder="Python, FastAPI, Docker, …" />
 
-                <button className="primary" onClick={createJob} disabled={savingJob || !jobForm.title.trim() || !jobForm.description.trim() || !jobForm.branch}>
+                <button className="btn btn-primary" onClick={createJob} disabled={savingJob || !jobForm.title.trim() || !jobForm.description.trim() || !jobForm.branch}>
                   {savingJob ? 'Posting…' : 'Post Job'}
                 </button>
               </div>

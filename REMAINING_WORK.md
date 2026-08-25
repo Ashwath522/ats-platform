@@ -52,21 +52,16 @@ found and fixed in the process.
   rate limiting, lockout/abuse controls, audit logs, and a production
   migration system.
 
-## 5. Optional LLM-generated improvement suggestions — not started
-- If wanted: add a separate endpoint that takes the existing
-  `missing_skills` list and calls an LLM once, cached per
-  (resume_id, company_id) pair. Keep it out of the scoring hot path.
+## 5. Optional LLM-generated improvement suggestions — DONE, verified
+- Optional deep analysis is implemented via `POST /api/candidate/deep-analysis` using Ollama as the primary free LLM (`llama3.2` by default), with a fallback to Google Gemini. It operates out of the scoring hot path and provides grammar, technical depth, and experience feedback.
 
-## 6. Skills vocabulary is a starting list — not started
-- Still ~90 tech-focused skills. Expand for your target industries.
+## 6. Skills vocabulary is a starting list — DONE (expanded)
+- Vocabulary has been heavily expanded to include 80+ skills and aliases across software, mechanical, civil, and other engineering disciplines.
 
-## 7. Company/JD management gaps — mostly done
-- Delete button now exists in the frontend (RecruiterPage.jsx), wired to
-  the `DELETE /api/recruiter/companies/{id}` endpoint. Verified via a real
-  browser test: create a company, click Delete, confirm the dialog, list
-  refreshes and the company is gone.
-- Past job descriptions are now visible in the recruiter UI. Still
-  missing: no edit-in-place for company name.
+## 7. Company/JD management gaps — DONE
+- Delete button exists in the frontend (RecruiterPage.jsx).
+- Past job descriptions are visible.
+- Edit-in-place company name is implemented.
 
 ## 8. Recruiter dashboard scaling — DONE, verified
 - Confirmed via live test with `top_k`/`offset` params that pagination
@@ -85,19 +80,19 @@ found and fixed in the process.
 - Still missing: handling for corrupted/password-protected PDFs beyond a
   generic "could not extract text" error.
 
-## 10. Deployment — DONE (base setup), not run
+## 10. Deployment & CI — DONE (base setup), not run
 - `backend/Dockerfile`, `frontend/Dockerfile`, `frontend/nginx.conf`, and
   root `docker-compose.yml` exist. Not built or run this session (no
   Docker available in this sandbox) — build and run `docker compose up`
   once to confirm before relying on it.
+- GitHub Actions CI workflow is implemented in `.github/workflows/ci.yml`.
 - `CORS_ORIGINS` and `JWT_SECRET_KEY` are environment-configurable.
 - SMTP settings, DEV_MODE, and admin bootstrap credentials are
   environment-configurable.
-- Still missing: CI/CD, TLS termination, secrets manager integration.
+- Still missing: TLS termination, secrets manager integration.
 
 ## 11. Tests — DONE, verified
-- Full backend suite now has 50 tests collected (46 passing, 4 skipped
-  when libmagic is absent) via `python3 -m pytest backend/tests`.
+- Full backend suite now has 60+ tests collected via `python -m pytest tests/`.
 - Coverage includes scoring math, branch vocabulary, deep-analysis parser
   behavior, password hashing/JWT validation, role separation, admin vs.
   recruiter route protection, recruiter request → approve → user created

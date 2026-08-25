@@ -26,7 +26,9 @@ def test_parse_analysis_json_strips_markdown_fence():
 
 
 def test_run_deep_analysis_not_configured(monkeypatch):
+    # Ensure neither Gemini nor Ollama is considered configured
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "none")
     result = run_deep_analysis("resume", "job")
     assert result == DEFAULT_NOT_CONFIGURED
 

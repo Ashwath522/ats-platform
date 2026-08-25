@@ -1,3 +1,19 @@
+"""
+Deep analysis and resume improvement suggestions via free LLMs.
+
+Provider priority (first configured wins):
+  1. Ollama  — local, completely free. Set LLM_PROVIDER=ollama or just have Ollama
+               running at OLLAMA_BASE_URL (default: http://localhost:11434).
+               Model: OLLAMA_MODEL env var (default: llama3.2).
+  2. Gemini  — Google Gemini free tier. Requires GEMINI_API_KEY.
+               Model: GEMINI_MODEL env var (default: gemini-2.5-flash).
+  3. None    — returns llm_configured: false gracefully. Main ATS score is
+               never affected; only the optional deep analysis panel is disabled.
+
+Set LLM_PROVIDER=none to explicitly disable deep analysis.
+
+This module is NEVER in the hot scoring path. Scoring is always LLM-free.
+"""
 import hashlib
 import json
 import os
@@ -9,16 +25,28 @@ import httpx
 from fastapi import HTTPException
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "auto").lower()  # auto | ollama | gemini | none
 
 DEFAULT_NOT_CONFIGURED = {
     "llm_configured": False,
     "grammar_score": None,
     "grammar_issues": [],
     "technical_depth_score": None,
-    "technical_depth_notes": "Deep analysis requires GEMINI_API_KEY.",
+    "technical_depth_notes": (
+        "Deep analysis requires a free LLM. Options: "
+        "(1) Install Ollama (https://ollama.com) and run `ollama pull llama3.2`, or "
+        "(2) Set GEMINI_API_KEY for Google Gemini free tier."
+    ),
     "experience_score": None,
-    "experience_notes": "Deep analysis requires GEMINI_API_KEY.",
-    "overall_summary": "Set GEMINI_API_KEY to enable grammar, technical depth, and experience analysis.",
+    "experience_notes": (
+        "Set LLM_PROVIDER=ollama (with Ollama running) or GEMINI_API_KEY to enable."
+    ),
+    "overall_summary": (
+        "Deep analysis is disabled. The ATS score above is fully accurate — "
+        "this section only adds qualitative grammar, depth, and experience notes."
+    ),
 }
 
 
@@ -32,6 +60,11 @@ def parse_analysis_json(raw_text: str) -> Dict[str, Any]:
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
+    # Ollama sometimes wraps in partial fences — try to extract first JSON object
+    if not text.startswith("{"):
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            text = m.group(0)
     data = json.loads(text)
     required = {
         "grammar_score",
@@ -76,11 +109,69 @@ Resume:
 """.strip()
 
 
-def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+def _resolve_provider() -> str:
+    """Determine which LLM provider to use."""
+    if LLM_PROVIDER == "none":
+        return "none"
+    if LLM_PROVIDER == "ollama":
+        return "ollama"
+    if LLM_PROVIDER == "gemini":
+        return "gemini" if os.environ.get("GEMINI_API_KEY") else "none"
+    # auto: prefer Ollama if reachable, fall back to Gemini, then none
+    if _ollama_is_reachable():
+        return "ollama"
     if os.environ.get("GEMINI_API_KEY"):
+        return "gemini"
+    return "none"
+
+
+def _ollama_is_reachable() -> bool:
+    """Quick connectivity check (no model load). Times out in 2s."""
+    try:
+        resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=2.0)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+    provider = _resolve_provider()
+    if provider == "ollama":
+        return _run_ollama_analysis(resume_text, target_text)
+    if provider == "gemini":
         return _run_gemini_analysis(resume_text, target_text)
     return DEFAULT_NOT_CONFIGURED.copy()
 
+
+# ---------------------------------------------------------------------------
+# Ollama (local, free)
+# ---------------------------------------------------------------------------
+
+def _run_ollama_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+    url = f"{OLLAMA_BASE_URL}/api/generate"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": _prompt(resume_text, target_text),
+        "stream": False,
+        "options": {"temperature": 0.1, "num_predict": 1200},
+    }
+    try:
+        response = httpx.post(url, json=payload, timeout=120.0)
+        response.raise_for_status()
+        data = response.json()
+        raw = data.get("response", "")
+        if not raw:
+            raise ValueError("Empty response from Ollama")
+        return parse_analysis_json(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama returned invalid deep-analysis JSON: {exc}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama deep-analysis request failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Gemini (free tier)
+# ---------------------------------------------------------------------------
 
 def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
     model = urllib.parse.quote(GEMINI_MODEL, safe="")
@@ -110,11 +201,19 @@ def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail="Gemini deep-analysis request failed") from exc
 
 
+# ---------------------------------------------------------------------------
+# Resume improvement suggestions
+# ---------------------------------------------------------------------------
+
 def parse_suggestions_json(raw_text: str) -> Dict[str, Any]:
     text = raw_text.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
+    if not text.startswith("{"):
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            text = m.group(0)
     data = json.loads(text)
     if "suggestions" not in data:
         raise ValueError("Missing 'suggestions' key in response JSON")
@@ -148,9 +247,34 @@ Resume:
 def run_resume_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
     if not missing_skills:
         return {"llm_configured": True, "suggestions": ["Your resume already covers all the keywords identified in the job description!"]}
-    if os.environ.get("GEMINI_API_KEY"):
+    provider = _resolve_provider()
+    if provider == "ollama":
+        return _run_ollama_suggestions(resume_text, target_text, missing_skills)
+    if provider == "gemini":
         return _run_gemini_suggestions(resume_text, target_text, missing_skills)
     return {"llm_configured": False, "suggestions": []}
+
+
+def _run_ollama_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    url = f"{OLLAMA_BASE_URL}/api/generate"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": _suggestions_prompt(resume_text, target_text, missing_skills),
+        "stream": False,
+        "options": {"temperature": 0.2, "num_predict": 1000},
+    }
+    try:
+        response = httpx.post(url, json=payload, timeout=120.0)
+        response.raise_for_status()
+        data = response.json()
+        raw = data.get("response", "")
+        if not raw:
+            raise ValueError("Empty response from Ollama")
+        return parse_suggestions_json(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama returned invalid suggestions JSON: {exc}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama suggestions request failed: {exc}") from exc
 
 
 def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:

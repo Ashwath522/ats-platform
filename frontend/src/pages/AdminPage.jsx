@@ -7,7 +7,11 @@ export default function AdminPage() {
   const [authed, setAuthed] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  
   const [stats, setStats] = useState(null)
+  const [requests, setRequests] = useState([])
+  const [activeTab, setActiveTab] = useState('requests') // 'requests', 'stats', 'suggestions'
+  const [tempPasswords, setTempPasswords] = useState({}) // request_id -> string
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -20,18 +24,31 @@ export default function AdminPage() {
       const loginRes = await fetch('/api/auth/login', { method: 'POST', body: fd })
       const loginData = await loginRes.json()
       if (!loginRes.ok || loginData.role !== 'admin') throw new Error('Invalid admin credentials')
-      const statsRes = await fetch('/api/admin/suggestions', {
-        headers: { Authorization: `Bearer ${loginData.access_token}` },
-      })
-      if (!statsRes.ok) throw new Error('Could not load admin dashboard')
-      setStats(await statsRes.json())
-      setAuthed(true)
+      
       localStorage.setItem('ats_admin_token', loginData.access_token)
       localStorage.setItem('ats_admin_email', loginData.email)
+      
+      await loadAdminData(loginData.access_token)
+      setAuthed(true)
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadAdminData(token) {
+    try {
+      const [statsRes, reqsRes] = await Promise.all([
+        fetch('/api/admin/suggestions', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/admin/recruiter-requests', { headers: { Authorization: `Bearer ${token}` } })
+      ])
+      
+      if (statsRes.ok) setStats(await statsRes.json())
+      if (reqsRes.ok) setRequests(await reqsRes.json())
+    } catch (err) {
+      console.error('Error loading admin data', err)
+      throw new Error('Failed to load dashboard data')
     }
   }
 
@@ -41,19 +58,8 @@ export default function AdminPage() {
     const savedEmail = localStorage.getItem('ats_admin_email')
     if (savedToken) {
       setEmail(savedEmail || '')
-      fetch('/api/admin/suggestions', {
-        headers: { Authorization: `Bearer ${savedToken}` },
-      })
-        .then(res => {
-          if (res.ok) {
-            return res.json()
-          }
-          throw new Error()
-        })
-        .then(data => {
-          setStats(data)
-          setAuthed(true)
-        })
+      loadAdminData(savedToken)
+        .then(() => setAuthed(true))
         .catch(() => {
           localStorage.removeItem('ats_admin_token')
           localStorage.removeItem('ats_admin_email')
@@ -68,41 +74,86 @@ export default function AdminPage() {
     setPassword('')
     setAuthed(false)
     setStats(null)
+    setRequests([])
+  }
+
+  async function handleApprove(requestId) {
+    const token = localStorage.getItem('ats_admin_token')
+    try {
+      const res = await fetch(`/api/admin/recruiter-requests/${requestId}/approve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Approval failed')
+      
+      // Save temp password if returned
+      if (data.temp_password) {
+        setTempPasswords(prev => ({ ...prev, [requestId]: data.temp_password }))
+      }
+      
+      // Update local state to 'approved'
+      setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'approved' } : r))
+      
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  async function handleReject(requestId) {
+    const token = localStorage.getItem('ats_admin_token')
+    try {
+      const res = await fetch(`/api/admin/recruiter-requests/${requestId}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.detail || 'Rejection failed')
+      }
+      
+      // Update local state to 'rejected'
+      setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'rejected' } : r))
+      
+    } catch (err) {
+      alert(err.message)
+    }
   }
 
   if (!authed) {
     return (
-      <div className="admin-login-page container" style={{ maxWidth: 400, marginTop: '10%' }}>
-        <div className="card admin-card">
-          <h2>ATS Admin Gated Area</h2>
-          <p>Please enter the admin password to access statistics and feedback box.</p>
+      <div className="admin-login-page">
+        <div className="admin-login-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <div className="admin-topbar-logo">A</div>
+            <h2>Admin Portal</h2>
+          </div>
+          <p className="text-muted" style={{ marginBottom: 24 }}>Authenticate to access the admin dashboard.</p>
           <form onSubmit={handleLogin}>
-            <div className="form-group" style={{ marginBottom: 16 }}>
-              <label>Admin Email</label>
-              <input
-                type="text"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="admin@example.com"
-                required
-                style={{ width: '100%', marginBottom: 12 }}
-              />
-              <label>Admin Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Enter password..."
-                required
-                style={{ width: '100%' }}
-              />
-            </div>
+            <label>Admin Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="admin@example.com"
+              required
+              style={{ marginBottom: 16 }}
+            />
+            <label>Admin Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Enter password..."
+              required
+              style={{ marginBottom: 20 }}
+            />
             {error && <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div>}
             <div style={{ display: 'flex', gap: 12 }}>
-              <button type="submit" className="btn btn-primary" disabled={loading} style={{ flex: 1 }}>
+              <button type="submit" className="btn btn-primary" disabled={loading} style={{ flex: 1, justifyContent: 'center' }}>
                 {loading ? 'Verifying...' : 'Access Dashboard'}
               </button>
-              <Link to="/" className="btn" style={{ textAlign: 'center', lineHeight: '36px' }}>Home</Link>
+              <Link to="/" className="btn btn-secondary">Home</Link>
             </div>
           </form>
         </div>
@@ -110,52 +161,154 @@ export default function AdminPage() {
     )
   }
 
+  const pendingRequests = requests.filter(r => r.status === 'pending')
+  const completedRequests = requests.filter(r => r.status !== 'pending')
+
   return (
-    <div className="admin-dashboard-page container" style={{ marginTop: '3%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h2>ATS Platform Admin Dashboard</h2>
-          <p>Gated metrics & suggestion box feedback.</p>
+    <div className="admin-page">
+      <div className="admin-topbar">
+        <div className="admin-topbar-brand">
+          <div className="admin-topbar-logo">A</div>
+          <div>
+            <div className="admin-topbar-title">ATS Platform Admin</div>
+            <div className="admin-topbar-subtitle">System Dashboard</div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
-          <Link to="/" className="btn btn-secondary">Home</Link>
-          <button onClick={handleLogout} className="btn">Log Out</button>
+          <Link to="/" className="btn btn-ghost btn-sm">Exit Admin</Link>
+          <button onClick={handleLogout} className="btn btn-secondary btn-sm">Log Out</button>
         </div>
       </div>
 
-      <div className="admin-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 24 }}>
-        <div className="card stats-card" style={{ textAlign: 'center' }}>
-          <h3>Total Candidates</h3>
-          <span className="stats-number" style={{ fontSize: 36, fontWeight: 'bold', color: 'var(--primary-color)' }}>
-            {stats?.candidate_count}
-          </span>
+      <div className="admin-body">
+        <div className="tabs">
+          <button 
+            className={`tab-btn ${activeTab === 'requests' ? 'active' : ''}`}
+            onClick={() => setActiveTab('requests')}
+          >
+            Recruiter Requests {pendingRequests.length > 0 && `(${pendingRequests.length})`}
+          </button>
+          <button 
+            className={`tab-btn ${activeTab === 'stats' ? 'active' : ''}`}
+            onClick={() => setActiveTab('stats')}
+          >
+            Platform Stats
+          </button>
+          <button 
+            className={`tab-btn ${activeTab === 'suggestions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('suggestions')}
+          >
+            User Suggestions
+          </button>
         </div>
-        <div className="card stats-card" style={{ textAlign: 'center' }}>
-          <h3>Total Recruiters</h3>
-          <span className="stats-number" style={{ fontSize: 36, fontWeight: 'bold', color: 'var(--primary-color)' }}>
-            {stats?.recruiter_count}
-          </span>
-        </div>
-      </div>
 
-      <div className="card suggestions-card">
-        <h3>User Suggestion / Feedback Submissions</h3>
-        <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>Suggestions submitted via contact/feedback box.</p>
-        <div className="suggestions-list" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {!stats?.suggestions || stats.suggestions.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No suggestions submitted yet.</div>
-          ) : (
-            stats.suggestions.map(sug => (
-              <div key={sug.id} className="suggestion-item" style={{ padding: 12, border: '1px solid var(--border-color)', borderRadius: 8, background: 'rgba(0,0,0,0.02)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-                  <span>From: <strong>{sug.submitter || 'Anonymous'}</strong></span>
-                  <span>{new Date(sug.submitted_at).toLocaleString()}</span>
-                </div>
-                <p style={{ margin: 0 }}>{sug.text}</p>
+        {activeTab === 'requests' && (
+          <div className="panel">
+            <h2>Pending Approvals</h2>
+            <p className="panel-desc">Review and approve accounts for enterprise recruiters.</p>
+            
+            {pendingRequests.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state-icon">✅</div>
+                <p>All caught up! No pending recruiter requests.</p>
               </div>
-            ))
-          )}
-        </div>
+            ) : (
+              <div className="requests-list">
+                {pendingRequests.map(req => (
+                  <div key={req.id} className="recruiter-request-item">
+                    <div className="recruiter-request-header">
+                      <div>
+                        <div className="recruiter-request-name">{req.name}</div>
+                        <div className="recruiter-request-meta">
+                          {req.email} • {req.phone}
+                        </div>
+                        <div className="recruiter-request-meta">
+                          Submitted: {new Date(req.submitted_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <div className="recruiter-request-actions">
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleReject(req.id)}>Reject</button>
+                        <button className="btn btn-primary btn-sm" onClick={() => handleApprove(req.id)}>Approve</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {completedRequests.length > 0 && (
+              <>
+                <h3 style={{ marginTop: 32, marginBottom: 16 }}>Recently Decided</h3>
+                <div className="requests-list" style={{ opacity: 0.8 }}>
+                  {completedRequests.map(req => (
+                    <div key={req.id} className="recruiter-request-item" style={{ background: 'var(--bg)' }}>
+                      <div className="recruiter-request-header">
+                        <div>
+                          <div className="recruiter-request-name">{req.name}</div>
+                          <div className="recruiter-request-meta">
+                            {req.email} • {req.phone}
+                          </div>
+                          <div className="recruiter-request-meta">
+                            Status: <strong className={req.status === 'approved' ? 'text-success' : 'text-danger'}>{req.status.toUpperCase()}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      {tempPasswords[req.id] && (
+                        <div className="temp-password-banner">
+                          Account created! The user has been emailed, but if email delivery fails, their temporary password is: 
+                          <span className="temp-password-value">{tempPasswords[req.id]}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'stats' && (
+          <div className="panel">
+            <h2>Platform Statistics</h2>
+            <p className="panel-desc">Overview of user growth and system usage.</p>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <h3>Total Candidates</h3>
+                <span className="stat-number">{stats?.candidate_count || 0}</span>
+              </div>
+              <div className="stat-card">
+                <h3>Total Recruiters</h3>
+                <span className="stat-number">{stats?.recruiter_count || 0}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'suggestions' && (
+          <div className="panel">
+            <h2>User Feedback</h2>
+            <p className="panel-desc">Suggestions submitted via the contact / feedback box.</p>
+            
+            {!stats?.suggestions || stats.suggestions.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state-icon">💬</div>
+                <p>No suggestions submitted yet.</p>
+              </div>
+            ) : (
+              <div className="suggestions-list">
+                {stats.suggestions.map(sug => (
+                  <div key={sug.id} className="suggestion-item">
+                    <div className="suggestion-meta">
+                      <span>From: <strong>{sug.submitter || 'Anonymous'}</strong></span>
+                      <span>{new Date(sug.submitted_at).toLocaleString()}</span>
+                    </div>
+                    <div className="suggestion-text">{sug.text}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
