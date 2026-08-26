@@ -99,3 +99,44 @@ def test_score_project_endpoint(mock_scorer, candidate_token, sample_application
         assert app_updated.status == "repo_verification"
         assert app_updated.project_score == 90.0
         assert app_updated.final_score == 85.0
+
+    # Verify my_applications returns final_score
+    response = client.get(
+        "/api/candidate/jobs/applications/mine",
+        headers={"Authorization": f"Bearer {candidate_token}"}
+    )
+    assert response.status_code == 200
+    my_apps = response.json()["applications"]
+    assert len(my_apps) > 0
+    # Make sure we're checking the one we just scored
+    scored_app = next((a for a in my_apps if a["application_id"] == sample_application.id), None)
+    assert scored_app is not None
+    assert scored_app["final_score"] == 85.0
+    assert scored_app["project_score"] == 90.0
+
+@patch("app.services.scorer.score_student_job")
+def test_score_project_wrong_candidate(mock_scorer, candidate_token, sample_job):
+    # Create an application belonging to a DIFFERENT candidate
+    with Session(engine) as session:
+        other_user = CandidateUser(username="other@example.com", password_hash="dummy")
+        session.add(other_user)
+        session.commit()
+        
+        other_app = Application(candidate_id=other_user.id, job_id=sample_job.id, ats_score=80)
+        session.add(other_app)
+        session.commit()
+        other_app_id = other_app.id
+
+    file_content = b"print('hello world')"
+    file_obj = io.BytesIO(file_content)
+    file_obj.name = "script.py"
+
+    response = client.post(
+        "/api/candidate/score-project",
+        headers={"Authorization": f"Bearer {candidate_token}"},
+        data={"application_id": other_app_id},
+        files={"file": ("script.py", file_obj, "text/plain")}
+    )
+
+    assert response.status_code == 403
+    assert "permission" in response.json()["detail"].lower()

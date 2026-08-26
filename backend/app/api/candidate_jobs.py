@@ -218,6 +218,12 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
                 "missing_skills": json.loads(app.missing_skills_json),
                 "status": app.status,
                 "applied_at": app.applied_at.isoformat(),
+                "project_score": app.project_score,
+                "final_score": app.final_score,
+                "project_summary": app.project_summary,
+                "priority_level": app.priority_level,
+                "api_used": app.api_used,
+                "parse_method": app.parse_method,
             })
 
         return {"applications": results, "count": len(results)}

@@ -329,9 +329,17 @@ async def score_project(
     # Resolve JD and target branch
     if application_id is not None:
         with Session(engine) as session:
+            from ..db import CandidateUser
+            cand_user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
+            if not cand_user:
+                raise HTTPException(status_code=404, detail="Candidate profile not found")
+
             app_record = session.get(Application, application_id)
             if not app_record:
                 raise HTTPException(status_code=404, detail="Application not found")
+            if app_record.candidate_id != cand_user.id:
+                raise HTTPException(status_code=403, detail="You do not have permission to score this application")
+
             job_record = session.get(Job, app_record.job_id)
             if not job_record:
                 raise HTTPException(status_code=404, detail="Job not found")

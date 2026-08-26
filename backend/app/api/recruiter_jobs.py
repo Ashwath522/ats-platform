@@ -213,6 +213,10 @@ async def list_applicants(
                 "missing_skills": json.loads(app.missing_skills_json),
                 "status": app.status,
                 "applied_at": app.applied_at.isoformat(),
+                "project_score": app.project_score,
+                "final_score": app.final_score,
+                "priority_level": app.priority_level,
+                "project_summary": app.project_summary,
             })
 
         return {
