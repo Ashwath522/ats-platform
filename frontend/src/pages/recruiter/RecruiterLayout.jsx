@@ -146,19 +146,6 @@ export default function RecruiterLayout() {
       <div className="recruiter-content" style={{ flex: 1, overflowY: 'auto', padding: '40px 60px', background: 'var(--background)' }}>
         <Outlet context={{ token: recruiterToken, username: recruiterUsername, api: createAuthedFetch(recruiterToken, handleLogout) }} />
       </div>
-
-      {/* Mobile Bottom Nav */}
-      <div className="mobile-nav">
-        {navItems.map(item => {
-          const isActive = location.pathname.startsWith(item.path)
-          return (
-            <Link key={item.id} to={item.path} className={`mobile-nav-item ${isActive ? 'active' : ''}`}>
-              <div className="icon">{item.icon}</div>
-              <span>{item.label}</span>
-            </Link>
-          )
-        })}
-      </div>
     </div>
   )
 }

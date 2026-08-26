@@ -241,76 +241,78 @@ export default function RecruiterJobs() {
       )}
 
       {selectedJobId && !showJobForm && applicants && (
-        <div className="panel" style={{ maxWidth: 'none' }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setSelectedJobId(null); setSearchParams({}) }}>← Back to Jobs</button>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'rgba(255, 255, 255, 0.4)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '24px 40px', borderBottom: '1px solid rgba(0,0,0,0.1)', display: 'flex', gap: 16, alignItems: 'center', background: 'rgba(255,255,255,0.4)' }}>
+            <button className="btn btn-primary btn-sm" onClick={() => { setSelectedJobId(null); setSearchParams({}) }}>← Back to Jobs</button>
             <h2 style={{ margin: 0 }}>Pipeline — {applicants.job_title}</h2>
           </div>
 
-          {applicantsLoading && <div className="empty-state">Loading applicants…</div>}
+          <div style={{ flex: 1, padding: '32px 40px', overflowX: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {applicantsLoading && <div className="empty-state" style={{ background: 'rgba(255,255,255,0.6)', borderRadius: 16 }}>Loading applicants…</div>}
 
-          {!applicantsLoading && applicants.applicants.length === 0 && (
-            <div className="empty-state" style={{ border: '2px dashed var(--border)', padding: 48, borderRadius: 12 }}>
-              <h3 style={{ marginBottom: 12 }}>No applications yet</h3>
-              <p style={{ color: 'var(--text-secondary)' }}>When candidates apply to this role, their CoreLink scored profiles will automatically appear here.</p>
-            </div>
-          )}
+            {!applicantsLoading && applicants.applicants.length === 0 && (
+              <div className="empty-state" style={{ background: 'rgba(255,255,255,0.6)', padding: 64, borderRadius: 16, border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 8px 32px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ marginBottom: 12 }}>No applications yet</h3>
+                <p style={{ color: 'var(--text-secondary)' }}>When candidates apply to this role, their CoreLink scored profiles will automatically appear here.</p>
+              </div>
+            )}
 
-          {!applicantsLoading && applicants.applicants.length > 0 && (
-            <div className="pipeline-board" style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 16 }}>
-              {pipelineStages.map(stage => {
-                const stageApplicants = applicants.applicants.filter(a => a.status === stage.id);
-                return (
-                  <div key={stage.id} style={{ flex: '0 0 320px', backgroundColor: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', maxHeight: '70vh' }}>
-                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      {stage.label}
-                      <span style={{ background: 'var(--border)', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>{stageApplicants.length}</span>
-                    </div>
-                    
-                    <div style={{ padding: 12, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {stageApplicants.length === 0 ? (
-                        <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 13 }}>No candidates</div>
-                      ) : (
-                        stageApplicants.map(a => (
-                          <div key={a.application_id} style={{ background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
-                            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{a.candidate_name || '—'}</div>
-                            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>{a.resume_filename || '—'}</div>
-                            
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                              <span className="score-cell" style={{ fontSize: 14 }}>{a.ats_score} / 100</span>
-                              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{new Date(a.applied_at).toLocaleDateString()}</span>
+            {!applicantsLoading && applicants.applicants.length > 0 && (
+              <div className="pipeline-board" style={{ display: 'flex', gap: 24, flex: 1, minWidth: 'min-content' }}>
+                {pipelineStages.map(stage => {
+                  const stageApplicants = applicants.applicants.filter(a => a.status === stage.id);
+                  return (
+                    <div key={stage.id} style={{ flex: '0 0 320px', background: 'rgba(255, 255, 255, 0.5)', backdropFilter: 'blur(10px)', borderRadius: 16, border: '1px solid rgba(255, 255, 255, 0.8)', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                      <div style={{ padding: '20px', borderBottom: '1px solid rgba(0,0,0,0.05)', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.6)' }}>
+                        {stage.label}
+                        <span style={{ background: 'var(--primary)', color: 'white', padding: '2px 10px', borderRadius: 12, fontSize: 12 }}>{stageApplicants.length}</span>
+                      </div>
+                      
+                      <div style={{ padding: 16, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {stageApplicants.length === 0 ? (
+                          <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 13 }}>No candidates</div>
+                        ) : (
+                          stageApplicants.map(a => (
+                            <div key={a.application_id} style={{ background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(255,255,255,1)', borderRadius: 12, padding: 16, boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
+                              <div style={{ fontWeight: 'bold', marginBottom: 4, fontSize: 15 }}>{a.candidate_name || '—'}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>{a.resume_filename || '—'}</div>
+                              
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                                <span className="score-cell" style={{ fontSize: 14 }}>{a.ats_score} / 100</span>
+                                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{new Date(a.applied_at).toLocaleDateString()}</span>
+                              </div>
+                              
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <select 
+                                  id={`status-select-${a.application_id}`}
+                                  defaultValue={a.status} 
+                                  style={{ padding: '8px', fontSize: 13, width: '100%', borderRadius: 6, border: '1px solid var(--border)' }}
+                                >
+                                  {pipelineStages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                                </select>
+                                <button 
+                                  className="btn btn-secondary btn-sm" 
+                                  style={{ width: '100%', justifyContent: 'center' }}
+                                  onClick={() => {
+                                    const el = document.getElementById(`status-select-${a.application_id}`);
+                                    if (el && el.value !== a.status) {
+                                      updateApplicantStatus(selectedJobId, a.application_id, el.value);
+                                    }
+                                  }}
+                                >
+                                  Move Candidate
+                                </button>
+                              </div>
                             </div>
-                            
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <select 
-                                id={`status-select-${a.application_id}`}
-                                defaultValue={a.status} 
-                                style={{ padding: '6px', fontSize: 12, width: '100%' }}
-                              >
-                                {pipelineStages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                              </select>
-                              <button 
-                                className="btn btn-secondary btn-sm" 
-                                style={{ width: '100%', justifyContent: 'center' }}
-                                onClick={() => {
-                                  const el = document.getElementById(`status-select-${a.application_id}`);
-                                  if (el && el.value !== a.status) {
-                                    updateApplicantStatus(selectedJobId, a.application_id, el.value);
-                                  }
-                                }}
-                              >
-                                Move
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
+                          ))
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
