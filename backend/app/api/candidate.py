@@ -303,3 +303,47 @@ async def resume_suggestions(
         session.add(AnalysisCache(cache_key=cache_key, payload_json=json.dumps(result)))
         session.commit()
         return result
+
+@router.post("/score-project")
+async def score_project(
+    file: UploadFile = File(...),
+    job_description: str = Form(""),
+    role_id: str = Form(""),
+):
+    import os
+    import shutil
+    import tempfile
+    from ..services.report_parsers.router import route_file
+    from ..services.scorer import score_student_job
+    from ..services.role_templates import get_role
+
+    target_description = job_description
+    target_title = None
+    branch = None
+    if role_id:
+        role = get_role(role_id)
+        if not role:
+            raise HTTPException(status_code=400, detail="Unknown role_id")
+        target_title = role.title
+        target_description = role.description
+        branch = role.branch
+    elif not job_description or not job_description.strip():
+        raise HTTPException(status_code=400, detail="Job description or role_id is required")
+
+    # Save to temp file
+    fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename)[1])
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            shutil.copyfileobj(file.file, f)
+        
+        # 1. Parse
+        text, method = route_file(temp_path)
+        
+        # 2. Score
+        student = {"name": "Candidate", "branch": branch, "ats_score": 0}
+        job = {"job_title": target_title, "full_jd_text": target_description}
+        result = score_student_job(student, [text], job)
+        
+        return result
+    finally:
+        os.remove(temp_path)
