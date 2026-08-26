@@ -277,9 +277,25 @@ export default function RecruiterJobs() {
                               <div style={{ fontWeight: 'bold', marginBottom: 4, fontSize: 15 }}>{a.candidate_name || '—'}</div>
                               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>{a.resume_filename || '—'}</div>
                               
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                                <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                                  <strong>ATS:</strong> {a.ats_score} &middot; <strong>Proj:</strong> {a.project_score ?? '—'} &middot; <strong style={{ color: 'var(--success)' }}>Final: {a.final_score ?? '—'}</strong>
+                                </div>
+                                {a.priority_level && (
+                                  <div className={`chip priority-${a.priority_level.toLowerCase()}`} style={{ padding: '2px 6px', fontSize: 10, marginLeft: 8 }}>
+                                    {a.priority_level}
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {a.project_summary && (
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {a.project_summary}
+                                </div>
+                              )}
+                              
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                                <span className="score-cell" style={{ fontSize: 14 }}>{a.ats_score} / 100</span>
-                                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{new Date(a.applied_at).toLocaleDateString()}</span>
+                                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Applied: {new Date(a.applied_at).toLocaleDateString()}</span>
                               </div>
                               
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

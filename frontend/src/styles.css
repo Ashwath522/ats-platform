@@ -1467,12 +1467,27 @@ td.score-cell {
   font-size: 10px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: var(--radius-full);
-  text-transform: uppercase;
+  border-radius: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.job-status-badge.open { background: var(--success-bg); color: var(--success); }
-.job-status-badge.closed { background: var(--danger-bg); color: var(--danger); }
+/* Priority Chips */
+.chip.priority-high {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.chip.priority-medium {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.chip.priority-low {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+.chip.matched { background: var(--info-bg); color: var(--primary); }
+.chip.missing { background: var(--danger-bg); color: var(--danger); }
 
 .job-card-meta {
   display: flex;

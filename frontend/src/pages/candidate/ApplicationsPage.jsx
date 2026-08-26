@@ -108,12 +108,31 @@ export default function ApplicationsPage() {
                     </div>
                   )}
 
-                  {/* Show final score if scored */}
-                  {app.status !== 'ats_check' && app.status !== 'rejected' && app.project_score !== undefined && (
-                     <div style={{ marginTop: 12, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 12 }}>
-                        <strong>Project Score:</strong> {app.project_score || 'N/A'}/100 <br/>
-                        <strong>Final Blend:</strong> {app.final_score || 'N/A'}/100 <br/>
-                     </div>
+                  {/* Show final score if scored or pending */}
+                  {app.status !== 'ats_check' && app.status !== 'rejected' && (
+                    <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
+                      {app.project_score == null ? (
+                        <div style={{ color: 'var(--text-secondary)' }}>Scores pending...</div>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: app.project_summary ? 8 : 0 }}>
+                            <div><strong>ATS:</strong> {app.ats_score}/100</div>
+                            <div><strong>Project:</strong> {app.project_score}/100</div>
+                            <div style={{ color: 'var(--success)', fontWeight: 'bold' }}>Final: {app.final_score}/100</div>
+                            {app.priority_level && (
+                              <div className={`chip priority-${app.priority_level.toLowerCase()}`} style={{ padding: '2px 8px', fontSize: 11 }}>
+                                {app.priority_level} Priority
+                              </div>
+                            )}
+                          </div>
+                          {app.project_summary && (
+                            <div style={{ color: 'var(--text-secondary)', fontSize: 12, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {app.project_summary}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   )}
 
                 </div>
