@@ -1,6 +1,0 @@
-2026-08-26 21:00:57,038 WARNING Groq analyze_project failed (no response): Error code: 400 - {'error': {'message': 'The model `llama3-8b-8192` has been decommissioned and is no longer supported. Please refer to https://console.groq.com/docs/deprecations for a recommendation on which model to use instead.', 'type': 'invalid_request_error', 'code': 'model_decommissioned'}}
-2026-08-26 21:00:57,937 WARNING Gemini analyze_project failed (no response): 404 This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.
-2026-08-26 21:02:25,134 WARNING Groq analyze_project failed (no response): Error code: 404 - {'error': {'message': 'The model `llama-3.1-8b-instant` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'code': 'model_not_found'}}
-2026-08-26 21:02:26,083 WARNING Gemini analyze_project failed (no response): 404 This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.
-2026-08-26 21:16:20,205 WARNING Groq import failed: No module named 'groq'
-2026-08-26 21:16:20,206 WARNING Gemini import failed: No module named 'google.generativeai'

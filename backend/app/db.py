@@ -168,6 +168,14 @@ class Application(SQLModel, table=True):
     missing_skills_json: str = "[]"
     status: str = "ats_check"           # "ats_check" | "repo_verification" | "automated_interview" | "shortlisted" | "rejected"
     applied_at: datetime = Field(default_factory=utc_now)
+    project_score: Optional[float] = None
+    final_score: Optional[float] = None
+    project_summary: Optional[str] = None
+    priority_level: Optional[str] = None
+    skills_matched_detail: Optional[str] = None
+    skills_gap_detail: Optional[str] = None
+    api_used: Optional[str] = None
+    parse_method: Optional[str] = None
 
 
 class DiscoveredSkill(SQLModel, table=True):
@@ -215,6 +223,22 @@ def _migrate_sqlite():
         if "email_verified" not in user_columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE user ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
+    if "application" in inspector.get_table_names():
+        app_columns = {column["name"] for column in inspector.get_columns("application")}
+        new_cols = [
+            ("project_score", "FLOAT"),
+            ("final_score", "FLOAT"),
+            ("project_summary", "VARCHAR"),
+            ("priority_level", "VARCHAR"),
+            ("skills_matched_detail", "VARCHAR"),
+            ("skills_gap_detail", "VARCHAR"),
+            ("api_used", "VARCHAR"),
+            ("parse_method", "VARCHAR")
+        ]
+        with engine.begin() as conn:
+            for col_name, col_type in new_cols:
+                if col_name not in app_columns:
+                    conn.execute(text(f"ALTER TABLE application ADD COLUMN {col_name} {col_type}"))
 
 
 def get_session():

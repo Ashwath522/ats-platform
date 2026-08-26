@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import { Link } from 'react-router-dom'
 
@@ -8,8 +8,10 @@ export default function ApplicationsPage() {
 
   const [applications, setApplications] = useState([])
   const [loading, setLoading] = useState(true)
+  const [uploadingId, setUploadingId] = useState(null)
+  const [uploadError, setUploadError] = useState(null)
 
-  useEffect(() => {
+  const loadApplications = useCallback(() => {
     api('/api/candidate/jobs/applications/mine')
       .then(res => { if (res.ok) return res.json() })
       .then(data => {
@@ -17,7 +19,40 @@ export default function ApplicationsPage() {
         setLoading(false)
       })
       .catch(() => setLoading(false))
-  }, [candidateToken])
+  }, [api])
+
+  useEffect(() => {
+    loadApplications()
+  }, [loadApplications])
+
+  const handleFileUpload = async (e, appId) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setUploadingId(appId)
+    setUploadError(null)
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('application_id', appId)
+
+    try {
+      const res = await api('/api/candidate/score-project', {
+        method: 'POST',
+        body: formData
+      })
+      
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Upload failed')
+      
+      // Reload applications to get updated status and scores
+      loadApplications()
+    } catch (err) {
+      setUploadError(err.message)
+    } finally {
+      setUploadingId(null)
+    }
+  }
 
   const statusSteps = ['ats_check', 'repo_verification', 'automated_interview', 'shortlisted', 'rejected']
 
@@ -49,6 +84,38 @@ export default function ApplicationsPage() {
                 <div>
                   <h3 style={{ margin: '0 0 4px 0' }}>{app.job_title}</h3>
                   <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>{app.job_location || 'Remote'}</p>
+                  
+                  {uploadError && uploadingId === app.application_id && (
+                    <div className="error-msg" style={{ marginTop: 8, fontSize: 12 }}>{uploadError}</div>
+                  )}
+
+                  {app.status === 'ats_check' && (
+                    <div style={{ marginTop: 12 }}>
+                      <p style={{ fontSize: 12, margin: '0 0 8px 0' }}>Upload a project zip/pdf/code to proceed:</p>
+                      {uploadingId === app.application_id ? (
+                        <div style={{ fontSize: 12, color: 'var(--primary-color)' }}>
+                          <span className="socket-loader-small" style={{ display: 'inline-block', marginRight: 8 }}></span>
+                          Analyzing project...
+                        </div>
+                      ) : (
+                        <input 
+                          type="file" 
+                          onChange={(e) => handleFileUpload(e, app.application_id)}
+                          style={{ fontSize: 12 }}
+                          accept=".pdf,.docx,.zip,.txt,.py,.js,.jsx,.ts,.tsx"
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show final score if scored */}
+                  {app.status !== 'ats_check' && app.status !== 'rejected' && app.project_score !== undefined && (
+                     <div style={{ marginTop: 12, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 12 }}>
+                        <strong>Project Score:</strong> {app.project_score || 'N/A'}/100 <br/>
+                        <strong>Final Blend:</strong> {app.final_score || 'N/A'}/100 <br/>
+                     </div>
+                  )}
+
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div className="chip matched" style={{ fontWeight: 'bold' }}>{app.ats_score}/100 Match</div>

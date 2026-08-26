@@ -4,10 +4,11 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends
 from sqlmodel import Session, select
 
-from ..db import engine, AnalysisCache, Company, JobDescription, Resume
+from ..db import engine, AnalysisCache, Company, JobDescription, Resume, Application, Job
+from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..services.deep_analysis import make_cache_key, run_deep_analysis, run_resume_suggestions
 from ..services.embeddings import EmbeddingModel
@@ -309,10 +310,14 @@ async def score_project(
     file: UploadFile = File(...),
     job_description: str = Form(""),
     role_id: str = Form(""),
+    application_id: Optional[int] = Form(None),
+    ats_score: float = Form(0.0),
+    candidate: str = Depends(get_current_candidate),
 ):
     import os
     import shutil
     import tempfile
+    import json
     from ..services.report_parsers.router import route_file
     from ..services.scorer import score_student_job
     from ..services.role_templates import get_role
@@ -320,7 +325,22 @@ async def score_project(
     target_description = job_description
     target_title = None
     branch = None
-    if role_id:
+
+    # Resolve JD and target branch
+    if application_id is not None:
+        with Session(engine) as session:
+            app_record = session.get(Application, application_id)
+            if not app_record:
+                raise HTTPException(status_code=404, detail="Application not found")
+            job_record = session.get(Job, app_record.job_id)
+            if not job_record:
+                raise HTTPException(status_code=404, detail="Job not found")
+            target_title = job_record.title
+            target_description = job_record.description
+            branch = job_record.branch
+            if app_record.ats_score is not None:
+                ats_score = float(app_record.ats_score)
+    elif role_id:
         role = get_role(role_id)
         if not role:
             raise HTTPException(status_code=400, detail="Unknown role_id")
@@ -328,7 +348,14 @@ async def score_project(
         target_description = role.description
         branch = role.branch
     elif not job_description or not job_description.strip():
-        raise HTTPException(status_code=400, detail="Job description or role_id is required")
+        raise HTTPException(status_code=400, detail="Application ID, Job description or role_id is required")
+
+    # Limit file size check roughly, parser can be large but we don't want 1GB zips
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    if size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Project file too large (max 10MB)")
 
     # Save to temp file
     fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename)[1])
@@ -340,10 +367,28 @@ async def score_project(
         text, method = route_file(temp_path)
         
         # 2. Score
-        student = {"name": "Candidate", "branch": branch, "ats_score": 0}
-        job = {"job_title": target_title, "full_jd_text": target_description}
-        result = score_student_job(student, [text], job)
-        
+        student = {"name": candidate, "branch": branch, "ats_score": ats_score}
+        job_dict = {"job_title": target_title, "full_jd_text": target_description}
+        result = score_student_job(student, [text], job_dict)
+        result["parse_method"] = method
+
+        # 3. Persist if application_id
+        if application_id is not None:
+            with Session(engine) as session:
+                app_record = session.get(Application, application_id)
+                if app_record:
+                    app_record.project_score = result.get("project_score")
+                    app_record.final_score = result.get("final_score")
+                    app_record.project_summary = result.get("project_summary")
+                    app_record.priority_level = result.get("priority_level")
+                    app_record.skills_matched_detail = json.dumps(result.get("skills_matched", []))
+                    app_record.skills_gap_detail = json.dumps(result.get("skills_missing", []))
+                    app_record.api_used = result.get("api_used")
+                    app_record.parse_method = method
+                    app_record.status = "repo_verification"
+                    session.add(app_record)
+                    session.commit()
+
         return result
     finally:
         os.remove(temp_path)

@@ -1,1 +1,0 @@
-I built a web app using Python and React.js. It is very fast and I deployed it on AWS using EC2.
