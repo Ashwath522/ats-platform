@@ -79,6 +79,23 @@ CANDIDATES = [
             "  Performed data analysis using Pandas and SQL. Created dashboards for stakeholders."
         ]
     },
+    {
+        "email": "ashwathsam521+candidate4@gmail.com",
+        "name": "Grace Chemical",
+        "password": "DemoCandidate4!",
+        "type": "chemical",
+        "headline": "Process Engineer",
+        "resume_content": [
+            "Grace Chemical",
+            "Process Safety Engineer",
+            "Skills: Chemical Engineering, Aspen Plus, HAZOP, P&ID, Mass Transfer, Heat Transfer",
+            "Experience:",
+            "- Chemical Engineer at ChemCorp (2020 - Present)",
+            "  Designed and optimized P&ID for new distillation columns.",
+            "- Junior Process Engineer at PlantY (2018 - 2020)",
+            "  Conducted HAZOP studies."
+        ]
+    },
 ]
 
 JOBS = [
@@ -99,6 +116,7 @@ JOBS = [
     {"recruiter_idx": 2, "title": "Database Administrator", "desc": "Manage large PostgreSQL databases. Performance tuning, replication, backups.", "reqs": "PostgreSQL, SQL, Database Administration", "type": "backend"},
     {"recruiter_idx": 2, "title": "Full Stack Developer", "desc": "React on the frontend, Python/FastAPI on the backend. A true generalist.", "reqs": "React, Python, FastAPI, JavaScript", "type": "frontend"},
     {"recruiter_idx": 2, "title": "Software Engineer, Core Services", "desc": "Build the foundational microservices for our platform. Python, Docker, AWS.", "reqs": "Python, Docker, AWS, Microservices", "type": "backend"},
+    {"recruiter_idx": 2, "title": "Chemical Process Engineer", "desc": "Optimize our chemical processing plant operations. Requires strong background in fluid dynamics and Aspen Plus.", "reqs": "Chemical Engineering, Aspen Plus, Fluid Dynamics, P&ID", "type": "chemical"},
 ]
 
 def generate_pdf_resume(content_lines: list, filepath: str):
@@ -172,6 +190,7 @@ def seed():
                         "title": job["title"],
                         "description": job["desc"],
                         "requirements": job["reqs"],
+                        "branch": "software" if job["type"] in ["backend", "frontend", "data"] else "chemical",
                         "location_text": "Remote",
                         "remote_type": "remote"
                     },

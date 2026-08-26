@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_admin, hash_password, verify_password
-from ..db import EmailToken, RecruiterRequest, RecruiterUser, User, engine
+from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine
 from ..rate_limit import limiter
 from ..services.email_delivery import EmailDeliveryError, send_email
 
@@ -91,6 +91,10 @@ def _create_user(
         legacy = session.exec(select(RecruiterUser).where(RecruiterUser.username == normalized_email)).first()
         if not legacy:
             session.add(RecruiterUser(username=normalized_email, password_hash=user.password_hash))
+    elif role == "candidate":
+        legacy = session.exec(select(CandidateUser).where(CandidateUser.username == normalized_email)).first()
+        if not legacy:
+            session.add(CandidateUser(username=normalized_email, password_hash=user.password_hash))
     session.commit()
     session.refresh(user)
     return user

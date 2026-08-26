@@ -6,7 +6,7 @@ import json
 from unittest.mock import patch
 
 from app.main import app
-from app.db import engine, CandidateUser, User, Application, Job, JobDescription, Company
+from app.db import engine, CandidateUser, RecruiterUser, User, Application, Job, JobDescription, Company
 from app.auth import create_access_token
 
 client = TestClient(app)
@@ -33,7 +33,28 @@ def candidate_token(test_candidate):
     return create_access_token(test_candidate.username, role="candidate")
 
 @pytest.fixture
-def sample_job():
+def test_recruiter():
+    with Session(engine) as session:
+        user = session.exec(select(RecruiterUser).where(RecruiterUser.username == "recruiter@example.com")).first()
+        if not user:
+            user = RecruiterUser(username="recruiter@example.com", password_hash="dummy")
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            
+        base_user = session.exec(select(User).where(User.email == "recruiter@example.com")).first()
+        if not base_user:
+            base_user = User(email="recruiter@example.com", password_hash="dummy", role="recruiter")
+            session.add(base_user)
+            session.commit()
+        yield user
+
+@pytest.fixture
+def recruiter_token(test_recruiter):
+    return create_access_token(test_recruiter.username, role="recruiter")
+
+@pytest.fixture
+def sample_job(test_recruiter):
     with Session(engine) as session:
         # Create a company and a job to tie the application to
         company = session.exec(select(Company).where(Company.name == "Score Company")).first()
@@ -45,7 +66,7 @@ def sample_job():
 
         job = session.exec(select(Job).where(Job.title == "Score Job")).first()
         if not job:
-            job = Job(recruiter_id=1, company_id=company.id, title="Score Job", description="Need a Python dev.", location_text="Remote")
+            job = Job(recruiter_id=test_recruiter.id, company_id=company.id, title="Score Job", description="Need a Python dev.", location_text="Remote")
             session.add(job)
             session.commit()
             session.refresh(job)
@@ -63,7 +84,7 @@ def sample_application(test_candidate, sample_job):
         yield app_record
 
 @patch("app.services.scorer.score_student_job")
-def test_score_project_endpoint(mock_scorer, candidate_token, sample_application):
+def test_score_project_endpoint(mock_scorer, candidate_token, sample_application, recruiter_token):
     # Mock the scorer result
     mock_scorer.return_value = {
         "project_score": 90.0,
@@ -113,6 +134,19 @@ def test_score_project_endpoint(mock_scorer, candidate_token, sample_application
     assert scored_app is not None
     assert scored_app["final_score"] == 85.0
     assert scored_app["project_score"] == 90.0
+
+    # Verify recruiter can see the same final_score
+    response = client.get(
+        f"/api/recruiter/jobs/{sample_application.job_id}/applicants",
+        headers={"Authorization": f"Bearer {recruiter_token}"}
+    )
+    assert response.status_code == 200
+    recruiter_apps = response.json()["applicants"]
+    assert len(recruiter_apps) > 0
+    scored_app_recruiter = next((a for a in recruiter_apps if a["application_id"] == sample_application.id), None)
+    assert scored_app_recruiter is not None
+    assert scored_app_recruiter["final_score"] == 85.0
+    assert scored_app_recruiter["project_score"] == 90.0
 
 @patch("app.services.scorer.score_student_job")
 def test_score_project_wrong_candidate(mock_scorer, candidate_token, sample_job):
