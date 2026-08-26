@@ -373,6 +373,8 @@ async def score_project(
         
         # 1. Parse
         text, method = route_file(temp_path)
+        if not text or not text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from the provided file.")
         
         # 2. Score
         student = {"name": candidate, "branch": branch, "ats_score": ats_score}

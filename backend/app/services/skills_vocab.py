@@ -101,6 +101,14 @@ AEROSPACE_SKILLS = [
     "Satellite Systems", "Systems Engineering",
 ]
 
+CHEMICAL_SKILLS = [
+    "Process Design", "Mass Transfer", "Heat Transfer", "Reaction Engineering",
+    "Distillation", "Absorption", "P&ID", "PFD", "Aspen Plus", "HYSYS", 
+    "HAZOP", "LOPA", "PSD", "Pumps", "Compressors", "Heat Exchangers", 
+    "Reactors", "DCS", "Material Balance", "Energy Balance",
+    "Process Safety Management (PSM)", "Environmental Compliance", "SOPs"
+]
+
 KNOWN_SKILLS = list(dict.fromkeys(
     SOFTWARE_SKILLS
     + BUSINESS_SKILLS
@@ -109,6 +117,7 @@ KNOWN_SKILLS = list(dict.fromkeys(
     + ECE_SKILLS
     + EEE_SKILLS
     + AEROSPACE_SKILLS
+    + CHEMICAL_SKILLS
 ))
 
 BRANCH_SKILLS = {
@@ -118,6 +127,7 @@ BRANCH_SKILLS = {
     "ece": ECE_SKILLS + BUSINESS_SKILLS,
     "eee": EEE_SKILLS + BUSINESS_SKILLS,
     "aerospace": AEROSPACE_SKILLS + BUSINESS_SKILLS,
+    "chemical": CHEMICAL_SKILLS + BUSINESS_SKILLS,
 }
 
 SKILL_ALIASES = {
@@ -153,6 +163,12 @@ SKILL_ALIASES = {
     "uart": "Communication Protocols",
     "can bus": "Communication Protocols",
     "staad": "STAAD Pro",
+    "etabs": "ETABS",
+    "revit": "Revit",
+    "solidworks": "SolidWorks",
+    "ansys": "ANSYS",
+    "quantity surveying": "Quantity Surveying",
+    "hvac": "HVAC",
     "vfd": "Variable Frequency Drives (VFD)",
     # Software / cloud aliases
     "k8s": "Kubernetes",

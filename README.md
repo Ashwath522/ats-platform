@@ -54,6 +54,19 @@ Resume screening system with these main flows:
 4. **Candidate portal** — candidates sign up/login, maintain a profile and resume, browse jobs, apply, view suggestions, and post updates.
 5. **Admin approval queue** — recruiter signups enter a pending request table; admins approve/reject requests and approved recruiters receive generated credentials by email.
 
+## Core Branches
+
+The system supports specialized role templates and ATS scoring for the following core engineering disciplines:
+- **Software** (CS / Software)
+- **Mechanical** (Mechanical)
+- **Civil** (Civil)
+- **Chemical** (Chemical)
+- **ECE** (Electronics & Communication)
+- **EEE** (Electrical)
+- **Aerospace** (Aerospace)
+
+When a candidate's submitted project is evaluated, the final blended score is determined by the formula: `Final Score = 0.4 * ATS Score + 0.6 * Project Score`.
+
 ## Generating Demo Data
 
 To populate the database with a full set of realistic demo data (Admin, Recruiters, Candidates, varied Jobs, dynamic PDF resumes, and scored applications):
