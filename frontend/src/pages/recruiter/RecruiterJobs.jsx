@@ -19,6 +19,7 @@ export default function RecruiterJobs() {
   const [applicants, setApplicants] = useState(null)
   const [applicantsLoading, setApplicantsLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [evaluatingRepo, setEvaluatingRepo] = useState({})
 
   const pipelineStages = [
     { id: 'ats_check', label: 'ATS Check' },
@@ -115,6 +116,26 @@ export default function RecruiterJobs() {
       }
     } catch (e) {
       alert('Failed to update status')
+    }
+  }
+
+  async function evaluateRepo(appId) {
+    setEvaluatingRepo(prev => ({...prev, [appId]: true}))
+    try {
+      const res = await api(`/api/recruiter/jobs/${selectedJobId}/applicants/${appId}/evaluate-repo`, { method: 'POST' })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Evaluation failed')
+      const data = await res.json()
+      setApplicants(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          applicants: prev.applicants.map(a => a.application_id === appId ? { ...a, repo_match_score: data.repo_match_score, repo_match_reasoning: data.repo_match_reasoning } : a)
+        }
+      })
+    } catch (e) {
+      alert('Failed to evaluate repo: ' + e.message)
+    } finally {
+      setEvaluatingRepo(prev => ({...prev, [appId]: false}))
     }
   }
 
@@ -301,6 +322,26 @@ export default function RecruiterJobs() {
                               {a.project_summary && (
                                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {a.project_summary}
+                                </div>
+                              )}
+                              
+                              {a.has_repo && (
+                                <div style={{ marginBottom: 12 }}>
+                                  {a.repo_match_score !== undefined && a.repo_match_score !== null ? (
+                                    <div style={{ padding: 8, background: 'rgba(34, 197, 94, 0.1)', borderRadius: 6, fontSize: 12 }}>
+                                      <strong>Job Fit Score: {a.repo_match_score}/100</strong>
+                                      <p style={{ margin: '4px 0 0' }}>{a.repo_match_reasoning}</p>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                      className="btn btn-primary btn-sm" 
+                                      style={{ width: '100%', justifyContent: 'center' }}
+                                      onClick={() => evaluateRepo(a.application_id)}
+                                      disabled={evaluatingRepo[a.application_id]}
+                                    >
+                                      {evaluatingRepo[a.application_id] ? 'Evaluating...' : 'See Repo for Next Round'}
+                                    </button>
+                                  )}
                                 </div>
                               )}
                               

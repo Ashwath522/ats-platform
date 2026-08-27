@@ -183,3 +183,123 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         'groq_quality': (groq_result.get('content_quality', 0) or 0) if groq_result else 0,
         'gemini_quality': (gemini_result.get('content_quality', 0) or 0) if gemini_result else 0,
     }
+
+def evaluate_profile_project(description: str, project_texts: list) -> dict:
+    combined = build_full_project_text(project_texts)
+    prompt = f"""You are an expert technical evaluator. The candidate uploaded a project with the following description:
+{description}
+
+Here is the project content:
+{combined}
+
+Evaluate the project's technical complexity and quality on a scale of 0-100.
+Provide a concise general summary of what the project does, the technologies used, and the candidate's apparent technical capability.
+Return ONLY a JSON object with this exact structure:
+{{
+  "project_general_score": <int>,
+  "project_summary": "<string>"
+}}
+"""
+    groq_key = os.environ.get("GROQ_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    
+    result = {"project_general_score": 0, "project_summary": "Evaluation failed or APIs unavailable."}
+    
+    import json
+    def try_parse(txt):
+        try:
+            start = txt.find("{")
+            end = txt.rfind("}")
+            if start != -1 and end != -1:
+                return json.loads(txt[start:end+1])
+        except Exception:
+            pass
+        return None
+
+    if groq_key:
+        try:
+            from groq import Groq
+            gc = Groq(api_key=groq_key, timeout=15.0)
+            resp = gc.chat.completions.create(
+                model="llama3-70b-8192",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500
+            )
+            parsed = try_parse(resp.choices[0].message.content)
+            if parsed: return parsed
+        except Exception as e:
+            logger.error(f"Groq profile eval error: {e}")
+            
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(prompt, request_options={"timeout": 15.0})
+            parsed = try_parse(resp.text)
+            if parsed: return parsed
+        except Exception as e:
+            logger.error(f"Gemini profile eval error: {e}")
+            
+    return result
+
+def evaluate_repo_against_jd(project_summary: str, job_description: str) -> dict:
+    prompt = f"""You are a senior technical recruiter evaluating if a candidate's portfolio project matches the job requirements.
+
+Job Description:
+{job_description}
+
+Candidate's Project Summary:
+{project_summary}
+
+Compare the project summary against the job requirements. 
+Return ONLY a JSON object with this exact structure:
+{{
+  "repo_match_score": <int between 0 and 100>,
+  "repo_match_reasoning": "<concise 2-3 sentence explanation of why it fits or does not fit>"
+}}
+"""
+    groq_key = os.environ.get("GROQ_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    
+    result = {"repo_match_score": 0, "repo_match_reasoning": "Evaluation failed or APIs unavailable."}
+    
+    import json
+    def try_parse(txt):
+        try:
+            start = txt.find("{")
+            end = txt.rfind("}")
+            if start != -1 and end != -1:
+                return json.loads(txt[start:end+1])
+        except Exception:
+            pass
+        return None
+
+    if groq_key:
+        try:
+            from groq import Groq
+            gc = Groq(api_key=groq_key, timeout=15.0)
+            resp = gc.chat.completions.create(
+                model="llama3-70b-8192",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500
+            )
+            parsed = try_parse(resp.choices[0].message.content)
+            if parsed: return parsed
+        except Exception as e:
+            logger.error(f"Groq repo match error: {e}")
+            
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(prompt, request_options={"timeout": 15.0})
+            parsed = try_parse(resp.text)
+            if parsed: return parsed
+        except Exception as e:
+            logger.error(f"Gemini repo match error: {e}")
+            
+    return result

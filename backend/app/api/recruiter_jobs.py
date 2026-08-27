@@ -11,6 +11,7 @@ from ..auth import get_current_recruiter
 from ..services.geocoding import geocode
 from ..services.embeddings import EmbeddingModel
 from ..services.scoring import score_resume_against_jd
+from ..services.scorer import evaluate_repo_against_jd
 from ..resume_utils import vector_store
 
 router = APIRouter(prefix="/api/recruiter/jobs", tags=["recruiter-jobs"])
@@ -217,6 +218,9 @@ async def list_applicants(
                 "final_score": app.final_score,
                 "priority_level": app.priority_level,
                 "project_summary": app.project_summary,
+                "has_repo": bool(profile and profile.project_summary and profile.project_summary != "Evaluation failed."),
+                "repo_match_score": app.repo_match_score,
+                "repo_match_reasoning": app.repo_match_reasoning,
             })
 
         return {
@@ -249,3 +253,38 @@ async def update_applicant_status(
         session.add(app)
         session.commit()
         return {"status": "success", "new_status": app.status}
+
+@router.post("/{job_id}/applicants/{application_id}/evaluate-repo")
+async def evaluate_applicant_repo(
+    job_id: int,
+    application_id: int,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        app = session.get(Application, application_id)
+        if not app or app.job_id != job_id:
+            raise HTTPException(status_code=404, detail="Application not found for this job")
+            
+        profile = session.exec(
+            select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)
+        ).first()
+        
+        if not profile or not profile.project_summary or profile.project_summary == "Evaluation failed.":
+            raise HTTPException(status_code=400, detail="Candidate has not uploaded a valid project portfolio.")
+
+        # Evaluate candidate's general project summary against the recruiter's Job Description
+        result = evaluate_repo_against_jd(profile.project_summary, job.description)
+        
+        app.repo_match_score = result.get("repo_match_score", 0)
+        app.repo_match_reasoning = result.get("repo_match_reasoning", "Failed to evaluate.")
+        
+        session.add(app)
+        session.commit()
+        
+        return {
+            "repo_match_score": app.repo_match_score,
+            "repo_match_reasoning": app.repo_match_reasoning
+        }

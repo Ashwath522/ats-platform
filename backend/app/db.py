@@ -114,6 +114,9 @@ class CandidateProfile(SQLModel, table=True):
     experience_json: str = "[]"       # JSON array of {title, company, start, end, description}
     education_json: str = "[]"        # JSON array of {degree, institution, year}
     resume_id: Optional[int] = Field(default=None, foreign_key="resume.id")
+    project_description: Optional[str] = None
+    project_summary: Optional[str] = None
+    project_general_score: Optional[int] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Optional EEO self-identification — candidate-controlled, never exposed to recruiters
@@ -176,6 +179,8 @@ class Application(SQLModel, table=True):
     skills_gap_detail: Optional[str] = None
     api_used: Optional[str] = None
     parse_method: Optional[str] = None
+    repo_match_score: Optional[int] = None
+    repo_match_reasoning: Optional[str] = None
 
 
 class DiscoveredSkill(SQLModel, table=True):
@@ -225,6 +230,9 @@ def _migrate_sqlite():
                 conn.execute(text("ALTER TABLE user ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
     if "application" in inspector.get_table_names():
         app_columns = {column["name"] for column in inspector.get_columns("application")}
+        if "project_description" not in app_columns: # reusing this block to check candidate profile too
+            pass # We will check candidateprofile separately
+        
         new_cols = [
             ("project_score", "FLOAT"),
             ("final_score", "FLOAT"),
@@ -233,12 +241,26 @@ def _migrate_sqlite():
             ("skills_matched_detail", "VARCHAR"),
             ("skills_gap_detail", "VARCHAR"),
             ("api_used", "VARCHAR"),
-            ("parse_method", "VARCHAR")
+            ("parse_method", "VARCHAR"),
+            ("repo_match_score", "INTEGER"),
+            ("repo_match_reasoning", "VARCHAR")
         ]
         with engine.begin() as conn:
             for col_name, col_type in new_cols:
                 if col_name not in app_columns:
                     conn.execute(text(f"ALTER TABLE application ADD COLUMN {col_name} {col_type}"))
+
+    if "candidateprofile" in inspector.get_table_names():
+        cp_columns = {column["name"] for column in inspector.get_columns("candidateprofile")}
+        cp_new_cols = [
+            ("project_description", "VARCHAR"),
+            ("project_summary", "VARCHAR"),
+            ("project_general_score", "INTEGER")
+        ]
+        with engine.begin() as conn:
+            for col_name, col_type in cp_new_cols:
+                if col_name not in cp_columns:
+                    conn.execute(text(f"ALTER TABLE candidateprofile ADD COLUMN {col_name} {col_type}"))
 
 
 def get_session():

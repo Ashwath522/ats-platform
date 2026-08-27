@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlmodel import Session, select
@@ -11,6 +11,11 @@ from ..db import engine, CandidateUser, CandidateProfile, Resume, utc_now
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..utils.email_utils import send_welcome_email
+import tempfile
+import os
+import shutil
+from ..services.report_parsers.router import route_file
+from ..services.scorer import evaluate_profile_project
 
 router = APIRouter(prefix="/api/candidate/profile", tags=["candidate-profile"])
 
@@ -99,6 +104,42 @@ async def upload_profile_resume(file: UploadFile = File(...), candidate: str = D
         session.commit()
 
         resume = session.get(Resume, resume_db_id)
+        return _profile_to_dict(profile, resume)
+
+@router.post("/project")
+async def upload_profile_project(
+    description: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    candidate: str = Depends(get_current_candidate)
+):
+    project_texts = []
+    
+    if file:
+        ext = os.path.splitext(file.filename)[1].lower()
+        fd, temp_path = tempfile.mkstemp(suffix=ext)
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                shutil.copyfileobj(file.file, f)
+            text, _ = route_file(temp_path)
+            if text:
+                project_texts.append(text)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                
+    result = evaluate_profile_project(description, project_texts)
+    
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+        profile.project_description = description
+        profile.project_summary = result.get("project_summary", "Evaluation failed.")
+        profile.project_general_score = result.get("project_general_score", 0)
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume)
 
 
