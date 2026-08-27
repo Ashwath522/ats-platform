@@ -171,9 +171,13 @@ class Application(SQLModel, table=True):
     missing_skills_json: str = "[]"
     status: str = "ats_check"           # "ats_check" | "repo_verification" | "automated_interview" | "shortlisted" | "rejected"
     applied_at: datetime = Field(default_factory=utc_now)
+    baseline_ats_score: Optional[int] = None
+    llm_used: bool = Field(default=False)
     project_score: Optional[float] = None
     final_score: Optional[float] = None
     project_summary: Optional[str] = None
+    project_fit: Optional[str] = None
+    risk_notes: Optional[str] = None
     priority_level: Optional[str] = None
     skills_matched_detail: Optional[str] = None
     skills_gap_detail: Optional[str] = None
@@ -238,9 +242,13 @@ def _migrate_sqlite():
             pass # We will check candidateprofile separately
         
         new_cols = [
+            ("baseline_ats_score", "INTEGER"),
+            ("llm_used", "BOOLEAN"),
             ("project_score", "FLOAT"),
             ("final_score", "FLOAT"),
             ("project_summary", "VARCHAR"),
+            ("project_fit", "VARCHAR"),
+            ("risk_notes", "VARCHAR"),
             ("priority_level", "VARCHAR"),
             ("skills_matched_detail", "VARCHAR"),
             ("skills_gap_detail", "VARCHAR"),

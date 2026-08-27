@@ -385,8 +385,12 @@ Section 6 - HIRING RECOMMENDATION (60-80 words):
 Clear recommendation for or against hiring with justification.
 State confidence level and what onboarding would be needed.
 
+Section 7 - RISK NOTES (40-60 words):
+Assess reliability of the evidence. Note any thin evidence, missing files (like missing code but having a report), or mismatches between claims and actual proof in the text.
+
 ACCURACY RULES:
 - ONLY mention things ACTUALLY in the project content above
+- MUST cite concrete signals directly from the parsed files (e.g. specific modules, tech stack, architectures, methods, diagrams). Do not just trust descriptions.
 - Do NOT invent skills or components not present in the text
 - If unsure, say "appears to show" not definitive statements
 - If project content is limited, say so honestly
@@ -403,6 +407,7 @@ Return ONLY valid JSON. No markdown. Start with {{ end with }}.
   "skills_gap_detail": "<Section 4 — minimum 80 words>",
   "strengths": "<Section 5 — minimum 60 words>",
   "recommendation": "<Section 6 — minimum 60 words>",
+  "risk_notes": "<Section 7 — minimum 40 words>",
   "content_quality": <integer 0-10>
 }}"""
 
@@ -439,6 +444,7 @@ Return ONLY valid JSON. No markdown. Start with {{ end with }}.
             "skills_missing": list(data.get("skills_missing", []) or []),
             "project_summary": str(data.get("project_summary", "") or ""),
             "recommendation": str(data.get("recommendation", "") or ""),
+            "risk_notes": str(data.get("risk_notes", "") or ""),
             "content_quality": int(float(data.get("content_quality", 0) or 0)),
         }
 
@@ -449,5 +455,6 @@ Return ONLY valid JSON. No markdown. Start with {{ end with }}.
             "skills_missing": [],
             "project_summary": "Analysis failed",
             "recommendation": "Manual review required",
+            "risk_notes": "Analysis failed",
             "content_quality": 0,
         }

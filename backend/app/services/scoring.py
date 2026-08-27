@@ -257,8 +257,8 @@ def score_resume_against_jd(
         # Experience fit (small contribution when easily detectable)
         exp_fit = _experience_fit_score(resume_text, jd_text)
 
-        # Formula: 0.70 semantic + 0.25 skill_coverage + 0.05 experience_fit (Tuned for Core Branches)
-        raw_combined = (0.70 * semantic_sim) + (0.25 * keyword_coverage) + (0.05 * exp_fit)
+        # Formula: 0.55 semantic + 0.40 skill_coverage + 0.05 experience_fit
+        raw_combined = (0.55 * semantic_sim) + (0.40 * keyword_coverage) + (0.05 * exp_fit)
     else:
         # Can't claim "0 missing skills" — fall back to semantic similarity alone
         keyword_coverage = None

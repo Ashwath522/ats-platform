@@ -300,7 +300,12 @@ export default function RecruiterJobs() {
                               
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                                 <div style={{ fontSize: 13, lineHeight: 1.4 }}>
-                                  <strong>ATS:</strong> {a.ats_score} &middot; <strong>Proj:</strong> {a.project_score ?? '—'} &middot; <strong style={{ color: 'var(--success)' }}>Final: {a.final_score ?? '—'}</strong>
+                                  {a.llm_used && a.baseline_ats_score !== a.ats_score ? (
+                                    <><strong>ATS:</strong> <span style={{textDecoration: 'line-through', opacity: 0.6}}>{a.baseline_ats_score}</span> &rarr; <strong style={{ color: 'var(--success)' }}>{a.ats_score}</strong></>
+                                  ) : (
+                                    <><strong>ATS:</strong> {a.ats_score}</>
+                                  )}
+                                  {' '}&middot; <strong>Proj:</strong> {a.project_score ?? '—'}
                                 </div>
                                 {a.suitability_verdict && (
                                   <div className="chip" style={{ 
@@ -319,27 +324,23 @@ export default function RecruiterJobs() {
                                     {a.priority_level}
                                   </div>
                                 )}
-                                {a.api_used && (
-                                  <div className="chip" style={{ padding: '2px 6px', fontSize: 10, marginLeft: 4, backgroundColor: 'var(--bg-highlight)' }}>
-                                    {a.api_used}
-                                  </div>
-                                )}
-                                {a.parse_method && (
-                                  <div className="chip" style={{ padding: '2px 6px', fontSize: 10, marginLeft: 4, backgroundColor: 'var(--bg-highlight)' }}>
-                                    {a.parse_method}
-                                  </div>
-                                )}
                               </div>
                               
                               {a.project_summary && (
-                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {a.project_summary}
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                  <strong>Project:</strong> {a.project_summary}
                                 </div>
                               )}
                               
                               {a.ai_recommendation && (
                                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, fontStyle: 'italic', background: 'rgba(0,0,0,0.02)', padding: '6px 10px', borderRadius: '6px' }}>
                                   💡 {a.ai_recommendation}
+                                </div>
+                              )}
+
+                              {a.risk_notes && (
+                                <div style={{ fontSize: 11, color: '#b45309', marginBottom: 12, background: '#fef3c7', padding: '6px 10px', borderRadius: '6px' }}>
+                                  ⚠️ <strong>Risk Notes:</strong> {a.risk_notes}
                                 </div>
                               )}
                               
@@ -387,6 +388,33 @@ export default function RecruiterJobs() {
                                 >
                                   Move Candidate
                                 </button>
+                                {a.status !== 'shortlisted' && a.status !== 'rejected' && (
+                                  <div style={{ marginTop: 12 }}>
+                                    <button 
+                                      className="btn btn-primary btn-sm" 
+                                      style={{ width: '100%', justifyContent: 'center', background: 'var(--primary)', color: 'white' }}
+                                      onClick={async () => {
+                                        try {
+                                          const res = await api(`/api/recruiter/jobs/${selectedJobId}/applicants/${a.application_id}/finalize`, { method: 'POST' });
+                                          if (res.ok) {
+                                            alert("Candidate finalized and notified!");
+                                            setApplicants(prev => {
+                                              if (!prev) return prev;
+                                              return {
+                                                ...prev,
+                                                applicants: prev.applicants.map(app => app.application_id === a.application_id ? { ...app, status: 'shortlisted' } : app)
+                                              };
+                                            });
+                                          }
+                                        } catch (e) {
+                                          alert("Failed to finalize.");
+                                        }
+                                      }}
+                                    >
+                                      ✓ Finalize for next round
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ))

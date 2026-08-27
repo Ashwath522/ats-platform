@@ -12,7 +12,7 @@ from ..services.embeddings import EmbeddingModel
 from ..services.scoring import score_resume_against_jd
 from ..resume_utils import vector_store
 from ..services.vocab_learning import learn_skills_from_resume
-from ..services.deep_analysis import make_cache_key, run_resume_suggestions
+from ..services.deep_analysis import make_cache_key, run_resume_suggestions, run_hybrid_llm_scoring
 
 router = APIRouter(prefix="/api/candidate/jobs", tags=["candidate-jobs"])
 
@@ -161,16 +161,30 @@ async def apply_to_job(
         resume_embedding = EmbeddingModel.get().embed_text(resume_text)
         jd_embedding = EmbeddingModel.get().embed_text(f"{job.title}\n\n{job.description}")
 
+        # Stage 1: Deterministic scoring
         branch_to_match = job.branch or profile.branch
         score_result = score_resume_against_jd(
             resume_text, job.description, resume_embedding, jd_embedding, branch=branch_to_match
         )
+        
+        baseline_ats = score_result["ats_score"]
+        
+        # Stage 2: LLM scoring
+        llm_result = run_hybrid_llm_scoring(
+            resume_text, job.description, score_result["missing_skills"], score_result["matched_skills"]
+        )
+        
+        llm_used = llm_result.get("llm_configured", False)
+        if llm_used and "llm_score" in llm_result:
+            final_ats_score = round((0.70 * baseline_ats) + (0.30 * llm_result["llm_score"]))
+            final_ats_score = max(0, min(100, final_ats_score))
+        else:
+            final_ats_score = baseline_ats
 
         # Compute suitability_verdict
-        ats = score_result["ats_score"]
-        if ats >= 75:
+        if final_ats_score >= 75:
             verdict = "Strong Fit"
-        elif ats >= 50:
+        elif final_ats_score >= 50:
             verdict = "Potential Fit"
         else:
             verdict = "Not a Fit"
@@ -180,7 +194,11 @@ async def apply_to_job(
             candidate_id=user.id,
             job_id=job_id,
             resume_id=profile.resume_id,
-            ats_score=ats,
+            baseline_ats_score=baseline_ats,
+            final_score=final_ats_score,
+            ats_score=final_ats_score,
+            llm_used=llm_used,
+            ai_recommendation=llm_result.get("reasoning", None),
             suitability_verdict=verdict,
             matched_skills_json=json.dumps(score_result["matched_skills"]),
             missing_skills_json=json.dumps(score_result["missing_skills"]),
@@ -195,7 +213,7 @@ async def apply_to_job(
             "message": "Application submitted successfully",
             "application_id": application.id,
             "job_title": job.title,
-            "ats_score": score_result["ats_score"],
+            "ats_score": final_ats_score,
             "matched_skills": score_result["matched_skills"],
             "missing_skills": score_result["missing_skills"],
         }
@@ -224,6 +242,8 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
                 "job_title": job.title if job else "Unknown",
                 "job_location": job.location_text if job else "",
                 "ats_score": app.ats_score,
+                "baseline_ats_score": app.baseline_ats_score,
+                "llm_used": app.llm_used,
                 "matched_skills": json.loads(app.matched_skills_json),
                 "missing_skills": json.loads(app.missing_skills_json),
                 "status": app.status,
@@ -235,6 +255,7 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
                 "api_used": app.api_used,
                 "parse_method": app.parse_method,
                 "suitability_verdict": app.suitability_verdict,
+                "ai_recommendation": app.ai_recommendation,
             })
 
         return {"applications": results, "count": len(results)}

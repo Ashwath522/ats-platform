@@ -142,6 +142,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
             'skills_gap_detail': '',
             'strengths': '',
             'recommendation': 'Manual review required.',
+            'risk_notes': 'AI analysis unavailable.',
             'content_quality': 0,
         }
         api_used = 'fallback'
@@ -173,6 +174,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         'skills_gap_detail': best_result.get('skills_gap_detail', ''),
         'strengths': best_result.get('strengths', ''),
         'ai_recommendation': best_result.get('recommendation', ''),
+        'risk_notes': best_result.get('risk_notes', ''),
         'priority_level': priority,
         'api_used': api_used,
         'groq_word_count': groq_words,
@@ -186,24 +188,41 @@ def score_student_job(student: dict, project_texts: list, job: dict):
 
 def evaluate_profile_project(description: str, project_texts: list) -> dict:
     combined = build_full_project_text(project_texts)
+    
+    if not combined:
+        return {
+            "project_general_score": 0,
+            "project_summary": "Evaluation failed: insufficient evidence (no project files parsed).",
+            "project_fit": "N/A",
+            "risk_notes": "No actual project files provided. Cannot verify claims."
+        }
+
     prompt = f"""You are an expert technical evaluator. The candidate uploaded a project with the following description:
 {description}
 
-Here is the project content:
+Here is the parsed content from the uploaded project files (code, reports, zip contents):
 {combined}
 
-Evaluate the project's technical complexity and quality on a scale of 0-100.
-Provide a concise general summary of what the project does, the technologies used, and the candidate's apparent technical capability.
+Evaluate the project's technical complexity, quality, and how well it demonstrates actual capability.
+CRITICAL: You MUST cite concrete signals directly from the parsed files (e.g. specific modules, tech stack, architectures, methods, diagrams). Do not just trust the description.
+
 Return ONLY a JSON object with this exact structure:
 {{
-  "project_general_score": <int>,
-  "project_summary": "<string>"
+  "project_general_score": <int between 0 and 100>,
+  "project_summary": "<string: concise summary of what was actually built based on the files>",
+  "project_fit": "<string: how this project demonstrates skills relevant to typical industry needs>",
+  "risk_notes": "<string: mention any thin evidence, missing files, or claim vs proof mismatches>"
 }}
 """
     groq_key = os.environ.get("GROQ_API_KEY")
     gemini_key = os.environ.get("GEMINI_API_KEY")
     
-    result = {"project_general_score": 0, "project_summary": "Evaluation failed or APIs unavailable."}
+    result = {
+        "project_general_score": 0, 
+        "project_summary": "Evaluation failed or APIs unavailable.",
+        "project_fit": "N/A",
+        "risk_notes": "N/A"
+    }
     
     import json
     def try_parse(txt):

@@ -90,8 +90,15 @@ def get_current_recruiter(user: User = Depends(require_role("recruiter"))) -> st
     return user.email
 
 
-def get_current_candidate(user: User = Depends(require_role("candidate"))) -> str:
-    return user.email
+def get_current_candidate(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> str:
+    if credentials is None:
+        raise credentials_exception
+    payload = decode_token_payload(credentials.credentials)
+    if payload.get("role") != "candidate":
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return payload["sub"]
 
 def get_current_admin(user: User = Depends(require_role("admin"))) -> str:
     return user.email

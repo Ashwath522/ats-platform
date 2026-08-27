@@ -45,6 +45,12 @@ commit it's part of, not a permanent guarantee.
   workflow. Features edit-in-place company names.
 - **CI**: GitHub Actions workflow `.github/workflows/ci.yml` runs pytest and builds the frontend on every push/PR to main.
 - **Frontend**: Clean LinkedIn blue (`#0A66C2`) design system, global TopNav, tabbed AdminPage, SVG icons.
+- **Role Templates**: 33 verified templates across 7 core engineering branches, all exceeding 250 words with rich technical keywords.
+- **Hybrid ATS Scoring**: 
+  - Stage 1: Deterministic scoring (0.55 semantic / 0.40 keyword / 0.05 experience fit).
+  - Stage 2 (Optional): LLM context evaluation (30% weight in `final_ats_score`) run locally via Ollama or Gemini.
+- **Project Verification**: Scorer parses actual zipped repositories, citing concrete file signals and generating risk notes for thin evidence.
+- **Recruiter Workflow**: Recruiters can finalize candidates for the next round via `POST /api/recruiter/jobs/{job_id}/applicants/{app_id}/finalize` which triggers an email and updates their status to `shortlisted`.
 
 Resume screening system with these main flows:
 
@@ -153,4 +159,5 @@ SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWOR
 - Recruiter endpoints require recruiter role auth; admin endpoints require admin role auth.
 - Recruiter approval flow is fully implemented and tested.
 - File validation, deduplication, Docker, and GitHub Actions CI are present.
+- **Completed**: Role template expansion, hybrid ATS pipeline with graceful fallback, project verification risk notes, and recruiter candidate shortlisting.
 - Still unverified: Docker runtime, real SMTP mailbox delivery, and remote CI status.

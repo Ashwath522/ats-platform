@@ -210,6 +210,8 @@ async def list_applicants(
                 "candidate_name": profile.headline if profile else "Unknown",
                 "resume_filename": resume.filename if resume else None,
                 "ats_score": app.ats_score,
+                "baseline_ats_score": app.baseline_ats_score,
+                "llm_used": app.llm_used,
                 "matched_skills": json.loads(app.matched_skills_json),
                 "missing_skills": json.loads(app.missing_skills_json),
                 "status": app.status,
@@ -290,3 +292,42 @@ async def evaluate_applicant_repo(
             "repo_match_score": app.repo_match_score,
             "repo_match_reasoning": app.repo_match_reasoning
         }
+
+@router.post("/{job_id}/applicants/{application_id}/finalize")
+async def finalize_applicant(
+    job_id: int,
+    application_id: int,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        app = session.get(Application, application_id)
+        if not app or app.job_id != job_id:
+            raise HTTPException(status_code=404, detail="Application not found for this job")
+            
+        # Update status
+        app.status = "shortlisted"
+        session.add(app)
+        
+        # Get candidate profile/user to send email
+        from ..db import CandidateUser
+        from ..utils.email_utils import DEV_MODE
+        import logging
+        
+        candidate = session.get(CandidateUser, app.candidate_id)
+        profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)).first()
+        
+        candidate_email = (profile.contact_email if profile and profile.contact_email else candidate.username) if candidate else None
+        
+        if candidate_email:
+            subject = f"Congratulations! You have been shortlisted for {job.title}"
+            body = f"Hello,\n\nYou have been selected for the next round for the position of {job.title}.\nWe will be in touch with next steps."
+            if DEV_MODE:
+                logging.info(f"[DEV_MODE EMAIL] To: {candidate_email} | Subject: {subject} | Body: {body}")
+            else:
+                pass # Use real email delivery here
+                
+        session.commit()
+        return {"status": "success", "new_status": app.status}

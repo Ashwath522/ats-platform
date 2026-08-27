@@ -294,3 +294,106 @@ def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: 
         raise HTTPException(status_code=502, detail="Gemini returned invalid suggestions JSON") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Gemini suggestions request failed") from exc
+
+
+# ---------------------------------------------------------------------------
+# Hybrid ATS Scoring (Stage 2)
+# ---------------------------------------------------------------------------
+
+def parse_hybrid_json(raw_text: str) -> Dict[str, Any]:
+    text = raw_text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    if not text.startswith("{"):
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            text = m.group(0)
+    data = json.loads(text)
+    required = {"llm_score", "reasoning"}
+    missing = required - set(data)
+    if missing:
+        raise ValueError(f"Missing keys: {', '.join(sorted(missing))}")
+    data["llm_configured"] = True
+    return data
+
+
+def _hybrid_prompt(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> str:
+    return f"""
+You are an expert technical recruiter analyzing a resume against a job description.
+The deterministic system already matched the following skills: {', '.join(matched_skills) if matched_skills else 'None'}
+The deterministic system identified these missing skills: {', '.join(missing_skills) if missing_skills else 'None'}
+
+Review the resume text and job description to assess the candidate's actual depth, experience context, and problem-solving impact.
+Return strict JSON only, with no markdown fences and no preamble.
+
+JSON shape:
+{{
+  "llm_score": 0-100,
+  "reasoning": "2-4 sentences explaining the score based on context.",
+  "risk_flags": ["optional list", "of specific concerns", "if any"]
+}}
+
+Target job description:
+{target_text[:4000]}
+
+Resume:
+{resume_text[:8000]}
+""".strip()
+
+
+def run_hybrid_llm_scoring(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> Dict[str, Any]:
+    provider = _resolve_provider()
+    if provider == "ollama":
+        return _run_ollama_hybrid(resume_text, target_text, missing_skills, matched_skills)
+    if provider == "gemini":
+        return _run_gemini_hybrid(resume_text, target_text, missing_skills, matched_skills)
+    return {"llm_configured": False}
+
+
+def _run_ollama_hybrid(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> Dict[str, Any]:
+    url = f"{OLLAMA_BASE_URL}/api/generate"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": _hybrid_prompt(resume_text, target_text, missing_skills, matched_skills),
+        "stream": False,
+        "options": {"temperature": 0.1, "num_predict": 1000},
+    }
+    try:
+        response = httpx.post(url, json=payload, timeout=60.0)
+        response.raise_for_status()
+        data = response.json()
+        raw = data.get("response", "")
+        if not raw:
+            raise ValueError("Empty response from Ollama")
+        return parse_hybrid_json(raw)
+    except Exception as exc:
+        print(f"Ollama hybrid scoring failed: {exc}")
+        return {"llm_configured": False}
+
+
+def _run_gemini_hybrid(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> Dict[str, Any]:
+    model = urllib.parse.quote(GEMINI_MODEL, safe="")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": _hybrid_prompt(resume_text, target_text, missing_skills, matched_skills)}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1000,
+            "response_mime_type": "application/json",
+        },
+    }
+    try:
+        response = httpx.post(
+            url,
+            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        return parse_hybrid_json(raw)
+    except Exception as exc:
+        print(f"Gemini hybrid scoring failed: {exc}")
+        return {"llm_configured": False}
