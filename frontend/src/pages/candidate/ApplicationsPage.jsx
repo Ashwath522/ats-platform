@@ -94,8 +94,7 @@ export default function ApplicationsPage() {
                       <p style={{ fontSize: 12, margin: '0 0 8px 0' }}>Upload a project zip/pdf/code to proceed:</p>
                       {uploadingId === app.application_id ? (
                         <div style={{ fontSize: 12, color: 'var(--primary-color)' }}>
-                          <span className="socket-loader-small" style={{ display: 'inline-block', marginRight: 8 }}></span>
-                          Analyzing project...
+                          Analyzing your project - this can take up to 30 seconds...
                         </div>
                       ) : (
                         <input 
@@ -103,6 +102,7 @@ export default function ApplicationsPage() {
                           onChange={(e) => handleFileUpload(e, app.application_id)}
                           style={{ fontSize: 12 }}
                           accept=".pdf,.docx,.zip,.txt,.py,.js,.jsx,.ts,.tsx"
+                          disabled={uploadingId !== null}
                         />
                       )}
                     </div>
@@ -122,6 +122,16 @@ export default function ApplicationsPage() {
                             {app.priority_level && (
                               <div className={`chip priority-${app.priority_level.toLowerCase()}`} style={{ padding: '2px 8px', fontSize: 11 }}>
                                 {app.priority_level} Priority
+                              </div>
+                            )}
+                            {app.api_used && (
+                              <div className="chip" style={{ padding: '2px 8px', fontSize: 11, backgroundColor: 'var(--bg-highlight)' }}>
+                                Scored via: {app.api_used}
+                              </div>
+                            )}
+                            {app.parse_method && (
+                              <div className="chip" style={{ padding: '2px 8px', fontSize: 11, backgroundColor: 'var(--bg-highlight)' }}>
+                                Parsed as: {app.parse_method}
                               </div>
                             )}
                           </div>

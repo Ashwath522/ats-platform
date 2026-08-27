@@ -286,6 +286,16 @@ export default function RecruiterJobs() {
                                     {a.priority_level}
                                   </div>
                                 )}
+                                {a.api_used && (
+                                  <div className="chip" style={{ padding: '2px 6px', fontSize: 10, marginLeft: 4, backgroundColor: 'var(--bg-highlight)' }}>
+                                    {a.api_used}
+                                  </div>
+                                )}
+                                {a.parse_method && (
+                                  <div className="chip" style={{ padding: '2px 6px', fontSize: 10, marginLeft: 4, backgroundColor: 'var(--bg-highlight)' }}>
+                                    {a.parse_method}
+                                  </div>
+                                )}
                               </div>
                               
                               {a.project_summary && (
