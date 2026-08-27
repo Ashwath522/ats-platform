@@ -2,6 +2,9 @@ from typing import Optional
 import os
 import time
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 from app.services.keyword_extractor import extract_keywords, match_keywords
 from app.services.embeddings import EmbeddingModel
 from app.services.groq_client import GroqClient, RateLimitError as GRateLimitError
@@ -80,11 +83,20 @@ def score_student_job(student: dict, project_texts: list, job: dict):
 
     try:
         model = EmbeddingModel.get()
-        s_vec = model.embed_text(combined[:1000])
+        
+        # Sample chars from each parsed file instead of just the first 1000 chars of the combined text
+        semantic_parts = []
+        valid_texts = [t.strip() for t in project_texts if t and len(t.strip()) > 20]
+        chars_per_file = max(200, 1000 // len(valid_texts)) if valid_texts else 1000
+        for text in valid_texts:
+            semantic_parts.append(text[:chars_per_file])
+        semantic_combined = "\n".join(semantic_parts)[:1000]
+
+        s_vec = model.embed_text(semantic_combined if semantic_combined else combined[:1000])
         j_vec = model.embed_text((job.get("full_jd_text") or "")[:1000])
         semantic_score = round(cosine_similarity(s_vec, j_vec) * 100, 1)
     except Exception as e:
-        print(f"Embedding error: {e}")
+        logger.error(f"Embedding error: {e}")
         semantic_score = 0.0
 
     groq_key = os.environ.get("GROQ_API_KEY")
@@ -94,7 +106,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
             gc = GroqClient(groq_key)
             groq_result = gc.analyze_project(student, combined, job)
         except Exception as e:
-            print(f"[SCORER] Groq exception: {e}")
+            logger.error(f"[SCORER] Groq exception: {e}")
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
     gemini_result = None
@@ -103,7 +115,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
             gmc = GeminiClient(gemini_key)
             gemini_result = gmc.analyze_project(student, combined, job)
         except Exception as e:
-            print(f"[SCORER] Gemini exception: {e}")
+            logger.error(f"[SCORER] Gemini exception: {e}")
 
     groq_words = count_words(groq_result) if groq_result else 0
     gemini_words = count_words(gemini_result) if gemini_result else 0

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_admin, hash_password, verify_password
-from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine
+from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine, utc_now
 from ..rate_limit import limiter
 from ..services.email_delivery import EmailDeliveryError, send_email
 
@@ -34,7 +34,7 @@ def _create_email_token(session: Session, email: str, purpose: str, ttl_minutes:
         email=email,
         purpose=purpose,
         token_hash=_hash_token(token),
-        expires_at=datetime.utcnow() + timedelta(minutes=ttl_minutes),
+        expires_at=utc_now() + timedelta(minutes=ttl_minutes),
     ))
     session.commit()
     return token
@@ -48,7 +48,7 @@ def _invalidate_email_tokens(session: Session, email: str, purpose: str) -> None
             EmailToken.used_at == None,  # noqa: E711
         )
     ).all()
-    now = datetime.utcnow()
+    now = utc_now()
     for item in active_tokens:
         item.used_at = now
         session.add(item)
@@ -162,7 +162,7 @@ async def verify_signup_otp(request: Request, email: str = Form(...), otp: str =
                 EmailToken.email == normalized_email,
                 EmailToken.purpose == "signup_otp",
                 EmailToken.used_at == None,  # noqa: E711
-                EmailToken.expires_at > datetime.utcnow(),
+                EmailToken.expires_at > utc_now(),
             )
             .order_by(EmailToken.created_at.desc())
         ).first()
@@ -171,7 +171,7 @@ async def verify_signup_otp(request: Request, email: str = Form(...), otp: str =
         user = session.exec(select(User).where(User.email == normalized_email)).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        token.used_at = datetime.utcnow()
+        token.used_at = utc_now()
         user.email_verified = True
         session.add(token)
         session.add(user)
@@ -245,7 +245,7 @@ async def confirm_password_reset(
                 EmailToken.email == normalized_email,
                 EmailToken.purpose == "password_reset",
                 EmailToken.used_at == None,  # noqa: E711
-                EmailToken.expires_at > datetime.utcnow(),
+                EmailToken.expires_at > utc_now(),
             )
             .order_by(EmailToken.created_at.desc())
         ).first()
@@ -255,7 +255,7 @@ async def confirm_password_reset(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         user.password_hash = hash_password(new_password)
-        stored.used_at = datetime.utcnow()
+        stored.used_at = utc_now()
         session.add(user)
         session.add(stored)
         if user.role == "recruiter":
@@ -348,7 +348,7 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
         user_data = _serialize_user(user)
         user_email = user.email
         recruiter_request.status = "approved"
-        recruiter_request.decided_at = datetime.utcnow()
+        recruiter_request.decided_at = utc_now()
         session.add(recruiter_request)
         session.commit()
     try:
@@ -384,7 +384,7 @@ async def reject_recruiter_request(request_id: int, admin: User = Depends(get_cu
         if recruiter_request.status != "pending":
             raise HTTPException(status_code=400, detail="Recruiter request already decided")
         recruiter_request.status = "rejected"
-        recruiter_request.decided_at = datetime.utcnow()
+        recruiter_request.decided_at = utc_now()
         session.add(recruiter_request)
         session.commit()
     return {"rejected": True, "id": request_id}

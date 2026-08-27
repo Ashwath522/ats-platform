@@ -48,3 +48,41 @@ async def admin_suggestions(
                 } for s in sugs
             ]
         }
+
+@router.get("/api/admin/ai-key-status")
+async def admin_ai_key_status(
+    admin: User = Depends(get_current_admin),
+):
+    """Admin-gated endpoint to check AI key health."""
+    import os
+    from ..services.groq_client import GroqClient
+    from ..services.gemini_client import GeminiClient
+
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+
+    groq_status = {"success": False, "error": "Not configured"}
+    if groq_key:
+        try:
+            groq_client = GroqClient(groq_key)
+            groq_status = groq_client.test_connection()
+            if isinstance(groq_status, bool):
+                groq_status = {"success": groq_status}
+        except Exception as e:
+            groq_status = {"success": False, "error": str(e)}
+
+    gemini_status = {"success": False, "error": "Not configured"}
+    if gemini_key:
+        try:
+            gemini_client = GeminiClient(gemini_key)
+            gemini_status = gemini_client.test_connection()
+            if isinstance(gemini_status, bool):
+                gemini_status = {"success": gemini_status}
+        except Exception as e:
+            gemini_status = {"success": False, "error": str(e)}
+
+    return {
+        "groq": groq_status,
+        "gemini": gemini_status,
+    }
+

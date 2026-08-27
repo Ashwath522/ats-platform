@@ -24,6 +24,13 @@ def parse_zip(file_path: str) -> tuple[str, str]:
 
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
+            infolist = zf.infolist()
+            if len(infolist) > 500:
+                return ("ZIP archive contains too many files (max 500 limit).", "zip_error")
+            total_uncompressed_size = sum(info.file_size for info in infolist)
+            if total_uncompressed_size > 50 * 1024 * 1024:
+                return ("ZIP archive uncompressed size exceeds limit (max 50MB).", "zip_error")
+
             # Extract only regular files, guarding against zip-slip.
             for member in zf.namelist():
                 # Skip directories and anything trying to escape temp_dir.

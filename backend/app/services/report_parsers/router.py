@@ -76,7 +76,9 @@ def route_file(file_path: str) -> tuple[str, str]:
         from app.services.report_parsers.txt_parser import parse_txt
         text, _ = parse_txt(file_path)
         if text and len(text) > 10:
-            return (text, "unknown_text")
+            printable_chars = sum(1 for c in text if c.isprintable() or c in '\n\r\t')
+            if printable_chars / len(text) > 0.8:
+                return (text, "unknown_text")
         return (
             f"Unsupported file type '.{ext}': {filename}",
             "unsupported",

@@ -146,8 +146,8 @@ class GeminiClient:
             result = self._extract_json(text)
         except Exception as exc:
             # Log the actual response so the failure is debuggable.
-            print(f"[GEMINI JSON PARSE ERROR] {exc}")
-            print(f"[GEMINI RAW RESPONSE] {text[:500]}")
+            logger.warning(f"[GEMINI JSON PARSE ERROR] {exc}")
+            logger.warning(f"[GEMINI RAW RESPONSE] {text[:500]}")
             # One repair attempt: force a strict JSON-only reply.
             try:
                 retry_prompt = (
@@ -211,6 +211,7 @@ class GeminiClient:
                 return self.model.generate_content(
                     prompt,
                     generation_config=config,
+                    request_options={"timeout": 15.0}
                 )
             except Exception as e:
                 error_str = str(e).lower()

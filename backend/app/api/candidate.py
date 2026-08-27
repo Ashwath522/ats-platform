@@ -371,6 +371,14 @@ async def score_project(
         with os.fdopen(fd, 'wb') as f:
             shutil.copyfileobj(file.file, f)
         
+        from ..services.mime_check import validate_file_content_matches_extension, ALLOWED_MIME_BY_EXTENSION
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext in ALLOWED_MIME_BY_EXTENSION:
+            try:
+                validate_file_content_matches_extension(temp_path, ext)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
         # 1. Parse
         text, method = route_file(temp_path)
         if not text or not text.strip():

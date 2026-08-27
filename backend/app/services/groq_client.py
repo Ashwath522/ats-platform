@@ -64,7 +64,7 @@ class GroqClient:
         try:
             from groq import Groq  # type: ignore
             try:
-                self.client = Groq(api_key=self.api_key)
+                self.client = Groq(api_key=self.api_key, timeout=15.0)
                 self._available = True
             except Exception as exc:
                 self.client = None
@@ -157,8 +157,8 @@ class GroqClient:
             result = self._extract_json(text)
         except Exception as exc:
             # Log the actual response so the failure is debuggable.
-            print(f"[GROQ JSON PARSE ERROR] {exc}")
-            print(f"[GROQ RAW RESPONSE] {text[:500]}")
+            logger.warning(f"[GROQ JSON PARSE ERROR] {exc}")
+            logger.warning(f"[GROQ RAW RESPONSE] {text[:500]}")
             # One repair attempt: force a strict JSON-only reply.
             try:
                 retry_prompt = (
