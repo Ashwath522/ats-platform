@@ -12,6 +12,21 @@ def test_all_core_branches_have_roles():
         for role in roles:
             assert role["description"].strip() != "", f"Role {role['id']} has empty description"
 
+def test_role_description_length():
+    from app.services.role_templates import list_roles
+    roles = list_roles()
+    failures = []
+    for role in roles:
+        word_count = len(role["description"].split())
+        if word_count < 250:
+            failures.append(f"{role['id']} ({word_count} words)")
+    
+    if failures:
+        print("FAIL: The following roles have < 250 words:", failures)
+        
+    assert not failures, f"{len(failures)} roles have < 250 words"
+
+
 def test_chemical_keyword_extraction():
     resume_text = "I am a Chemical Engineer. I have worked on Heat Exchangers, P&ID, Aspen Plus, and Mass Transfer."
     jd_text = "We need someone with experience in Aspen Plus, HAZOP, Mass Transfer, and Reaction Engineering."

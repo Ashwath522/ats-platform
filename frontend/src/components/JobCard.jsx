@@ -11,6 +11,21 @@ export default function JobCard({ job, onApply, applied }) {
     hybrid: 'Hybrid',
   }[job.remote_type] || job.remote_type
 
+  const [expanded, setExpanded] = React.useState(false)
+
+  const getTruncatedDesc = (text) => {
+    if (!text) return ''
+    if (text.length <= 300) return text
+    const substr = text.substring(0, 300)
+    const lastPeriod = substr.lastIndexOf('.')
+    if (lastPeriod > 100) {
+      return text.substring(0, lastPeriod + 1)
+    }
+    return text.substring(0, 300) + '...'
+  }
+
+  const isLong = job.description && job.description.length > 300
+
   return (
     <div className="job-card">
       <div className="job-card-header">
@@ -30,7 +45,17 @@ export default function JobCard({ job, onApply, applied }) {
         )}
       </div>
 
-      <p className="job-card-desc">{job.description}</p>
+      <div className="job-card-desc">
+        {expanded ? job.description : getTruncatedDesc(job.description)}
+        {isLong && (
+          <span 
+            onClick={() => setExpanded(!expanded)} 
+            style={{ color: 'var(--primary)', cursor: 'pointer', marginLeft: 8, fontWeight: 'bold' }}
+          >
+            {expanded ? 'Show Less' : 'Read More'}
+          </span>
+        )}
+      </div>
 
       {job.requirements && (
         <div className="job-card-skills">

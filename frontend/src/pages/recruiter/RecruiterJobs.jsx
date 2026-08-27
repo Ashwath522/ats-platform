@@ -302,6 +302,18 @@ export default function RecruiterJobs() {
                                 <div style={{ fontSize: 13, lineHeight: 1.4 }}>
                                   <strong>ATS:</strong> {a.ats_score} &middot; <strong>Proj:</strong> {a.project_score ?? '—'} &middot; <strong style={{ color: 'var(--success)' }}>Final: {a.final_score ?? '—'}</strong>
                                 </div>
+                                {a.suitability_verdict && (
+                                  <div className="chip" style={{ 
+                                    padding: '2px 8px', 
+                                    fontSize: 11, 
+                                    fontWeight: 'bold',
+                                    marginLeft: 8, 
+                                    color: a.suitability_verdict === 'Strong Fit' ? '#15803d' : a.suitability_verdict === 'Potential Fit' ? '#b45309' : '#b91c1c',
+                                    backgroundColor: a.suitability_verdict === 'Strong Fit' ? '#dcfce7' : a.suitability_verdict === 'Potential Fit' ? '#fef3c7' : '#fee2e2'
+                                  }}>
+                                    {a.suitability_verdict}
+                                  </div>
+                                )}
                                 {a.priority_level && (
                                   <div className={`chip priority-${a.priority_level.toLowerCase()}`} style={{ padding: '2px 6px', fontSize: 10, marginLeft: 8 }}>
                                     {a.priority_level}
@@ -322,6 +334,12 @@ export default function RecruiterJobs() {
                               {a.project_summary && (
                                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {a.project_summary}
+                                </div>
+                              )}
+                              
+                              {a.ai_recommendation && (
+                                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, fontStyle: 'italic', background: 'rgba(0,0,0,0.02)', padding: '6px 10px', borderRadius: '6px' }}>
+                                  💡 {a.ai_recommendation}
                                 </div>
                               )}
                               

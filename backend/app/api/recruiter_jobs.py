@@ -221,6 +221,8 @@ async def list_applicants(
                 "has_repo": bool(profile and profile.project_summary and profile.project_summary != "Evaluation failed."),
                 "repo_match_score": app.repo_match_score,
                 "repo_match_reasoning": app.repo_match_reasoning,
+                "suitability_verdict": app.suitability_verdict,
+                "ai_recommendation": app.ai_recommendation,
             })
 
         return {

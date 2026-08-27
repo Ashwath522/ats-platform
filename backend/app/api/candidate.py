@@ -399,6 +399,7 @@ async def score_project(
                     app_record.final_score = result.get("final_score")
                     app_record.project_summary = result.get("project_summary")
                     app_record.priority_level = result.get("priority_level")
+                    app_record.ai_recommendation = result.get("ai_recommendation")
                     app_record.skills_matched_detail = json.dumps(result.get("skills_matched", []))
                     app_record.skills_gap_detail = json.dumps(result.get("skills_missing", []))
                     app_record.api_used = result.get("api_used")

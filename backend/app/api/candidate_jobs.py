@@ -166,12 +166,22 @@ async def apply_to_job(
             resume_text, job.description, resume_embedding, jd_embedding, branch=branch_to_match
         )
 
+        # Compute suitability_verdict
+        ats = score_result["ats_score"]
+        if ats >= 75:
+            verdict = "Strong Fit"
+        elif ats >= 50:
+            verdict = "Potential Fit"
+        else:
+            verdict = "Not a Fit"
+
         # Create application with score
         application = Application(
             candidate_id=user.id,
             job_id=job_id,
             resume_id=profile.resume_id,
-            ats_score=score_result["ats_score"],
+            ats_score=ats,
+            suitability_verdict=verdict,
             matched_skills_json=json.dumps(score_result["matched_skills"]),
             missing_skills_json=json.dumps(score_result["missing_skills"]),
         )
@@ -224,6 +234,7 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
                 "priority_level": app.priority_level,
                 "api_used": app.api_used,
                 "parse_method": app.parse_method,
+                "suitability_verdict": app.suitability_verdict,
             })
 
         return {"applications": results, "count": len(results)}

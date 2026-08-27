@@ -181,6 +181,10 @@ class Application(SQLModel, table=True):
     parse_method: Optional[str] = None
     repo_match_score: Optional[int] = None
     repo_match_reasoning: Optional[str] = None
+    suitability_verdict: Optional[str] = None
+    ai_recommendation: Optional[str] = None
+
+
 
 
 class DiscoveredSkill(SQLModel, table=True):
@@ -243,7 +247,9 @@ def _migrate_sqlite():
             ("api_used", "VARCHAR"),
             ("parse_method", "VARCHAR"),
             ("repo_match_score", "INTEGER"),
-            ("repo_match_reasoning", "VARCHAR")
+            ("repo_match_reasoning", "VARCHAR"),
+            ("suitability_verdict", "VARCHAR"),
+            ("ai_recommendation", "VARCHAR")
         ]
         with engine.begin() as conn:
             for col_name, col_type in new_cols:
