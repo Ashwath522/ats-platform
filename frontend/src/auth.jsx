@@ -77,17 +77,9 @@ export function useAuth() {
  */
 export function createAuthedFetch(token, onAuthExpired) {
   return async function authedFetch(url, options = {}) {
-    const headers = new Headers(options.headers || {})
-    headers.set('Authorization', `Bearer ${token}`)
-    
-    // In some WebView/React Native environments, passing a Headers instance with FormData 
-    // can cause issues. We convert it to a plain object just in case, while preserving all keys.
-    const plainHeaders = {}
-    headers.forEach((val, key) => { plainHeaders[key] = val })
-
     const res = await fetch(url, {
       ...options,
-      headers: plainHeaders,
+      headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
     })
     if (res.status === 401) {
       onAuthExpired()
