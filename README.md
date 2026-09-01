@@ -161,3 +161,4 @@ SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWOR
 - File validation, deduplication, Docker, and GitHub Actions CI are present.
 - **Completed**: Role template expansion, hybrid ATS pipeline with graceful fallback, project verification risk notes, and recruiter candidate shortlisting.
 - Still unverified: Docker runtime, real SMTP mailbox delivery, and remote CI status.
+# major-project
