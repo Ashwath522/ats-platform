@@ -187,6 +187,14 @@ class Application(SQLModel, table=True):
     repo_match_reasoning: Optional[str] = None
     suitability_verdict: Optional[str] = None
     ai_recommendation: Optional[str] = None
+    interview_id: Optional[int] = None
+    interview_status: Optional[str] = "locked"  # locked | unlocked | in_progress | completed
+    interview_risk_score: Optional[int] = None
+    interview_risk_level: Optional[str] = None  # low | medium | high
+    interview_eval_score: Optional[int] = None
+    interview_recommendation: Optional[str] = None
+    interview_evidence_url: Optional[str] = None
+    interview_transcript_json: Optional[str] = None
 
 
 
@@ -257,7 +265,15 @@ def _migrate_sqlite():
             ("repo_match_score", "INTEGER"),
             ("repo_match_reasoning", "VARCHAR"),
             ("suitability_verdict", "VARCHAR"),
-            ("ai_recommendation", "VARCHAR")
+            ("ai_recommendation", "VARCHAR"),
+            ("interview_id", "INTEGER"),
+            ("interview_status", "VARCHAR"),
+            ("interview_risk_score", "INTEGER"),
+            ("interview_risk_level", "VARCHAR"),
+            ("interview_eval_score", "INTEGER"),
+            ("interview_recommendation", "VARCHAR"),
+            ("interview_evidence_url", "VARCHAR"),
+            ("interview_transcript_json", "VARCHAR")
         ]
         with engine.begin() as conn:
             for col_name, col_type in new_cols:

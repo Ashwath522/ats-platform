@@ -396,18 +396,113 @@ async def score_project(
                 app_record = session.get(Application, application_id)
                 if app_record:
                     app_record.project_score = result.get("project_score")
+                    app_record.repo_match_score = int(result.get("project_score")) if result.get("project_score") is not None else None
+                    app_record.repo_match_reasoning = result.get("project_summary")
                     app_record.final_score = result.get("final_score")
                     app_record.project_summary = result.get("project_summary")
                     app_record.priority_level = result.get("priority_level")
                     app_record.ai_recommendation = result.get("ai_recommendation")
+                    app_record.suitability_verdict = result.get("priority_level")
                     app_record.skills_matched_detail = json.dumps(result.get("skills_matched", []))
                     app_record.skills_gap_detail = json.dumps(result.get("skills_missing", []))
                     app_record.api_used = result.get("api_used")
                     app_record.parse_method = method
                     app_record.status = "repo_verification"
+                    app_record.interview_status = "unlocked"
                     session.add(app_record)
                     session.commit()
 
         return result
     finally:
         os.remove(temp_path)
+
+
+def can_take_interview(app_record: Application) -> dict:
+    """
+    Gatekeeper rule:
+    Interview is unlocked ONLY AFTER:
+    1. Candidate application status is shortlisted, repo_verification, or automated_interview.
+    2. Repo / Project Verification is complete (repo_match_score is not None).
+    """
+    if not app_record:
+        return {"allowed": False, "reason": "Application not found", "status": "locked"}
+
+    valid_statuses = {"shortlisted", "automated_interview", "repo_verification"}
+    if app_record.status not in valid_statuses:
+        return {
+            "allowed": False,
+            "reason": f"Interview is locked. Application status must be shortlisted (current status: {app_record.status}).",
+            "status": "locked"
+        }
+
+    # Verify project / repo match score is present
+    has_repo_score = app_record.repo_match_score is not None or app_record.project_score is not None
+    if not has_repo_score:
+        return {
+            "allowed": False,
+            "reason": "Interview is locked. Candidate must complete Repo / Project Verification first.",
+            "status": "locked"
+        }
+
+    if app_record.interview_status == "completed":
+        return {
+            "allowed": False,
+            "reason": "Interview is already completed.",
+            "status": "completed"
+        }
+
+    return {"allowed": True, "reason": "Interview unlocked and ready to take", "status": "unlocked"}
+
+
+@router.get("/applications/{app_id}/interview_access")
+async def check_interview_access(app_id: int):
+    with Session(engine) as session:
+        app_record = session.get(Application, app_id)
+        if not app_record:
+            raise HTTPException(status_code=404, detail="Application not found")
+        access = can_take_interview(app_record)
+        return {
+            "application_id": app_id,
+            "status": app_record.status,
+            "repo_match_score": app_record.repo_match_score or app_record.project_score,
+            "interview_status": app_record.interview_status,
+            "allowed": access["allowed"],
+            "reason": access["reason"]
+        }
+
+
+@router.post("/applications/{app_id}/submit_interview")
+async def submit_interview_results(
+    app_id: int,
+    payload: dict
+):
+    with Session(engine) as session:
+        app_record = session.get(Application, app_id)
+        if not app_record:
+            raise HTTPException(status_code=404, detail="Application not found")
+        
+        access = can_take_interview(app_record)
+        if not access["allowed"] and app_record.interview_status != "in_progress":
+            raise HTTPException(status_code=403, detail=access["reason"])
+
+        app_record.interview_risk_score = payload.get("risk_score", 0)
+        app_record.interview_risk_level = payload.get("risk_level", "low")
+        app_record.interview_eval_score = payload.get("eval_score", 85)
+        app_record.interview_recommendation = payload.get("recommendation", "Strong candidate based on speaking charter evaluation and low proctoring risk.")
+        app_record.interview_evidence_url = payload.get("evidence_url", "/api/evidence/sample.webm")
+        app_record.interview_transcript_json = json.dumps(payload.get("transcript", []))
+        app_record.interview_status = "completed"
+        app_record.status = "automated_interview"
+
+        session.add(app_record)
+        session.commit()
+        session.refresh(app_record)
+
+        return {
+            "message": "Interview results saved successfully",
+            "application_id": app_id,
+            "interview_status": app_record.interview_status,
+            "interview_eval_score": app_record.interview_eval_score,
+            "interview_risk_level": app_record.interview_risk_level
+        }
+

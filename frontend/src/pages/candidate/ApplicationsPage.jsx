@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import { Link } from 'react-router-dom'
+import { CandidateStepper } from '../../components/CandidateStepper.jsx'
+import { AIInterviewModal } from '../../components/AIInterviewModal.jsx'
+import { canTakeInterview } from '../../lib/interview-access.ts'
 
 export default function ApplicationsPage() {
   const { candidateToken, logoutCandidate } = useAuth()
@@ -10,6 +13,7 @@ export default function ApplicationsPage() {
   const [loading, setLoading] = useState(true)
   const [uploadingId, setUploadingId] = useState(null)
   const [uploadError, setUploadError] = useState(null)
+  const [activeInterviewApp, setActiveInterviewApp] = useState(null)
 
   const loadApplications = useCallback(() => {
     api('/api/candidate/jobs/applications/mine')
@@ -45,23 +49,12 @@ export default function ApplicationsPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Upload failed')
       
-      // Reload applications to get updated status and scores
       loadApplications()
     } catch (err) {
       setUploadError(err.message)
     } finally {
       setUploadingId(null)
     }
-  }
-
-  const statusSteps = ['ats_check', 'repo_verification', 'automated_interview', 'shortlisted', 'rejected']
-
-  const statusLabels = {
-    'ats_check': 'ATS Check',
-    'repo_verification': 'Repo Verification',
-    'automated_interview': 'Automated Interview',
-    'shortlisted': 'Shortlisted',
-    'rejected': 'Rejected'
   }
 
   return (
@@ -76,125 +69,110 @@ export default function ApplicationsPage() {
         </div>
       ) : (
         <div className="applications-list">
-          {applications.map(app => (
-            <div key={app.application_id} className="application-card" style={{
-              border: '1px solid var(--border)', padding: 16, borderRadius: 8, marginBottom: 16
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <h3 style={{ margin: '0 0 4px 0' }}>{app.job_title}</h3>
-                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>{app.job_location || 'Remote'}</p>
-                  
-                  {uploadError && uploadingId === app.application_id && (
-                    <div className="error-msg" style={{ marginTop: 8, fontSize: 12 }}>{uploadError}</div>
-                  )}
+          {applications.map(app => {
+            const gate = canTakeInterview(app)
 
-                  {app.status === 'ats_check' && (
-                    <div style={{ marginTop: 12 }}>
-                      <p style={{ fontSize: 12, margin: '0 0 8px 0' }}>Upload a project zip/pdf/code to proceed:</p>
-                      {uploadingId === app.application_id ? (
-                        <div style={{ fontSize: 12, color: 'var(--primary-color)' }}>
-                          Analyzing your project - this can take up to 30 seconds...
-                        </div>
-                      ) : (
-                        <input 
-                          type="file" 
-                          onChange={(e) => handleFileUpload(e, app.application_id)}
-                          style={{ fontSize: 12 }}
-                          accept=".pdf,.docx,.zip,.txt,.py,.js,.jsx,.ts,.tsx"
-                          disabled={uploadingId !== null}
-                        />
-                      )}
+            return (
+              <div key={app.application_id} className="application-card" style={{
+                border: '1px solid var(--border)', padding: 20, borderRadius: 12, marginBottom: 20, background: 'var(--bg-card)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <h3 style={{ margin: '0 0 4px 0' }}>{app.job_title}</h3>
+                    <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>{app.job_location || 'Remote'}</p>
+                    
+                    {uploadError && uploadingId === app.application_id && (
+                      <div className="error-msg" style={{ marginTop: 8, fontSize: 12 }}>{uploadError}</div>
+                    )}
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="chip matched" style={{ fontWeight: 'bold' }}>{app.ats_score}/100 Match</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+                      Applied: {new Date(app.applied_at).toLocaleDateString()}
                     </div>
-                  )}
-
-                  {/* Show final score if scored or pending */}
-                  {app.status !== 'ats_check' && app.status !== 'rejected' && (
-                    <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
-                      {app.project_score == null ? (
-                        <div style={{ color: 'var(--text-secondary)' }}>Scores pending...</div>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: app.project_summary ? 8 : 0 }}>
-                            <div><strong>ATS:</strong> {app.ats_score}/100</div>
-                            <div><strong>Project:</strong> {app.project_score}/100</div>
-                            <div style={{ color: 'var(--success)', fontWeight: 'bold' }}>Final: {app.final_score}/100</div>
-                            {app.priority_level && (
-                              <div className={`chip priority-${app.priority_level.toLowerCase()}`} style={{ padding: '2px 8px', fontSize: 11 }}>
-                                {app.priority_level} Priority
-                              </div>
-                            )}
-                            {app.api_used && (
-                              <div className="chip" style={{ padding: '2px 8px', fontSize: 11, backgroundColor: 'var(--bg-highlight)' }}>
-                                Scored via: {app.api_used}
-                              </div>
-                            )}
-                            {app.parse_method && (
-                              <div className="chip" style={{ padding: '2px 8px', fontSize: 11, backgroundColor: 'var(--bg-highlight)' }}>
-                                Parsed as: {app.parse_method}
-                              </div>
-                            )}
-                          </div>
-                          {app.project_summary && (
-                            <div style={{ color: 'var(--text-secondary)', fontSize: 12, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                              {app.project_summary}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-
+                  </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div className="chip matched" style={{ fontWeight: 'bold' }}>{app.ats_score}/100 Match</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
-                    Applied: {new Date(app.applied_at).toLocaleDateString()}
+
+                {/* Candidate Progression Stepper */}
+                <CandidateStepper
+                  status={app.status}
+                  repoScore={app.repo_match_score ?? app.project_score}
+                  interviewStatus={app.interview_status}
+                />
+
+                {/* Upload Project Section */}
+                {(app.status === 'ats_check' || app.status === 'shortlisted') && !app.repo_match_score && !app.project_score && (
+                  <div style={{ marginTop: 16, padding: 14, background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 8 }}>
+                    <p style={{ fontSize: 13, margin: '0 0 8px 0', fontWeight: 'bold' }}>
+                      Step 2: Upload Project / GitHub Repo for Verification
+                    </p>
+                    {uploadingId === app.application_id ? (
+                      <div style={{ fontSize: 12, color: 'var(--primary-color)' }}>
+                        Analyzing your project - evaluating tech stack and code depth...
+                      </div>
+                    ) : (
+                      <input 
+                        type="file" 
+                        onChange={(e) => handleFileUpload(e, app.application_id)}
+                        style={{ fontSize: 12 }}
+                        accept=".pdf,.docx,.zip,.txt,.py,.js,.jsx,.ts,.tsx"
+                        disabled={uploadingId !== null}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Interview Gatekeeper & Action Button */}
+                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                  <div>
+                    {app.project_score != null && (
+                      <div style={{ fontSize: 13 }}>
+                        <strong>Repo Match Score:</strong> <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{app.project_score}%</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    {gate.allowed ? (
+                      <button
+                        onClick={() => setActiveInterviewApp(app)}
+                        className="btn btn-primary"
+                        style={{ padding: '8px 16px', fontSize: 13, fontWeight: 'bold' }}
+                      >
+                        🎥 Take AI Video Interview
+                      </button>
+                    ) : app.interview_status === 'completed' ? (
+                      <span className="chip" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                        ✓ AI Interview Completed
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+                        🔒 {gate.reason}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
-
-              <div className="status-timeline" style={{ marginTop: 24, display: 'flex', alignItems: 'center' }}>
-                {statusSteps.map((step, i) => {
-                  if (app.status === 'rejected' && step === 'shortlisted') return null
-                  if (app.status !== 'rejected' && step === 'rejected') return null
-                  
-                  const isCurrent = app.status === step
-                  const stepIndex = statusSteps.indexOf(app.status)
-                  const isPassed = stepIndex >= i
-                  const isRejected = app.status === 'rejected'
-
-                  return (
-                    <React.Fragment key={step}>
-                      <div style={{
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1,
-                        color: isPassed ? (isRejected ? 'var(--error)' : 'var(--primary)') : 'var(--border)'
-                      }}>
-                        <div style={{
-                          width: 24, height: 24, borderRadius: '50%',
-                          backgroundColor: isPassed ? (isRejected ? 'var(--error)' : 'var(--primary)') : 'transparent',
-                          border: `2px solid ${isPassed ? (isRejected ? 'var(--error)' : 'var(--primary)') : 'var(--border)'}`,
-                          marginBottom: 8
-                        }} />
-                        <span style={{ fontSize: 12, textTransform: 'capitalize', fontWeight: isCurrent ? 'bold' : 'normal' }}>
-                          {statusLabels[step] || step}
-                        </span>
-                      </div>
-                      {i < statusSteps.length - 1 && (
-                        <div style={{
-                          flex: 1, height: 2,
-                          backgroundColor: isPassed && i < stepIndex ? (isRejected ? 'var(--error)' : 'var(--primary)') : 'var(--border)',
-                          margin: '0 -20px', position: 'relative', top: -12
-                        }} />
-                      )}
-                    </React.Fragment>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
+      )}
+
+      {/* AI Interview Modal */}
+      {activeInterviewApp && (
+        <AIInterviewModal
+          applicationId={activeInterviewApp.application_id}
+          jobTitle={activeInterviewApp.job_title}
+          candidateName={activeInterviewApp.candidate_name || 'Candidate'}
+          onClose={() => setActiveInterviewApp(null)}
+          onCompleted={() => {
+            setActiveInterviewApp(null)
+            loadApplications()
+          }}
+        />
       )}
     </div>
   )
 }
+
