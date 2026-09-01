@@ -96,69 +96,59 @@ Deep analysis is intentionally separate from that hot path. `POST /api/candidate
 ## Stack
 
 - **Backend**: FastAPI, SQLModel (SQLite) for users, recruiter requests, companies, JDs, resumes, email tokens, and analysis cache; ChromaDB for vector search; sentence-transformers for embeddings; python-jose + bcrypt for auth; SMTP for email; Ollama or Gemini for optional deep analysis.
-- **Frontend**: React + Vite, pure CSS (LinkedIn blue design system).
+- **Frontend**: React + Vite, pure CSS (LinkedIn blue design system).## Repository Directory Structure
 
-## Running locally
+```
+ats-platform/
+├── README.md
+├── docker-compose.yml
+├── .gitignore
+├── backend/                  # FastAPI ATS Engine & REST APIs
+│   ├── app/
+│   │   ├── api/              # candidate, recruiter, auth, candidate_profile, candidate_jobs, admin
+│   │   ├── services/         # scoring.py (Deterministic 1st), deep_analysis.py (LLM 2nd), role_templates.py (33 dense roles)
+│   │   ├── auth.py
+│   │   ├── db.py             # Extended Application model (ats_score, repo_match_score, interview_status, risk_score)
+│   │   └── main.py
+│   ├── tests/                # 65+ Pytest backend tests
+│   ├── scripts/              # seed_demo_data.py, test_e2e_flow.py
+│   └── requirements.txt
+├── frontend/                 # Vite React Fullstack Frontend
+│   ├── src/
+│   │   ├── components/       # UnifiedRecruiterCard, CandidateStepper, AIInterviewModal, ScoreDial, ScoreResult
+│   │   │   └── interview/    # baseline-capture (45s), live-interview-room, media-setup
+│   │   ├── lib/
+│   │   │   ├── cv/           # 100% UNTOUCHED CV PROCTORING MODULES:
+│   │   │   │   ├── face-detector.ts, gaze-headpose.ts, lighting-analyzer.ts, lighting-utils.ts
+│   │   │   │   ├── liveness-analyzer.ts, liveness-utils.ts, object-detector.ts, pose-detector.ts
+│   │   │   │   └── risk-engine.ts
+│   │   │   ├── llm/          # interviewer.ts, parse-step.ts, openrouter.ts
+│   │   │   ├── speaking-charter.ts  # Speaking Charter TTS wrapper
+│   │   │   └── interview-access.ts   # Gatekeeper: canTakeInterview()
+│   │   ├── pages/            # Candidate & Recruiter views
+│   │   │   ├── candidate/    # Feed, Jobs, Applications (Stepper + AI Interview Modal), Profile, Repo
+│   │   │   └── recruiter/    # Recruiter Dashboard (Unified Recruiter Card)
+│   │   └── App.jsx
+│   ├── vitest.config.js      # Vitest configuration for CV risk-engine & gatekeeper tests
+│   └── package.json
+```
 
-### Backend
+## Running & Testing
+
+### Backend (FastAPI Python)
 ```bash
 cd backend
-cp .env.example .env   # then edit JWT_SECRET_KEY to a real random value
 pip install -r requirements.txt
+pytest -v               # Run full 65+ backend test suite
+python3 scripts/test_e2e_flow.py # Run end-to-end pipeline verification script
 uvicorn app.main:app --reload --port 8000
 ```
-First run will download the embedding model from Hugging Face (~90MB). Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to bootstrap the first admin account.
 
-### Frontend
+### Frontend (Vite React + CV Proctoring)
 ```bash
 cd frontend
 npm install
-npm run dev
-```
-Visit `http://localhost:5173`. The Vite dev server proxies `/api` calls to `http://localhost:8000`.
-
-### Tests
-```bash
-cd backend
-pytest
+npx vitest run          # Run 14 Vitest unit tests (risk-engine, interviewer, gatekeeper rules)
+npm run dev             # Start UI at http://localhost:5173
 ```
 
-## Running with Docker
-
-```bash
-cp .env.example .env   # then edit JWT_SECRET_KEY
-docker compose up --build
-```
-Frontend: `http://localhost:8080` · Backend: `http://localhost:8000`. Data (SQLite + Chroma + uploaded resumes) persists in the `ats_data` volume across restarts.
-
-## Auth And Email
-
-Auth uses the shared `User` table and JWTs with a `role` claim: `candidate`, `recruiter`, or `admin`.
-
-- Candidate signup: `POST /api/auth/register` creates a candidate user and sends a 6-digit OTP.
-- OTP verification: `POST /api/auth/verify-otp` verifies the candidate email and returns a bearer token.
-- Login: `POST /api/auth/login` accepts email/password and routes by JWT role on the frontend.
-- Password reset: `POST /api/auth/password-reset/request` and `POST /api/auth/password-reset/confirm` use 15-minute reset tokens.
-- Recruiter access: `POST /api/recruiter-requests` creates a pending request; it does not create a user.
-- Admin review: admins approve/reject pending recruiter requests via `AdminPage`. Approval creates a recruiter user with a generated password and emails credentials.
-
-SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWORD`, and optional `SMTP_FROM`. `DEV_MODE=false` by default. If `DEV_MODE=true` and SMTP is unset/fails, OTPs/reset tokens/generated recruiter passwords are returned in the API response under `dev_only` for demos.
-
-## Resume upload limits
-
-- Allowed types: `.pdf`, `.docx`, `.doc`, `.txt` (checked by extension; rejected with 400 otherwise)
-- Max size: 8MB (streamed to disk in chunks, rejected with 413 if exceeded — never buffers the whole file in memory)
-- Duplicate content (same resume text, re-uploaded via either flow) is detected by SHA-256 hash of the extracted text and reuses the existing entry instead of creating a duplicate DB row + vector
-
-## Status / next steps
-
-- **Embedding model**: configurable via `EMBEDDING_MODEL` env var.
-- Scoring pipeline features semantic similarity, keyword matching, JD text extraction, experience fit, and score calibration.
-- Deep analysis uses Ollama natively (fallback to Gemini).
-- UI is upgraded to a professional LinkedIn blue design system.
-- Recruiter endpoints require recruiter role auth; admin endpoints require admin role auth.
-- Recruiter approval flow is fully implemented and tested.
-- File validation, deduplication, Docker, and GitHub Actions CI are present.
-- **Completed**: Role template expansion, hybrid ATS pipeline with graceful fallback, project verification risk notes, and recruiter candidate shortlisting.
-- Still unverified: Docker runtime, real SMTP mailbox delivery, and remote CI status.
-# major-project

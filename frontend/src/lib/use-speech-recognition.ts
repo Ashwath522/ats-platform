@@ -118,19 +118,7 @@ export function useSpeechRecognition() {
   }
 }
 
-export function speakText(text: string) {
-  if (typeof window === 'undefined' || !window.speechSynthesis || !text.trim()) return
-  
-  // Format utterance according to Speaking Charter (max 1-2 sentences, clean spoken English, no meta-labels)
-  let cleanText = text.trim().replace(/[*_~`#]/g, '').replace(/^(Question\s*\d*:|Follow-?up:|Interviewer:|\bAI:)\s*/i, '')
-  const sentences = cleanText.split(/(?<=[.!?])\s+/).filter(Boolean)
-  if (sentences.length > 2) {
-    cleanText = sentences.slice(0, 2).join(' ')
-  }
+import { speakText } from './speaking-charter'
+export { speakText }
 
-  window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(cleanText)
-  utterance.rate = 0.95
-  window.speechSynthesis.speak(utterance)
-}
 
