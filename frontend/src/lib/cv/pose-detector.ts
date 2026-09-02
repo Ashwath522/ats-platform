@@ -46,7 +46,7 @@ export class PoseDetector {
     }
     if (!this.poseLandmarker) {
       // Fallback stub: return simulated values
-      if (process.env.NODE_ENV !== 'production') {
+      if (import.meta.env.DEV) {
         console.debug('PoseDetector using fallback stub (model not loaded)')
       }
       const personPresent = Math.random() > 0.02;

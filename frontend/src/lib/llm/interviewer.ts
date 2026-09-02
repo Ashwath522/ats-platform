@@ -74,9 +74,9 @@ export function countRecentNonSubstantiveAnswers(priorQA: { question: string; an
 }
 
 export type DecideNextStepParams = {
-  jobTitle: string
-  jobDescription: string
-  baseQuestions: string[]
+  jobTitle?: string
+  jobDescription?: string
+  baseQuestions?: string[]
   baseQuestionIndex: number
   isFollowUpQuestion: boolean
   currentQuestion: string
@@ -84,6 +84,7 @@ export type DecideNextStepParams = {
   priorQA: { question: string; answer: string }[]
   storyCompleteness?: StoryCompleteness
   coveredCompetencies?: Set<string>
+  interviewId?: number | string
 }
 
 export type StoryCompleteness = {
@@ -262,8 +263,9 @@ function buildPriorSummary(priorQA: { question: string; answer: string }[]): str
 }
 
 export async function decideNextInterviewStep(params: DecideNextStepParams): Promise<InterviewStepResult> {
-  const isLastBase = params.baseQuestionIndex >= params.baseQuestions.length - 1
-  const nextBaseQuestion = params.baseQuestions[params.baseQuestionIndex + 1]
+  const baseQuestions = params.baseQuestions ?? []
+  const isLastBase = params.baseQuestionIndex >= baseQuestions.length - 1
+  const nextBaseQuestion = baseQuestions[params.baseQuestionIndex + 1]
   const candidateStyle = analyzeCandidateStyle(params.priorQA)
 
   // Immediate exit intent check: must be deterministic and never call the LLM

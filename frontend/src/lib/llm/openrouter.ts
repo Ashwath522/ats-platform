@@ -35,21 +35,25 @@ function extractContent(data: Record<string, unknown>): string {
 }
 
 export async function chatCompletion(messages: ChatMessage[]): Promise<string | null> {
-  const apiKey = process.env.OPENROUTER_API_KEY
+  const env = import.meta.env
+  const apiKey = env.VITE_OPENROUTER_API_KEY || (typeof process !== 'undefined' ? process.env?.OPENROUTER_API_KEY : undefined)
   if (!apiKey) return null
 
-  const baseUrl = (process.env.OPENROUTER_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
-  const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL
+  const rawBaseUrl = env.VITE_OPENROUTER_BASE_URL || (typeof process !== 'undefined' ? process.env?.OPENROUTER_BASE_URL : undefined) || DEFAULT_BASE_URL
+  const baseUrl = rawBaseUrl.replace(/\/$/, '')
+  const model = env.VITE_OPENROUTER_MODEL || (typeof process !== 'undefined' ? process.env?.OPENROUTER_MODEL : undefined) || DEFAULT_MODEL
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   }
-  if (process.env.OPENROUTER_HTTP_REFERER) {
-    headers['HTTP-Referer'] = process.env.OPENROUTER_HTTP_REFERER
+  const referer = env.VITE_OPENROUTER_HTTP_REFERER || (typeof process !== 'undefined' ? process.env?.OPENROUTER_HTTP_REFERER : undefined)
+  if (referer) {
+    headers['HTTP-Referer'] = referer
   }
-  if (process.env.OPENROUTER_X_TITLE) {
-    headers['X-Title'] = process.env.OPENROUTER_X_TITLE
+  const title = env.VITE_OPENROUTER_X_TITLE || (typeof process !== 'undefined' ? process.env?.OPENROUTER_X_TITLE : undefined)
+  if (title) {
+    headers['X-Title'] = title
   }
 
   const controller = new AbortController()

@@ -44,7 +44,7 @@ export class FaceDetector {
     }
     if (!this.faceDetector) {
       // Fallback stub behavior if loading/initialization failed
-      if (process.env.NODE_ENV !== 'production') {
+      if (import.meta.env.DEV) {
         console.debug('FaceDetector using fallback stub (model not loaded)')
       }
       return { faceCount: 1, faceDetected: true };

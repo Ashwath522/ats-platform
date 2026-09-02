@@ -45,7 +45,7 @@ export class ObjectDetector {
     }
     if (!this.objectDetector) {
       // Fallback stub: always return person (do not fabricate additional objects)
-      if (process.env.NODE_ENV !== 'production') {
+      if (import.meta.env.DEV) {
         console.debug('ObjectDetector using fallback stub (model not loaded)')
       }
       const results: DetectedObject[] = [

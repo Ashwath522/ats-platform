@@ -1,6 +1,10 @@
 import { useRef, useCallback, useEffect } from 'react'
 
-export function useRollingVideoBuffer(maxClips: number = 5) {
+export function useRollingVideoBuffer(
+  videoElementOrMax?: HTMLVideoElement | MediaStream | number | null,
+  options?: { secondsToBuffer?: number; maxClips?: number }
+) {
+  const maxClips = typeof videoElementOrMax === 'number' ? videoElementOrMax : (options?.maxClips ?? 5)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const clipsRef = useRef<Blob[]>([])
@@ -17,7 +21,6 @@ export function useRollingVideoBuffer(maxClips: number = 5) {
       recorder.start(1000)
       recorderRef.current = recorder
     } catch {
-      // Fallback without codecs if mimeType unsupported
       try {
         const recorder = new MediaRecorder(stream)
         recorder.ondataavailable = (e) => {
@@ -43,8 +46,31 @@ export function useRollingVideoBuffer(maxClips: number = 5) {
       chunksRef.current = []
       return clip
     }
-    return null
+    return new Blob()
   }, [maxClips])
+
+  const getClip = useCallback((_durationSeconds?: number): Blob => {
+    return captureClip()
+  }, [captureClip])
+
+  const takeSnapshot = useCallback(async (): Promise<Blob | null> => {
+    if (videoElementOrMax && typeof videoElementOrMax !== 'number' && 'tagName' in videoElementOrMax) {
+      const video = videoElementOrMax as HTMLVideoElement
+      if (video.readyState >= 2) {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth || 320
+        canvas.height = video.videoHeight || 240
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          return new Promise<Blob | null>((resolve) => {
+            canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
+          })
+        }
+      }
+    }
+    return null
+  }, [videoElementOrMax])
 
   const stopBuffer = useCallback(() => {
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -58,5 +84,12 @@ export function useRollingVideoBuffer(maxClips: number = 5) {
     }
   }, [stopBuffer])
 
-  return { startBuffer, captureClip, stopBuffer, clips: clipsRef.current }
+  return {
+    startBuffer,
+    captureClip,
+    getClip,
+    takeSnapshot,
+    stopBuffer,
+    clips: clipsRef.current,
+  }
 }
