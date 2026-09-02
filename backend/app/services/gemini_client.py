@@ -123,10 +123,14 @@ class GeminiClient:
             + self._build_prompt(student, safe_project_text, job)
         )
 
+        from .llm_telemetry import trace_llm_call
+
         # Call with rate-limit-aware retry. If the API never responds
         # (quota exhausted / network), let it raise → scorer falls back.
         try:
-            response = self._call_with_retry(prompt)
+            with trace_llm_call("gemini", self._resolve_model_name(), "analyze_project", {"prompt_len": len(prompt)}) as trace:
+                response = self._call_with_retry(prompt)
+                trace["response_len"] = len(response.text or "") if hasattr(response, "text") else 0
         except RateLimitError:
             # Propagate so the scorer's KeyRotator can rotate to another key
             # on a 429 / quota hit. Swallowing this (returning None) would

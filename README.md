@@ -34,15 +34,23 @@ commit it's part of, not a permanent guarantee.
 - **Deep analysis**: `POST /api/candidate/deep-analysis` — optional,
   on-demand, cached LLM call (grammar/technical-depth/experience scoring)
   kept OUT of the fast scoring path. Defaults to **local Ollama** (e.g. `llama3.2`) if available, falls back gracefully to Google Gemini (free tier) if `GEMINI_API_KEY` is set, or degrades gracefully if neither is present.
+- **Decision Audit Trail (`DecisionAuditLog`)**: append-only, immutable audit logging in `backend/app/db.py` and `backend/app/services/audit.py`. Every scoring event (ATS match, project/repo verification, AI interview evaluation), candidate deletion request, and recruiter confirmation is permanently recorded with full input signals, LLM verdicts, timestamps, and reviewer attribution for compliance with automated employment decision regulations (NYC LL144 / EU AI Act).
+- **Candidate Score Explainability**: `GET /api/candidate/jobs/applications/{app_id}/explainability` provides candidates with a plain-language breakdown of their score components (semantic fit, matched vs missing skills, project code depth, proctoring status) and actionable improvement advice generated deterministically without additional LLM calls.
+- **Human-in-the-Loop Confirmation Gate**: Any auto-generated rejection or high-risk proctoring flag requires explicit human recruiter action via `POST /api/recruiter/jobs/{job_id}/applicants/{app_id}/confirm-decision` or status updates before becoming final, logging reviewer identity and timestamp in `DecisionAuditLog`.
+- **Proctoring Consent & Data Retention**: 
+  - Mandatory pre-interview consent screen in `frontend/src/components/AIInterviewModal.jsx` disclosing recorded media, computer vision signals analyzed, and data retention terms before camera/microphone initialization.
+  - 30-day raw proctoring media retention policy with automated purge utility in `backend/app/services/retention.py` and `POST /api/admin/retention/purge` preserving aggregate scores and audit records.
+  - Candidate right-to-be-forgotten via `POST /api/candidate/applications/{app_id}/request-data-deletion` accessible directly in the candidate portal.
+- **Operational Health & Structured Telemetry**:
+  - Active `GET /health` endpoint in `backend/app/main.py` verifying database read/write connectivity and checking reachability of optional AI providers (Groq, Gemini, Ollama).
+  - Structured JSON telemetry logging in `backend/app/services/llm_telemetry.py` capturing provider, model, latency, status, and payload length for all LLM calls.
+  - Graceful degradation in `backend/app/services/scorer.py` and `deep_analysis.py` falling back to deterministic embedding/keyword scoring if external AI services fail or are unconfigured.
 - **Docker**: `backend/Dockerfile`, `frontend/Dockerfile`,
   `frontend/nginx.conf`, root `docker-compose.yml` all exist.
-- **Tests**: `backend/tests/` — comprehensive test suite across scoring, auth, ownership, recruiter approval flow, OTP/password-reset, MIME validation, portal helpers, vocab learning, and API integration. Run `pytest` to confirm current pass count.
+- **Tests**: `backend/tests/` and `frontend/src/lib/__tests__/` — 74 passing backend pytest tests and 16 passing frontend vitest tests covering auth, scoring, audit trails, explainability, human confirmation gates, retention policies, and proctoring governance.
 - **Candidate portal**: candidate auth, profile/resume management, job
-  browsing, applications, posts/feed, and contact/profile screens are
-  present in the backend routers and frontend routes.
-- **Recruiter job postings**: approved recruiters can create/manage jobs
-  and review applicants in addition to the original company/JD matching
-  workflow. Features edit-in-place company names.
+  browsing, applications, posts/feed, "Why this score?" explainability views, data deletion requests, and contact/profile screens.
+- **Recruiter job postings & review**: approved recruiters can create/manage jobs, review applicants with AI dials and proctoring risk indicators, confirm automated recommendations, and verify code portfolios.
 - **CI**: GitHub Actions workflow `.github/workflows/ci.yml` runs pytest and builds the frontend on every push/PR to main.
 - **Frontend**: Clean LinkedIn blue (`#0A66C2`) design system, global TopNav, tabbed AdminPage, SVG icons.
 - **Role Templates**: 33 verified templates across 7 core engineering branches, all exceeding 250 words with rich technical keywords.

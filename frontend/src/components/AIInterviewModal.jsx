@@ -4,9 +4,15 @@ import LiveInterviewRoom from './interview/live-interview-room.tsx'
 import MediaSetup from './interview/media-setup.tsx'
 
 export function AIInterviewModal({ applicationId, jobTitle, candidateName, onClose, onCompleted }) {
-  const [step, setStep] = useState('media_setup') // media_setup | baseline | live | done
+  const [step, setStep] = useState('consent') // consent | media_setup | baseline | live | done
+  const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+
+  const handleConsentComplete = () => {
+    if (!consentChecked) return
+    setStep('media_setup')
+  }
 
   const handleMediaSetupComplete = () => {
     setStep('baseline')
@@ -69,6 +75,83 @@ export function AIInterviewModal({ applicationId, jobTitle, candidateName, onClo
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-lg text-xs">
             {error}
+          </div>
+        )}
+
+        {step === 'consent' && (
+          <div className="space-y-6 text-slate-200">
+            <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 space-y-4">
+              <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                🛡️ AI Interview & Automated Proctoring Consent
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                In compliance with automated employment decision and high-risk AI governance regulations (e.g. EU AI Act, NYC Local Law 144), this platform provides full transparency on data collection, automated analysis, and your rights before recording begins.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-1">
+                  <span className="font-semibold text-blue-400">📹 Data Collected & Recorded</span>
+                  <p className="text-slate-400">
+                    Video camera feed, microphone audio, and your spoken technical responses.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-1">
+                  <span className="font-semibold text-blue-400">🧠 Automated Analysis Signals</span>
+                  <p className="text-slate-400">
+                    Gaze direction, multi-face/object detection, audio speech clarity, and problem-solving evaluation.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-1">
+                  <span className="font-semibold text-amber-400">⏳ 30-Day Data Retention Window</span>
+                  <p className="text-slate-400">
+                    Raw video frames and transcripts are purged after 30 days. Only high-level evaluation metrics and audit logs are retained.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-1">
+                  <span className="font-semibold text-emerald-400">👤 Human Oversight & Deletion Rights</span>
+                  <p className="text-slate-400">
+                    Automated flags require human recruiter confirmation. You may request immediate data deletion anytime from your candidate portal.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <label className="flex items-start gap-3 cursor-pointer text-xs select-none">
+                  <input
+                    type="checkbox"
+                    checked={consentChecked}
+                    onChange={(e) => setConsentChecked(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-blue-600 bg-slate-900 border-slate-700"
+                  />
+                  <span>
+                    I understand what data is recorded, how automated proctoring signals are analyzed, and agree to the 30-day data retention policy.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConsentComplete}
+                disabled={!consentChecked}
+                className={`px-6 py-2.5 text-xs font-bold rounded-xl transition ${
+                  consentChecked
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/20 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Agree & Continue to Media Setup →
+              </button>
+            </div>
           </div>
         )}
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ..db import engine, Job, Application, RecruiterUser, Resume, CandidateProfile, utc_now
@@ -207,6 +208,7 @@ async def list_applicants(
 
             results.append({
                 "application_id": app.id,
+                "id": app.id,
                 "candidate_name": profile.headline if profile else "Unknown",
                 "resume_filename": resume.filename if resume else None,
                 "ats_score": app.ats_score,
@@ -225,6 +227,16 @@ async def list_applicants(
                 "repo_match_reasoning": app.repo_match_reasoning,
                 "suitability_verdict": app.suitability_verdict,
                 "ai_recommendation": app.ai_recommendation,
+                "interview_status": app.interview_status,
+                "interview_risk_score": app.interview_risk_score,
+                "interview_risk_level": app.interview_risk_level,
+                "interview_eval_score": app.interview_eval_score,
+                "interview_recommendation": app.interview_recommendation,
+                "interview_evidence_url": app.interview_evidence_url,
+                "interview_transcript_json": app.interview_transcript_json,
+                "pending_human_review": app.pending_human_review,
+                "human_reviewer": app.human_reviewer,
+                "human_decision_notes": app.human_decision_notes,
             })
 
         return {
@@ -239,6 +251,7 @@ async def update_applicant_status(
     job_id: int,
     application_id: int,
     status: str = Form(...),
+    notes: Optional[str] = Form(None),
     recruiter: str = Depends(get_current_recruiter),
 ):
     with Session(engine) as session:
@@ -254,9 +267,91 @@ async def update_applicant_status(
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
         
         app.status = status
+        app.pending_human_review = False
+        app.human_reviewer = recruiter
+        if notes:
+            app.human_decision_notes = notes
         session.add(app)
         session.commit()
-        return {"status": "success", "new_status": app.status}
+        session.refresh(app)
+
+        # Log human status decision in DecisionAuditLog
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="recruiter_decision",
+            application_id=app.id,
+            candidate_id=app.candidate_id,
+            job_id=job_id,
+            ats_score=app.ats_score,
+            project_score=app.project_score,
+            final_score=app.final_score,
+            human_reviewer=recruiter,
+            human_action=f"status_change_{status}",
+            final_recommendation=notes or f"Status changed to {status} by {recruiter}",
+        )
+
+        return {"status": "success", "new_status": app.status, "human_reviewer": recruiter}
+
+
+@router.post("/{job_id}/applicants/{application_id}/confirm-decision")
+async def confirm_recruiter_decision(
+    job_id: int,
+    application_id: int,
+    decision: str = Form(...),  # "shortlisted" | "rejected" | "overridden"
+    notes: str = Form(""),
+    recruiter: str = Depends(get_current_recruiter),
+):
+    """
+    Recruiter explicit human oversight gate:
+    Confirms or overrides an automated rejection or high-risk interview flag.
+    Logs who confirmed and when in the DecisionAuditLog.
+    """
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        app = session.get(Application, application_id)
+        if not app or app.job_id != job_id:
+            raise HTTPException(status_code=404, detail="Application not found for this job")
+
+        if decision not in ("shortlisted", "rejected", "overridden", "ats_check", "repo_verification"):
+            raise HTTPException(status_code=400, detail="Invalid decision action")
+
+        app.pending_human_review = False
+        app.human_reviewer = recruiter
+        app.human_decision_notes = notes
+        if decision in ("shortlisted", "rejected"):
+            app.status = decision
+
+        session.add(app)
+        session.commit()
+        session.refresh(app)
+
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="recruiter_confirmation",
+            application_id=app.id,
+            candidate_id=app.candidate_id,
+            job_id=job_id,
+            ats_score=app.ats_score,
+            project_score=app.project_score,
+            final_score=app.final_score,
+            risk_score=app.interview_risk_score,
+            risk_level=app.interview_risk_level,
+            human_reviewer=recruiter,
+            human_action=f"confirmed_{decision}",
+            final_recommendation=notes or f"Human decision confirmed by {recruiter}: {decision}",
+        )
+
+        return {
+            "message": "Recruiter human decision recorded successfully",
+            "application_id": application_id,
+            "new_status": app.status,
+            "human_reviewer": recruiter,
+            "pending_human_review": False,
+        }
 
 @router.post("/{job_id}/applicants/{application_id}/evaluate-repo")
 async def evaluate_applicant_repo(
@@ -331,3 +426,54 @@ async def finalize_applicant(
                 
         session.commit()
         return {"status": "success", "new_status": app.status}
+
+
+class ApplicationStatusUpdate(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+
+@router.post("/applications/{application_id}/status")
+async def update_application_status_direct(
+    application_id: int,
+    payload: ApplicationStatusUpdate,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        app = session.get(Application, application_id)
+        if not app:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        job = _get_owned_job_or_403(session, app.job_id, user.id)
+
+        valid_statuses = ("ats_check", "repo_verification", "automated_interview", "shortlisted", "rejected")
+        if payload.status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+
+        app.status = payload.status
+        app.pending_human_review = False
+        app.human_reviewer = recruiter
+        if payload.notes:
+            app.human_decision_notes = payload.notes
+        session.add(app)
+        session.commit()
+        session.refresh(app)
+
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="recruiter_decision",
+            application_id=app.id,
+            candidate_id=app.candidate_id,
+            job_id=app.job_id,
+            ats_score=app.ats_score,
+            project_score=app.project_score,
+            final_score=app.final_score,
+            human_reviewer=recruiter,
+            human_action=f"status_change_{payload.status}",
+            final_recommendation=payload.notes or f"Status changed to {payload.status} by {recruiter}",
+        )
+
+        return {"status": "success", "new_status": app.status, "human_reviewer": recruiter}
+

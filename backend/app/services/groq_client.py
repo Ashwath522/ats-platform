@@ -139,10 +139,14 @@ class GroqClient:
             {"role": "user", "content": prompt},
         ]
 
+        from .llm_telemetry import trace_llm_call
+
         # Call with rate-limit-aware retry. If the API never responds
         # (quota exhausted / network), let it raise → scorer falls back.
         try:
-            response = self._call_with_retry(messages, max_tokens=4096)
+            with trace_llm_call("groq", self.model, "analyze_project", {"prompt_len": len(prompt)}) as trace:
+                response = self._call_with_retry(messages, max_tokens=4096)
+                trace["response_len"] = len(response.choices[0].message.content or "")
         except RateLimitError:
             # Propagate so the scorer's KeyRotator can rotate to another key
             # on a 429 / quota hit. Swallowing this (returning None) would

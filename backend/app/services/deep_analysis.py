@@ -139,6 +139,7 @@ def run_deep_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _run_ollama_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -147,10 +148,12 @@ def _run_ollama_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
         "options": {"temperature": 0.1, "num_predict": 1200},
     }
     try:
-        response = httpx.post(url, json=payload, timeout=120.0)
-        response.raise_for_status()
-        data = response.json()
-        raw = data.get("response", "")
+        with trace_llm_call("ollama", OLLAMA_MODEL, "deep_analysis") as trace:
+            response = httpx.post(url, json=payload, timeout=120.0)
+            response.raise_for_status()
+            data = response.json()
+            raw = data.get("response", "")
+            trace["response_len"] = len(raw)
         if not raw:
             raise ValueError("Empty response from Ollama")
         return parse_analysis_json(raw)
@@ -165,6 +168,7 @@ def _run_ollama_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     model = urllib.parse.quote(GEMINI_MODEL, safe="")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
@@ -176,15 +180,17 @@ def _run_gemini_analysis(resume_text: str, target_text: str) -> Dict[str, Any]:
         },
     }
     try:
-        response = httpx.post(
-            url,
-            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        with trace_llm_call("gemini", GEMINI_MODEL, "deep_analysis") as trace:
+            response = httpx.post(
+                url,
+                headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            trace["response_len"] = len(raw)
         return parse_analysis_json(raw)
     except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Gemini returned invalid deep-analysis JSON") from exc
@@ -247,6 +253,7 @@ def run_resume_suggestions(resume_text: str, target_text: str, missing_skills: L
 
 
 def _run_ollama_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -255,10 +262,12 @@ def _run_ollama_suggestions(resume_text: str, target_text: str, missing_skills: 
         "options": {"temperature": 0.2, "num_predict": 1000},
     }
     try:
-        response = httpx.post(url, json=payload, timeout=120.0)
-        response.raise_for_status()
-        data = response.json()
-        raw = data.get("response", "")
+        with trace_llm_call("ollama", OLLAMA_MODEL, "resume_suggestions") as trace:
+            response = httpx.post(url, json=payload, timeout=120.0)
+            response.raise_for_status()
+            data = response.json()
+            raw = data.get("response", "")
+            trace["response_len"] = len(raw)
         if not raw:
             raise ValueError("Empty response from Ollama")
         return parse_suggestions_json(raw)
@@ -269,6 +278,7 @@ def _run_ollama_suggestions(resume_text: str, target_text: str, missing_skills: 
 
 
 def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: List[str]) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     model = urllib.parse.quote(GEMINI_MODEL, safe="")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
@@ -280,15 +290,17 @@ def _run_gemini_suggestions(resume_text: str, target_text: str, missing_skills: 
         },
     }
     try:
-        response = httpx.post(
-            url,
-            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        with trace_llm_call("gemini", GEMINI_MODEL, "resume_suggestions") as trace:
+            response = httpx.post(
+                url,
+                headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            trace["response_len"] = len(raw)
         return parse_suggestions_json(raw)
     except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Gemini returned invalid suggestions JSON") from exc
@@ -352,6 +364,7 @@ def run_hybrid_llm_scoring(resume_text: str, target_text: str, missing_skills: L
 
 
 def _run_ollama_hybrid(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -360,10 +373,12 @@ def _run_ollama_hybrid(resume_text: str, target_text: str, missing_skills: List[
         "options": {"temperature": 0.1, "num_predict": 1000},
     }
     try:
-        response = httpx.post(url, json=payload, timeout=60.0)
-        response.raise_for_status()
-        data = response.json()
-        raw = data.get("response", "")
+        with trace_llm_call("ollama", OLLAMA_MODEL, "hybrid_scoring") as trace:
+            response = httpx.post(url, json=payload, timeout=60.0)
+            response.raise_for_status()
+            data = response.json()
+            raw = data.get("response", "")
+            trace["response_len"] = len(raw)
         if not raw:
             raise ValueError("Empty response from Ollama")
         return parse_hybrid_json(raw)
@@ -373,6 +388,7 @@ def _run_ollama_hybrid(resume_text: str, target_text: str, missing_skills: List[
 
 
 def _run_gemini_hybrid(resume_text: str, target_text: str, missing_skills: List[str], matched_skills: List[str]) -> Dict[str, Any]:
+    from .llm_telemetry import trace_llm_call
     model = urllib.parse.quote(GEMINI_MODEL, safe="")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
@@ -384,15 +400,17 @@ def _run_gemini_hybrid(resume_text: str, target_text: str, missing_skills: List[
         },
     }
     try:
-        response = httpx.post(
-            url,
-            headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        with trace_llm_call("gemini", GEMINI_MODEL, "hybrid_scoring") as trace:
+            response = httpx.post(
+                url,
+                headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            trace["response_len"] = len(raw)
         return parse_hybrid_json(raw)
     except Exception as exc:
         print(f"Gemini hybrid scoring failed: {exc}")

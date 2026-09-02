@@ -411,6 +411,25 @@ async def score_project(
                     app_record.interview_status = "unlocked"
                     session.add(app_record)
                     session.commit()
+                    session.refresh(app_record)
+
+                    # Write audit log for project scoring
+                    from ..services.audit import record_audit_event
+                    record_audit_event(
+                        session=session,
+                        event_type="project_score",
+                        application_id=app_record.id,
+                        candidate_id=app_record.candidate_id,
+                        job_id=app_record.job_id,
+                        ats_score=app_record.ats_score,
+                        project_score=result.get("project_score"),
+                        final_score=result.get("final_score"),
+                        matched_skills=result.get("skills_matched", []),
+                        missing_skills=result.get("skills_missing", []),
+                        llm_providers_consulted=[result.get("api_used")] if result.get("api_used") in ("groq", "gemini") else [],
+                        raw_verdicts=result,
+                        final_recommendation=result.get("ai_recommendation"),
+                    )
 
         return result
     finally:
@@ -485,24 +504,98 @@ async def submit_interview_results(
         if not access["allowed"] and app_record.interview_status != "in_progress":
             raise HTTPException(status_code=403, detail=access["reason"])
 
-        app_record.interview_risk_score = payload.get("risk_score", 0)
-        app_record.interview_risk_level = payload.get("risk_level", "low")
-        app_record.interview_eval_score = payload.get("eval_score", 85)
-        app_record.interview_recommendation = payload.get("recommendation", "Strong candidate based on speaking charter evaluation and low proctoring risk.")
+        risk_score = payload.get("risk_score", 0)
+        risk_level = payload.get("risk_level", "low")
+        eval_score = payload.get("eval_score", 85)
+        recommendation = payload.get("recommendation", "Strong candidate based on speaking charter evaluation and low proctoring risk.")
+
+        app_record.interview_risk_score = risk_score
+        app_record.interview_risk_level = risk_level
+        app_record.interview_eval_score = eval_score
+        app_record.interview_recommendation = recommendation
         app_record.interview_evidence_url = payload.get("evidence_url", "/api/evidence/sample.webm")
         app_record.interview_transcript_json = json.dumps(payload.get("transcript", []))
         app_record.interview_status = "completed"
         app_record.status = "automated_interview"
 
+        # If high proctoring risk is flagged, require human recruiter review
+        if risk_level == "high" or risk_score >= 50:
+            app_record.pending_human_review = True
+
         session.add(app_record)
         session.commit()
         session.refresh(app_record)
+
+        # Write audit log for interview evaluation
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="interview_evaluation",
+            application_id=app_record.id,
+            candidate_id=app_record.candidate_id,
+            job_id=app_record.job_id,
+            ats_score=app_record.ats_score,
+            project_score=app_record.project_score,
+            final_score=app_record.final_score,
+            risk_score=risk_score,
+            risk_level=risk_level,
+            raw_verdicts=payload,
+            final_recommendation=recommendation,
+        )
 
         return {
             "message": "Interview results saved successfully",
             "application_id": app_id,
             "interview_status": app_record.interview_status,
             "interview_eval_score": app_record.interview_eval_score,
-            "interview_risk_level": app_record.interview_risk_level
+            "interview_risk_level": app_record.interview_risk_level,
+            "pending_human_review": app_record.pending_human_review,
+        }
+
+
+@router.post("/applications/{app_id}/request-data-deletion")
+async def request_interview_data_deletion(
+    app_id: int,
+    candidate: str = Depends(get_current_candidate)
+):
+    """
+    Candidate right-to-be-forgotten endpoint:
+    Purges raw proctoring media and interview transcripts upon candidate request,
+    while preserving aggregated score metrics and writing an immutable audit log.
+    """
+    with Session(engine) as session:
+        from ..db import CandidateUser
+        user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        app_record = session.get(Application, app_id)
+        if not app_record:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if app_record.candidate_id != user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to request deletion for this application")
+
+        app_record.interview_evidence_url = "[Deleted upon candidate request]"
+        app_record.interview_transcript_json = "[]"
+        session.add(app_record)
+        session.commit()
+        session.refresh(app_record)
+
+        # Log deletion event in DecisionAuditLog
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="candidate_deletion_request",
+            application_id=app_record.id,
+            candidate_id=user.id,
+            job_id=app_record.job_id,
+            human_reviewer=candidate,
+            human_action="deleted_proctoring_data",
+            final_recommendation="Proctoring media and transcript purged upon candidate request.",
+        )
+
+        return {
+            "message": "Proctoring media and transcript data successfully purged.",
+            "application_id": app_id,
         }
 

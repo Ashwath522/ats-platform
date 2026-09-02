@@ -184,10 +184,13 @@ async def apply_to_job(
         # Compute suitability_verdict
         if final_ats_score >= 75:
             verdict = "Strong Fit"
+            pending_human_review = False
         elif final_ats_score >= 50:
             verdict = "Potential Fit"
+            pending_human_review = False
         else:
             verdict = "Not a Fit"
+            pending_human_review = True
 
         # Create application with score
         application = Application(
@@ -202,10 +205,31 @@ async def apply_to_job(
             suitability_verdict=verdict,
             matched_skills_json=json.dumps(score_result["matched_skills"]),
             missing_skills_json=json.dumps(score_result["missing_skills"]),
+            pending_human_review=pending_human_review,
         )
         session.add(application)
         session.commit()
         session.refresh(application)
+
+        # Record immutable audit log
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="ats_score",
+            application_id=application.id,
+            candidate_id=user.id,
+            job_id=job_id,
+            ats_score=final_ats_score,
+            baseline_ats_score=baseline_ats,
+            semantic_similarity=score_result.get("semantic_similarity"),
+            keyword_coverage=score_result.get("keyword_coverage"),
+            matched_skills=score_result.get("matched_skills", []),
+            missing_skills=score_result.get("missing_skills", []),
+            final_score=final_ats_score,
+            llm_providers_consulted=["gemini"] if llm_used else [],
+            raw_verdicts=llm_result if llm_used else None,
+            final_recommendation=verdict,
+        )
 
         background_tasks.add_task(learn_skills_from_resume, resume_text, branch_to_match)
 
@@ -216,6 +240,7 @@ async def apply_to_job(
             "ats_score": final_ats_score,
             "matched_skills": score_result["matched_skills"],
             "missing_skills": score_result["missing_skills"],
+            "pending_human_review": pending_human_review,
         }
 
 
@@ -256,9 +281,33 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
                 "parse_method": app.parse_method,
                 "suitability_verdict": app.suitability_verdict,
                 "ai_recommendation": app.ai_recommendation,
+                "interview_status": app.interview_status,
+                "repo_match_score": app.repo_match_score,
+                "pending_human_review": app.pending_human_review,
+                "human_reviewer": app.human_reviewer,
+                "human_decision_notes": app.human_decision_notes,
             })
 
         return {"applications": results, "count": len(results)}
+
+
+@router.get("/applications/{app_id}/explainability")
+async def get_application_explainability(app_id: int, candidate: str = Depends(get_current_candidate)):
+    """Candidate-facing explainability view: plain-language breakdown of scoring signals."""
+    from ..services.audit import generate_score_explanation
+    with Session(engine) as session:
+        user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        app = session.get(Application, app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if app.candidate_id != user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this application")
+
+        job = session.get(Job, app.job_id)
+        return generate_score_explanation(app, job)
 
 
 @router.post("/{job_id}/suggestions")

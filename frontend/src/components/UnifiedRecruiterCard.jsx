@@ -26,7 +26,13 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
     interview_transcript_json,
     status,
     interview_status,
+    pending_human_review,
+    human_reviewer,
+    human_decision_notes,
   } = application
+
+  const [reviewNote, setReviewNote] = useState('')
+  const [showNoteInput, setShowNoteInput] = useState(false)
 
   const effectiveRepoScore = repo_match_score ?? project_score
   const effectiveRepoReason = repo_match_reasoning ?? project_summary
@@ -52,6 +58,28 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl hover:border-slate-700 transition-all space-y-6">
+      {/* Human Oversight Banner if pending review */}
+      {pending_human_review && (
+        <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 p-3 rounded-xl text-xs flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-base">⚠️</span>
+            <div>
+              <strong>Human Review Required:</strong> AI engine flagged this application for human confirmation before final decision.
+            </div>
+          </div>
+          <span className="px-2 py-0.5 bg-amber-500/20 text-amber-200 rounded font-semibold uppercase text-[10px]">
+            Pending Recruiter Action
+          </span>
+        </div>
+      )}
+
+      {human_reviewer && (
+        <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+          <span>Reviewed by: <strong className="text-slate-200">{human_reviewer}</strong></span>
+          {human_decision_notes && <span className="italic text-slate-300">"{human_decision_notes}"</span>}
+        </div>
+      )}
+
       {/* Header Info */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
         <div>
@@ -153,7 +181,7 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
       {interview_eval_score && (
         <div className="border-t border-slate-800 pt-4 flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            {interview_evidence_url && (
+            {interview_evidence_url && !interview_evidence_url.startsWith('[') && (
               <a
                 href={interview_evidence_url}
                 target="_blank"
@@ -162,6 +190,11 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
               >
                 📹 View Video & Proctoring Evidence
               </a>
+            )}
+            {interview_evidence_url && interview_evidence_url.startsWith('[') && (
+              <span className="text-xs text-slate-500 italic">
+                {interview_evidence_url}
+              </span>
             )}
             {transcriptList.length > 0 && (
               <button
@@ -192,22 +225,48 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
-        {status === 'ats_check' && (
+      {/* Action Buttons & Human Confirmation Gate */}
+      <div className="flex flex-col md:flex-row justify-between items-end gap-3 border-t border-slate-800 pt-4">
+        {showNoteInput && (
+          <div className="w-full max-w-sm">
+            <input
+              type="text"
+              placeholder="Optional reviewer notes..."
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5"
+            />
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 w-full">
           <button
-            onClick={() => onUpdateStatus && onUpdateStatus(id, 'shortlisted')}
-            className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition"
+            onClick={() => setShowNoteInput(!showNoteInput)}
+            className="text-xs text-slate-400 hover:text-slate-200 underline self-center mr-auto"
           >
-            Shortlist Candidate
+            {showNoteInput ? 'Hide note' : '+ Add reviewer note'}
           </button>
-        )}
-        {status === 'shortlisted' && !effectiveRepoScore && (
-          <span className="text-xs text-amber-400 font-medium self-center">
-            Awaiting Repo / Project Verification to unlock Interview
-          </span>
-        )}
+
+          {status !== 'rejected' && (
+            <button
+              onClick={() => onUpdateStatus && onUpdateStatus(id, 'rejected')}
+              className="px-4 py-2 text-xs font-bold bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 rounded-lg transition"
+            >
+              {pending_human_review ? 'Confirm Reject' : 'Reject'}
+            </button>
+          )}
+
+          {status !== 'shortlisted' && (
+            <button
+              onClick={() => onUpdateStatus && onUpdateStatus(id, 'shortlisted')}
+              className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition"
+            >
+              {pending_human_review ? 'Confirm Shortlist' : 'Shortlist Candidate'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
+}
 }

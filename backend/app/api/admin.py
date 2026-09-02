@@ -86,3 +86,16 @@ async def admin_ai_key_status(
         "gemini": gemini_status,
     }
 
+
+@router.post("/api/admin/retention/purge")
+async def admin_retention_purge(
+    days: int = 30,
+    admin: User = Depends(get_current_admin),
+):
+    """Admin-gated endpoint to trigger proctoring data retention purge."""
+    from ..services.retention import purge_expired_proctoring_data
+    with Session(engine) as session:
+        result = purge_expired_proctoring_data(session, retention_days=days)
+        return {"success": True, **result}
+
+

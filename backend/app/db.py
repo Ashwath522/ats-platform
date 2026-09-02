@@ -195,8 +195,39 @@ class Application(SQLModel, table=True):
     interview_recommendation: Optional[str] = None
     interview_evidence_url: Optional[str] = None
     interview_transcript_json: Optional[str] = None
+    pending_human_review: bool = Field(default=False)
+    human_reviewer: Optional[str] = None
+    human_decision_notes: Optional[str] = None
 
 
+class DecisionAuditLog(SQLModel, table=True):
+    """
+    Append-only audit log for all AI scoring, evaluation, and hiring decisions.
+    Required for compliance with automated employment decision regulations
+    (e.g., NYC LL144, EU AI Act high-risk classification).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: Optional[int] = Field(default=None, foreign_key="application.id", index=True)
+    candidate_id: Optional[int] = Field(default=None, foreign_key="candidateuser.id", index=True)
+    job_id: Optional[int] = Field(default=None, foreign_key="job.id", index=True)
+    event_type: str = Field(index=True)  # ats_score | project_score | interview_evaluation | recruiter_confirmation | candidate_deletion_request | data_retention_purge
+    ats_score: Optional[int] = None
+    baseline_ats_score: Optional[int] = None
+    semantic_similarity: Optional[float] = None
+    keyword_coverage: Optional[float] = None
+    matched_skills_json: str = "[]"
+    missing_skills_json: str = "[]"
+    project_score: Optional[float] = None
+    final_score: Optional[float] = None
+    risk_score: Optional[int] = None
+    risk_level: Optional[str] = None
+    llm_providers_consulted: Optional[str] = None  # JSON array e.g. ["groq", "gemini"]
+    raw_verdicts_json: Optional[str] = None
+    final_recommendation: Optional[str] = None
+    human_reviewer: Optional[str] = None
+    human_action: Optional[str] = None  # confirmed_shortlist | confirmed_reject | overridden | deleted
+    human_confirmed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class DiscoveredSkill(SQLModel, table=True):
@@ -246,8 +277,6 @@ def _migrate_sqlite():
                 conn.execute(text("ALTER TABLE user ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
     if "application" in inspector.get_table_names():
         app_columns = {column["name"] for column in inspector.get_columns("application")}
-        if "project_description" not in app_columns: # reusing this block to check candidate profile too
-            pass # We will check candidateprofile separately
         
         new_cols = [
             ("baseline_ats_score", "INTEGER"),
@@ -273,7 +302,10 @@ def _migrate_sqlite():
             ("interview_eval_score", "INTEGER"),
             ("interview_recommendation", "VARCHAR"),
             ("interview_evidence_url", "VARCHAR"),
-            ("interview_transcript_json", "VARCHAR")
+            ("interview_transcript_json", "VARCHAR"),
+            ("pending_human_review", "BOOLEAN DEFAULT 0"),
+            ("human_reviewer", "VARCHAR"),
+            ("human_decision_notes", "VARCHAR"),
         ]
         with engine.begin() as conn:
             for col_name, col_type in new_cols:
@@ -291,6 +323,7 @@ def _migrate_sqlite():
             for col_name, col_type in cp_new_cols:
                 if col_name not in cp_columns:
                     conn.execute(text(f"ALTER TABLE candidateprofile ADD COLUMN {col_name} {col_type}"))
+
 
 
 def get_session():

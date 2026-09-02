@@ -74,3 +74,93 @@ app.include_router(admin.router)
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "ats-platform-backend"}
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Production health check:
+    1. Verifies database read/write connectivity.
+    2. Reports reachability status for optional AI providers (Groq, Gemini, Ollama).
+    Returns HTTP 200 on healthy database, HTTP 503 if database connectivity fails.
+    """
+    import datetime
+    import httpx
+    from sqlmodel import text, Session
+    from .db import engine, utc_now
+    from .services.groq_client import GroqClient
+    from .services.gemini_client import GeminiClient
+
+    db_healthy = False
+    db_error = None
+    try:
+        with Session(engine) as session:
+            session.exec(text("SELECT 1")).one()
+            db_healthy = True
+    except Exception as exc:
+        db_error = str(exc)
+
+    # Check AI Providers
+    ai_status = {}
+
+    # Groq
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if groq_key:
+        try:
+            gc = GroqClient(groq_key)
+            test_res = gc.test_connection()
+            ai_status["groq"] = {
+                "configured": True,
+                "reachable": test_res.get("success", False) if isinstance(test_res, dict) else bool(test_res),
+                "model": test_res.get("model") if isinstance(test_res, dict) else None,
+            }
+        except Exception as e:
+            ai_status["groq"] = {"configured": True, "reachable": False, "error": str(e)}
+    else:
+        ai_status["groq"] = {"configured": False, "reachable": False}
+
+    # Gemini
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if gemini_key:
+        try:
+            gmc = GeminiClient(gemini_key)
+            test_res = gmc.test_connection()
+            ai_status["gemini"] = {
+                "configured": True,
+                "reachable": test_res.get("success", False) if isinstance(test_res, dict) else bool(test_res),
+                "model": test_res.get("model") if isinstance(test_res, dict) else None,
+            }
+        except Exception as e:
+            ai_status["gemini"] = {"configured": True, "reachable": False, "error": str(e)}
+    else:
+        ai_status["gemini"] = {"configured": False, "reachable": False}
+
+    # Ollama
+    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        res = httpx.get(f"{ollama_url}/api/tags", timeout=0.8)
+        ai_status["ollama"] = {
+            "configured": True,
+            "reachable": res.status_code == 200,
+            "base_url": ollama_url,
+        }
+    except Exception:
+        ai_status["ollama"] = {
+            "configured": bool(os.environ.get("OLLAMA_BASE_URL")),
+            "reachable": False,
+            "base_url": ollama_url,
+        }
+
+    status_code = 200 if db_healthy else 503
+    payload = {
+        "status": "ok" if db_healthy else "degraded",
+        "timestamp": utc_now().isoformat() + "Z",
+        "database": {
+            "status": "connected" if db_healthy else "error",
+            "type": "sqlite",
+            "error": db_error,
+        },
+        "ai_providers": ai_status,
+    }
+    return JSONResponse(status_code=status_code, content=payload)
+

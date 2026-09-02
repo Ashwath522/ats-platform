@@ -57,9 +57,56 @@ export default function ApplicationsPage() {
     }
   }
 
+  const [explainApp, setExplainApp] = useState(null)
+  const [explainData, setExplainData] = useState(null)
+  const [explainLoading, setExplainLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
+  const [deleteMsg, setDeleteMsg] = useState(null)
+
+  const handleOpenExplainability = async (app) => {
+    setExplainApp(app)
+    setExplainLoading(true)
+    try {
+      const res = await api(`/api/candidate/jobs/applications/${app.application_id}/explainability`)
+      if (res.ok) {
+        const data = await res.json()
+        setExplainData(data)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setExplainLoading(false)
+    }
+  }
+
+  const handleRequestDataDeletion = async (appId) => {
+    if (!window.confirm('Are you sure you want to request deletion of your recorded interview video and transcript? Your evaluation score and audit record will be preserved.')) {
+      return
+    }
+    setDeletingId(appId)
+    try {
+      const res = await api(`/api/candidate/applications/${appId}/request-data-deletion`, {
+        method: 'POST'
+      })
+      if (res.ok) {
+        setDeleteMsg('Interview data purged successfully.')
+        loadApplications()
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="panel">
       <h2>My Applications</h2>
+      {deleteMsg && (
+        <div className="success-msg" style={{ marginBottom: 16, fontSize: 13 }}>
+          {deleteMsg}
+        </div>
+      )}
       {loading ? (
         <div className="empty-state">Loading...</div>
       ) : applications.length === 0 ? (
@@ -91,6 +138,13 @@ export default function ApplicationsPage() {
                     <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
                       Applied: {new Date(app.applied_at).toLocaleDateString()}
                     </div>
+                    <button
+                      onClick={() => handleOpenExplainability(app)}
+                      className="btn"
+                      style={{ marginTop: 6, fontSize: 11, padding: '4px 8px', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary-color)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+                    >
+                      💡 Why this score?
+                    </button>
                   </div>
                 </div>
 
@@ -133,7 +187,7 @@ export default function ApplicationsPage() {
                     )}
                   </div>
 
-                  <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {gate.allowed ? (
                       <button
                         onClick={() => setActiveInterviewApp(app)}
@@ -143,9 +197,20 @@ export default function ApplicationsPage() {
                         🎥 Take AI Video Interview
                       </button>
                     ) : app.interview_status === 'completed' ? (
-                      <span className="chip" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-                        ✓ AI Interview Completed
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="chip" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                          ✓ AI Interview Completed
+                        </span>
+                        <button
+                          onClick={() => handleRequestDataDeletion(app.application_id)}
+                          disabled={deletingId === app.application_id}
+                          className="btn"
+                          style={{ fontSize: 11, padding: '4px 8px', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)', background: 'transparent' }}
+                          title="Purge recorded video and transcript data"
+                        >
+                          {deletingId === app.application_id ? 'Purging...' : '🗑️ Purge Video'}
+                        </button>
+                      </div>
                     ) : (
                       <span style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic' }}>
                         🔒 {gate.reason}
@@ -156,6 +221,82 @@ export default function ApplicationsPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Why This Score? Explainability Modal */}
+      {explainApp && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--bg-card, #1e293b)', border: '1px solid var(--border, #334155)', borderRadius: 16, maxWidth: 650, width: '100%', padding: 24, maxHeight: '90vh', overflowY: 'auto', color: 'var(--text, #f8fafc)', position: 'relative' }}>
+            <button
+              onClick={() => { setExplainApp(null); setExplainData(null); }}
+              style={{ position: 'absolute', top: 16, right: 16, background: '#334155', border: 'none', color: '#fff', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer' }}
+            >
+              ✕
+            </button>
+
+            <h3 style={{ margin: '0 0 6px 0', fontSize: 20 }}>Score Breakdown & Explainability</h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: 12, color: '#94a3b8' }}>Position: <strong>{explainApp.job_title}</strong></p>
+
+            {explainLoading ? (
+              <div style={{ textAlign: 'center', padding: '30px 0', color: '#94a3b8' }}>Loading score explainability...</div>
+            ) : explainData ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 13 }}>
+                <div style={{ padding: 12, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 8 }}>
+                  <div style={{ fontWeight: 'bold', color: '#60a5fa', marginBottom: 4 }}>
+                    {explainData.summary_verdict} ({explainData.ats_score}/100 Match)
+                  </div>
+                  <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.4 }}>{explainData.summary_text}</p>
+                </div>
+
+                <div>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: 14 }}>Evaluated Signals</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {explainData.components.map((c, i) => (
+                      <div key={i} style={{ padding: 10, background: 'rgba(15, 23, 42, 0.5)', border: '1px solid #334155', borderRadius: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                          <strong>{c.name}</strong>
+                          <span style={{ fontWeight: 'bold', color: c.score !== null ? '#38bdf8' : '#64748b' }}>
+                            {c.score !== null ? `${c.score}%` : 'Pending'}
+                          </span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 12, color: '#94a3b8' }}>{c.details}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: 14 }}>Skills Matched</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {explainData.matched_skills.length > 0 ? explainData.matched_skills.map((s, i) => (
+                      <span key={i} className="chip matched" style={{ fontSize: 11 }}>✓ {s}</span>
+                    )) : <span style={{ color: '#64748b', fontSize: 12 }}>No direct skill matches identified yet</span>}
+                  </div>
+                </div>
+
+                {explainData.missing_skills.length > 0 && (
+                  <div>
+                    <h4 style={{ margin: '0 0 6px 0', fontSize: 14 }}>Missing Keywords / Target Skills</h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {explainData.missing_skills.map((s, i) => (
+                        <span key={i} className="chip missing" style={{ fontSize: 11 }}>+ {s}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: 14 }}>How to Strengthen Your Application</h4>
+                  <ul style={{ margin: 0, paddingLeft: 18, color: '#cbd5e1' }}>
+                    {explainData.recommendations.map((rec, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>{rec}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
 
