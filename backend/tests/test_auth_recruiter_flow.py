@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.api import auth as auth_api
 from app.auth import create_access_token, decode_token_payload, hash_password
-from app.db import EmailToken, User, engine, init_db
+from app.db import EmailToken, User, engine, init_db, utc_now
 from app.main import app
 
 
@@ -119,7 +119,7 @@ def test_signup_otp_validation_and_expiry(monkeypatch):
             email=expired_email,
             purpose="signup_otp",
             token_hash=auth_api._hash_token("123456"),
-            expires_at=datetime.utcnow() - timedelta(minutes=1),
+            expires_at=utc_now() - timedelta(minutes=1),
         ))
         session.commit()
 

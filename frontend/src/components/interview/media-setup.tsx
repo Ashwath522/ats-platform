@@ -31,7 +31,7 @@ export function MediaSetup({ onReady, onComplete }: { onReady?: () => void; onCo
         })
         videoRef.current.srcObject = stream
       } catch {
-        setErrors((prev) => [...prev, 'Failed to access camera stream'])
+        setErrors((prev: string[]) => [...prev, 'Failed to access camera stream'])
       }
     }
 
@@ -115,7 +115,7 @@ export function MediaSetup({ onReady, onComplete }: { onReady?: () => void; onCo
             <div className="rounded-lg bg-warn/10 border border-warn p-4">
               <p className="text-sm font-medium text-warn mb-2">Setup Issues</p>
               <ul className="space-y-1">
-                {errors.map((error, i) => (
+                {errors.map((error: string, i: number) => (
                   <li key={i} className="text-sm text-warn">
                     • {error}
                   </li>

@@ -21,7 +21,12 @@ def _serialize_user(user: User) -> dict:
 
 
 def _dev_mode_enabled() -> bool:
-    return os.environ.get("DEV_MODE", "").lower() in {"1", "true", "yes"}
+    return (
+        os.environ.get("DEV_MODE", "").lower() in {"1", "true", "yes"}
+        or os.environ.get("DEBUG", "").lower() in {"1", "true", "yes"}
+        or os.environ.get("ENV", "").lower() in {"development", "local", "test"}
+    )
+
 
 
 def _hash_token(token: str) -> str:
