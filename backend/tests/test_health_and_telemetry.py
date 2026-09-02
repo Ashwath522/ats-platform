@@ -58,3 +58,20 @@ def test_graceful_degradation_when_ai_fails(monkeypatch):
     assert result["project_score"] > 0
     assert result["final_score"] > 0
     assert "fallback" in result["project_summary"].lower() or "keyword" in result["project_summary"].lower()
+
+
+def test_offline_project_and_repo_evaluation(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:99999")  # Non-existent port to force offline
+
+    from app.services.scorer import evaluate_profile_project, evaluate_repo_against_jd
+
+    profile_eval = evaluate_profile_project("Fullstack app description", ["import fastapi\ndef main(): pass"])
+    assert profile_eval["project_general_score"] > 0
+    assert "Deterministic" in profile_eval["project_summary"] or "deterministic" in profile_eval["project_summary"]
+
+    repo_eval = evaluate_repo_against_jd("Built React & FastAPI web application with SQLite database", "Need React and FastAPI backend engineer")
+    assert repo_eval["repo_match_score"] > 0
+    assert "Deterministic" in repo_eval["repo_match_reasoning"] or "deterministic" in repo_eval["repo_match_reasoning"]
+

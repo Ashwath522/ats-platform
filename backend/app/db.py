@@ -19,8 +19,19 @@ def utc_now() -> datetime:
     datetime, which breaks comparisons against the naive ones already stored."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-DB_PATH = os.path.join(DATA_DIR, "ats.db")
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(DATABASE_URL, echo=False)
+else:
+    DB_PATH = os.path.join(DATA_DIR, "ats.db")
+    engine = create_engine(
+        f"sqlite:///{DB_PATH}",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+
 
 
 class Company(SQLModel, table=True):
@@ -248,7 +259,9 @@ class Suggestion(SQLModel, table=True):
 
 def init_db():
     SQLModel.metadata.create_all(engine)
-    _migrate_sqlite()
+    if engine.url.drivername.startswith("sqlite"):
+        _migrate_sqlite()
+
 
 
 def _migrate_sqlite():

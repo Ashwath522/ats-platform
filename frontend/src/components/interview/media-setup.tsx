@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { CheckIcon, AlertCircleIcon, CameraIcon } from 'lucide-react'
 
-export function MediaSetup({ onReady }: { onReady: () => void }) {
+export function MediaSetup({ onReady, onComplete }: { onReady?: () => void; onComplete?: () => void }) {
+  const handleReady = onComplete || onReady || (() => {})
   const videoRef = useRef<HTMLVideoElement>(null)
   const [cameraReady, setCameraReady] = useState(false)
   const [micReady, setMicReady] = useState(false)
@@ -133,7 +134,7 @@ export function MediaSetup({ onReady }: { onReady: () => void }) {
               {checking ? 'Checking...' : 'Recheck'}
             </Button>
             <Button
-              onClick={onReady}
+              onClick={handleReady}
               disabled={!isReady}
               className="flex-1"
             >
@@ -145,3 +146,6 @@ export function MediaSetup({ onReady }: { onReady: () => void }) {
     </div>
   )
 }
+
+export default MediaSetup
+

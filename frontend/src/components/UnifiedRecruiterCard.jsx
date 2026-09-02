@@ -269,4 +269,3 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
     </div>
   )
 }
-}

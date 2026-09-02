@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from .db import init_db
+from .db import init_db, engine
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, admin
@@ -23,6 +23,28 @@ logger = logging.getLogger("ats-platform")
 async def lifespan(app: FastAPI):
     init_db()
     auth.ensure_admin_user()
+
+    # Log database configuration
+    db_type = "PostgreSQL" if "postgres" in engine.url.drivername else "SQLite"
+    logger.info("[STARTUP] Database: %s (%s)", db_type, engine.url.database or "local")
+
+    # One-line runtime LLM operational mode log
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2")
+
+    from .services.deep_analysis import _ollama_is_reachable
+
+    if groq_key:
+        logger.info("[STARTUP] LLM Mode: Groq free tier active (GROQ_API_KEY set)")
+    elif gemini_key:
+        logger.info("[STARTUP] LLM Mode: Google Gemini free tier active (GEMINI_API_KEY set)")
+    elif _ollama_is_reachable():
+        logger.info("[STARTUP] LLM Mode: Running with local Ollama — zero-cost operation, no external LLM calls (Model: %s @ %s)", ollama_model, ollama_url)
+    else:
+        logger.info("[STARTUP] LLM Mode: Deterministic-only scoring active — no cloud API keys or local Ollama detected")
+
     yield
 
 
@@ -157,7 +179,7 @@ async def health_check():
         "timestamp": utc_now().isoformat() + "Z",
         "database": {
             "status": "connected" if db_healthy else "error",
-            "type": "sqlite",
+            "type": "postgres" if "postgres" in engine.url.drivername else "sqlite",
             "error": db_error,
         },
         "ai_providers": ai_status,
