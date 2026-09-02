@@ -5,17 +5,28 @@ export function useRollingVideoBuffer(
   options?: { secondsToBuffer?: number; maxClips?: number }
 ) {
   const maxClips = typeof videoElementOrMax === 'number' ? videoElementOrMax : (options?.maxClips ?? 5)
+  const secondsToBuffer = options?.secondsToBuffer ?? 25
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const clipsRef = useRef<Blob[]>([])
 
   const startBuffer = useCallback((stream: MediaStream) => {
     if (typeof MediaRecorder === 'undefined') return
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try {
+        recorderRef.current.stop()
+      } catch {
+        // ignore
+      }
+    }
     try {
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' })
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           chunksRef.current.push(e.data)
+          if (chunksRef.current.length > secondsToBuffer) {
+            chunksRef.current.shift()
+          }
         }
       }
       recorder.start(1000)
@@ -26,6 +37,9 @@ export function useRollingVideoBuffer(
         recorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
             chunksRef.current.push(e.data)
+            if (chunksRef.current.length > secondsToBuffer) {
+              chunksRef.current.shift()
+            }
           }
         }
         recorder.start(1000)
@@ -34,7 +48,18 @@ export function useRollingVideoBuffer(
         console.warn('Rolling video buffer unavailable:', err)
       }
     }
-  }, [])
+  }, [secondsToBuffer])
+
+  // Automatically start buffering if a video element with a media stream is passed
+  useEffect(() => {
+    if (videoElementOrMax && typeof videoElementOrMax !== 'number') {
+      if ('srcObject' in videoElementOrMax && videoElementOrMax.srcObject instanceof MediaStream) {
+        startBuffer(videoElementOrMax.srcObject)
+      } else if (videoElementOrMax instanceof MediaStream) {
+        startBuffer(videoElementOrMax)
+      }
+    }
+  }, [videoElementOrMax, startBuffer])
 
   const captureClip = useCallback(() => {
     if (chunksRef.current.length > 0) {
@@ -49,9 +74,14 @@ export function useRollingVideoBuffer(
     return new Blob()
   }, [maxClips])
 
-  const getClip = useCallback((_durationSeconds?: number): Blob => {
-    return captureClip()
-  }, [captureClip])
+  const getClip = useCallback((durationSeconds?: number): Blob => {
+    if (chunksRef.current.length === 0) return new Blob()
+    const count = typeof durationSeconds === 'number' && durationSeconds > 0
+      ? durationSeconds
+      : chunksRef.current.length
+    const selectedChunks = chunksRef.current.slice(-count)
+    return new Blob(selectedChunks, { type: 'video/webm' })
+  }, [])
 
   const takeSnapshot = useCallback(async (): Promise<Blob | null> => {
     if (videoElementOrMax && typeof videoElementOrMax !== 'number' && 'tagName' in videoElementOrMax) {
