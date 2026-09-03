@@ -54,7 +54,10 @@ class GroqClient:
 
     def __init__(self, api_key: str, model: Optional[str] = None):
         # Keep the API key for checks later.
-        self.api_key = (api_key or "")
+        raw_key = (api_key or "").strip()
+        if "," in raw_key:
+            raw_key = raw_key.split(",")[0].strip()
+        self.api_key = raw_key
         self._model = (model or GROQ_MODEL or "").strip() or None
 
         # Try to import the real SDK, but never raise on import failure.

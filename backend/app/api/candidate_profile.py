@@ -215,11 +215,27 @@ async def upload_candidate_project(
             from ..services.project_parsers import parse_project_file
             content = parse_project_file(tmp_path)
 
-            # 3. Generate summary using GeminiClient
-            from ..services.gemini_client import GeminiClient
-            gemini_key = os.environ.get("GEMINI_API_KEY", "")
-            g_client = GeminiClient(gemini_key)
-            summary = g_client.generate_project_summary(content, description)
+            # 3. Generate summary using Groq -> Gemini -> fallback
+            summary = ""
+            groq_raw = os.environ.get("GROQ_API_KEY", "")
+            if groq_raw:
+                try:
+                    from groq import Groq
+                    gc = Groq(api_key=groq_raw.split(",")[0].strip(), timeout=10.0)
+                    resp = gc.chat.completions.create(
+                        model=os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b"),
+                        messages=[{"role": "user", "content": f"You are a senior engineering reviewer. Summarize this candidate project in 2-3 paragraphs. Highlight domain, technologies, architecture, and complexity.\n\nDescription: {description}\n\nContent:\n{content[:6000]}"}],
+                        max_tokens=500
+                    )
+                    summary = (resp.choices[0].message.content or "").strip()
+                except Exception as g_err:
+                    logger.warning(f"Groq summary generation failed: {g_err}")
+
+            if not summary:
+                from ..services.gemini_client import GeminiClient
+                gemini_key = os.environ.get("GEMINI_API_KEY", "").split(",")[0].strip()
+                g_client = GeminiClient(gemini_key)
+                summary = g_client.generate_project_summary(content, description)
 
             # 4. Store on candidate profile
             profile.project_description = description

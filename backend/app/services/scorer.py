@@ -121,20 +121,28 @@ def score_student_job(student: dict, project_texts: list, job: dict):
     groq_key = os.environ.get("GROQ_API_KEY")
     groq_result = None
     if groq_key:
-        try:
-            gc = GroqClient(groq_key)
-            groq_result = gc.analyze_project(student, combined, job)
-        except Exception as e:
-            logger.error(f"[SCORER] Groq exception: {e}")
+        groq_keys = [k.strip() for k in groq_key.replace("\n", ",").split(",") if k.strip()]
+        for k in groq_keys:
+            try:
+                gc = GroqClient(k)
+                groq_result = gc.analyze_project(student, combined, job)
+                if groq_result:
+                    break
+            except Exception as e:
+                logger.error(f"[SCORER] Groq exception: {e}")
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
     gemini_result = None
-    if gemini_key:
-        try:
-            gmc = GeminiClient(gemini_key)
-            gemini_result = gmc.analyze_project(student, combined, job)
-        except Exception as e:
-            logger.error(f"[SCORER] Gemini exception: {e}")
+    if not groq_result and gemini_key:
+        gemini_keys = [k.strip() for k in gemini_key.replace("\n", ",").split(",") if k.strip()]
+        for k in gemini_keys:
+            try:
+                gmc = GeminiClient(k)
+                gemini_result = gmc.analyze_project(student, combined, job)
+                if gemini_result:
+                    break
+            except Exception as e:
+                logger.error(f"[SCORER] Gemini exception: {e}")
 
     groq_words = count_words(groq_result) if groq_result else 0
     gemini_words = count_words(gemini_result) if gemini_result else 0
@@ -169,8 +177,12 @@ def score_student_job(student: dict, project_texts: list, job: dict):
     conclusion = ""
     if groq_result or gemini_result:
         conclusion_client = None
-        if groq_key: conclusion_client = GroqClient(groq_key)
-        elif gemini_key: conclusion_client = GeminiClient(gemini_key)
+        if groq_key:
+            first_groq = groq_keys[0] if ('groq_keys' in locals() and groq_keys) else groq_key
+            conclusion_client = GroqClient(first_groq)
+        elif gemini_key:
+            first_gemini = gemini_keys[0] if ('gemini_keys' in locals() and gemini_keys) else gemini_key
+            conclusion_client = GeminiClient(first_gemini)
         if conclusion_client:
             conclusion = _generate_conclusion(gemini_result, groq_result, conclusion_client)
 
@@ -233,8 +245,13 @@ Return ONLY a JSON object with this exact structure:
   "risk_notes": "<string: mention any thin evidence, missing files, or claim vs proof mismatches>"
 }}
 """
-    groq_key = os.environ.get("GROQ_API_KEY")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    groq_raw = os.environ.get("GROQ_API_KEY", "")
+    groq_key = groq_raw.split(",")[0].strip() if groq_raw else None
+    groq_model = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
+
+    gemini_raw = os.environ.get("GEMINI_API_KEY", "")
+    gemini_key = gemini_raw.split(",")[0].strip() if gemini_raw else None
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
     
     import json
     def try_parse(txt):
@@ -250,9 +267,9 @@ Return ONLY a JSON object with this exact structure:
     if groq_key:
         try:
             from groq import Groq
-            gc = Groq(api_key=groq_key, timeout=15.0)
+            gc = Groq(api_key=groq_key, timeout=10.0)
             resp = gc.chat.completions.create(
-                model="llama3-70b-8192",
+                model=groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=500
@@ -266,8 +283,8 @@ Return ONLY a JSON object with this exact structure:
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = model.generate_content(prompt, request_options={"timeout": 15.0})
+            model = genai.GenerativeModel(gemini_model)
+            resp = model.generate_content(prompt, request_options={"timeout": 5.0})
             parsed = try_parse(resp.text)
             if parsed: return parsed
         except Exception as e:
@@ -319,8 +336,13 @@ Return ONLY a JSON object with this exact structure:
   "repo_match_reasoning": "<concise 2-3 sentence explanation of why it fits or does not fit>"
 }}
 """
-    groq_key = os.environ.get("GROQ_API_KEY")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    groq_raw = os.environ.get("GROQ_API_KEY", "")
+    groq_key = groq_raw.split(",")[0].strip() if groq_raw else None
+    groq_model = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
+
+    gemini_raw = os.environ.get("GEMINI_API_KEY", "")
+    gemini_key = gemini_raw.split(",")[0].strip() if gemini_raw else None
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
     
     import json
     def try_parse(txt):
@@ -336,9 +358,9 @@ Return ONLY a JSON object with this exact structure:
     if groq_key:
         try:
             from groq import Groq
-            gc = Groq(api_key=groq_key, timeout=15.0)
+            gc = Groq(api_key=groq_key, timeout=10.0)
             resp = gc.chat.completions.create(
-                model="llama3-70b-8192",
+                model=groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=500
@@ -352,8 +374,8 @@ Return ONLY a JSON object with this exact structure:
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = model.generate_content(prompt, request_options={"timeout": 15.0})
+            model = genai.GenerativeModel(gemini_model)
+            resp = model.generate_content(prompt, request_options={"timeout": 5.0})
             parsed = try_parse(resp.text)
             if parsed: return parsed
         except Exception as e:

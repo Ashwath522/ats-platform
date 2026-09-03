@@ -44,7 +44,10 @@ class GeminiClient:
     """
 
     def __init__(self, api_key: str, model: Optional[str] = None):
-        self.api_key = (api_key or "")
+        raw_key = (api_key or "").strip()
+        if "," in raw_key:
+            raw_key = raw_key.split(",")[0].strip()
+        self.api_key = raw_key
         self._model_name = (model or GEMINI_MODEL or "").strip() or None
         self._model = None  # the GenerativeModel, built lazily
 
@@ -487,7 +490,7 @@ Return ONLY valid JSON. No markdown. Start with {{ end with }}.
 
         try:
             if getattr(self, "_available", False) and self.api_key:
-                resp = self.model.generate_content(prompt)
+                resp = self.model.generate_content(prompt, request_options={"timeout": 5.0})
                 if resp and resp.text and resp.text.strip():
                     return resp.text.strip()
         except Exception as e:

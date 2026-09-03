@@ -29,100 +29,47 @@ def score_project(
 ) -> Dict[str, Any]:
     """
     Score a candidate's project portfolio against a job description.
-    Always returns a dictionary with project_score, final_score, and reasoning.
+    Delegates to the canonical score_student_job from scorer.py, guaranteeing
+    exact methodological consistency between candidate and recruiter scoring paths.
     Never raises an exception — uses deterministic fallback on any failure.
     """
     try:
+        from .scorer import score_student_job
+
         # 1. Resolve project text
         text_to_evaluate = project_text or getattr(application, "project_summary", "") or ""
         if not text_to_evaluate:
             text_to_evaluate = getattr(application, "project_fit", "") or "No project portfolio uploaded."
 
-        jd_text = getattr(job, "description", "") or ""
-
-        # 2. Keyword matching
-        try:
-            jd_kws = extract_keywords(jd_text)
-            proj_kws = extract_keywords(text_to_evaluate)
-            kw_match = match_keywords(proj_kws, jd_kws)
-            keyword_score = float(kw_match.get("score", 0.0))
-            matched_skills = kw_match.get("matched", [])
-            missing_skills = kw_match.get("missing", [])
-        except Exception as kw_err:
-            logger.warning(f"[PROJECT_SCORER] Keyword matching error: {kw_err}")
-            keyword_score = 50.0
-            matched_skills = []
-            missing_skills = []
-
-        # 3. Semantic similarity
-        try:
-            emb_model = EmbeddingModel.get()
-            proj_vec = emb_model.embed_text(text_to_evaluate[:4000])
-            jd_vec = emb_model.embed_text(jd_text[:4000])
-            semantic_score = round(cosine_similarity(proj_vec, jd_vec) * 100.0, 1)
-            semantic_score = max(0.0, min(100.0, semantic_score))
-        except Exception as sem_err:
-            logger.warning(f"[PROJECT_SCORER] Semantic similarity error: {sem_err}")
-            semantic_score = keyword_score
-
-        # 4. LLM reasoning (Gemini / Groq if configured, else fallback)
-        llm_score = None
-        reasoning = ""
-        method = "deterministic_fallback"
-
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        if gemini_key:
-            try:
-                from .gemini_client import GeminiClient
-                g_client = GeminiClient(gemini_key)
-                prompt = (
-                    f"Evaluate this candidate project against the job requirements.\n\n"
-                    f"Job Description:\n{jd_text[:3000]}\n\n"
-                    f"Candidate Project Summary & Code Excerpt:\n{text_to_evaluate[:4000]}\n\n"
-                    "Output a JSON object with keys: 'project_score' (integer 0-100), "
-                    "'reasoning' (string 2-3 sentences), 'skills_matched' (list), 'skills_missing' (list)."
-                )
-                if getattr(g_client, "_available", False) and g_client.api_key:
-                    resp = g_client.model.generate_content(prompt)
-                    if resp and resp.text:
-                        parsed = g_client._parse_json(resp.text)
-                        llm_score = float(parsed.get("project_score", 0))
-                        reasoning = parsed.get("reasoning", "")
-                        if parsed.get("skills_matched"):
-                            matched_skills = list(set(matched_skills + parsed["skills_matched"]))
-                        method = "gemini"
-            except Exception as llm_err:
-                logger.warning(f"[PROJECT_SCORER] Gemini scoring failed: {llm_err}")
-
-        # 5. Composite Project Score
-        if llm_score is not None and llm_score > 0:
-            # Blend LLM with keyword/semantic
-            project_score = round((0.50 * llm_score) + (0.30 * keyword_score) + (0.20 * semantic_score), 1)
-        else:
-            # Deterministic fallback path
-            project_score = round((0.60 * keyword_score) + (0.40 * semantic_score), 1)
-
-        if not reasoning:
-            reasoning = (
-                f"Automated evaluation based on keyword overlap ({keyword_score}%) and "
-                f"semantic alignment ({semantic_score}%). Matched: {', '.join(matched_skills[:5]) or 'General fit'}."
-            )
-
-        project_score = max(0.0, min(100.0, project_score))
-
-        # 6. Composite final_score
+        jd_text = getattr(job, "description", "") or getattr(job, "full_jd_text", "") or ""
+        job_title = getattr(job, "title", "") or ""
+        branch = getattr(job, "branch", None)
         ats_score = float(getattr(application, "ats_score", 0) or 0)
-        final_score = round((REPO_WEIGHT_ATS * ats_score) + (REPO_WEIGHT_PROJECT * project_score), 1)
-        final_score = max(0.0, min(100.0, final_score))
+        candidate_name = f"Candidate_{getattr(application, 'candidate_id', 'Unknown')}"
+
+        student = {"name": candidate_name, "branch": branch, "ats_score": ats_score}
+        job_dict = {"job_title": job_title, "full_jd_text": jd_text, "description": jd_text}
+
+        # 2. Score using canonical pipeline (Groq -> Gemini -> local fallback)
+        res = score_student_job(student, [text_to_evaluate], job_dict)
+
+        reasoning = (
+            res.get("ai_recommendation")
+            or res.get("technical_analysis")
+            or res.get("project_summary")
+            or ""
+        )
+        if not reasoning:
+            reasoning = f"Evaluated via {res.get('api_used', 'fallback')}."
 
         return {
-            "project_score": project_score,
-            "final_score": final_score,
+            "project_score": res["project_score"],
+            "final_score": res["final_score"],
             "project_summary": text_to_evaluate,
             "reasoning": reasoning,
-            "skills_matched": matched_skills,
-            "skills_missing": missing_skills,
-            "method": method,
+            "skills_matched": res.get("skills_matched", []),
+            "skills_missing": res.get("skills_missing", []),
+            "method": res.get("api_used", "fallback"),
         }
 
     except Exception as fatal_err:
@@ -137,3 +84,4 @@ def score_project(
             "skills_missing": [],
             "method": "emergency_fallback",
         }
+

@@ -400,12 +400,13 @@ def _run_gemini_hybrid(resume_text: str, target_text: str, missing_skills: List[
         },
     }
     try:
+        api_key = os.environ.get("GEMINI_API_KEY", "").split(",")[0].strip()
         with trace_llm_call("gemini", GEMINI_MODEL, "hybrid_scoring") as trace:
             response = httpx.post(
                 url,
-                headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json=payload,
-                timeout=30,
+                timeout=10,
             )
             response.raise_for_status()
             data = response.json()
