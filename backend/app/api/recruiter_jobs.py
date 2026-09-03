@@ -557,3 +557,106 @@ async def update_application_status_direct(
 
         return {"status": "success", "new_status": app.status, "human_reviewer": recruiter}
 
+
+@router.post("/{job_id}/repo-verify")
+async def run_repo_verification_batch(
+    job_id: int,
+    slot_count: Optional[int] = None,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    """
+    Stage 2 Repo Verification Batch Endpoint:
+    Runs ONLY on the existing ATS shortlist (shortlist #1) for this job.
+    Scores each shortlisted candidate's project portfolio, computes final_score,
+    ranks them, caps at job slot count, persists candidate_status ('shortlisted' / 'not_selected'),
+    and returns the ranked shortlist #2 for recruiter UI.
+    """
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        # 1. Fetch shortlist #1: applicants with status == 'shortlisted'
+        shortlist_1_apps = session.exec(
+            select(Application)
+            .where(Application.job_id == job_id)
+            .where(Application.status == "shortlisted")
+        ).all()
+
+        if not shortlist_1_apps:
+            raise HTTPException(
+                status_code=400,
+                detail="No Stage 1 shortlisted applicants found for this job. Please run ATS shortlist first.",
+            )
+
+        from ..services.project_scorer import score_project
+        from ..services.audit import record_audit_event
+
+        evaluated_apps = []
+        for app in shortlist_1_apps:
+            profile = session.exec(
+                select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)
+            ).first()
+
+            project_text = app.project_summary or (profile.project_summary if profile else "") or (profile.project_description if profile else "") or ""
+            res = score_project(app, job, project_text)
+
+            app.project_score = res["project_score"]
+            app.final_score = res["final_score"]
+            app.repo_match_score = int(round(res["project_score"]))
+            app.repo_match_reasoning = res["reasoning"]
+            if res.get("project_summary"):
+                app.project_summary = res["project_summary"]
+
+            evaluated_apps.append((app, res))
+
+        # 2. Rank candidates by final_score descending
+        evaluated_apps.sort(key=lambda x: (x[0].final_score or 0, x[0].project_score or 0), reverse=True)
+
+        # 3. Cap at slot count
+        cap = slot_count if (slot_count is not None and slot_count > 0) else len(evaluated_apps)
+
+        ranked_results = []
+        for idx, (app, res) in enumerate(evaluated_apps):
+            if idx < cap:
+                app.candidate_status = "shortlisted"
+            else:
+                app.candidate_status = "not_selected"
+
+            session.add(app)
+            record_audit_event(
+                session=session,
+                event_type="repo_verify_batch",
+                application_id=app.id,
+                candidate_id=app.candidate_id,
+                job_id=job_id,
+                ats_score=app.ats_score,
+                project_score=app.project_score,
+                final_score=app.final_score,
+                human_reviewer=recruiter,
+                human_action=f"stage2_{app.candidate_status}",
+                final_recommendation=f"Rank #{idx+1} in Shortlist #2 (score: {app.final_score}). Status: {app.candidate_status}.",
+            )
+
+            ranked_results.append({
+                "rank": idx + 1,
+                "application_id": app.id,
+                "candidate_id": app.candidate_id,
+                "ats_score": app.ats_score,
+                "project_score": app.project_score,
+                "final_score": app.final_score,
+                "candidate_status": app.candidate_status,
+                "repo_match_score": app.repo_match_score,
+                "repo_match_reasoning": app.repo_match_reasoning,
+                "project_summary": app.project_summary,
+            })
+
+        session.commit()
+
+        return {
+            "job_id": job_id,
+            "total_evaluated": len(evaluated_apps),
+            "shortlist_count": min(cap, len(evaluated_apps)),
+            "shortlist": ranked_results,
+        }
+
+

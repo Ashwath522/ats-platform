@@ -467,3 +467,35 @@ Return ONLY valid JSON. No markdown. Start with {{ end with }}.
             "risk_notes": "Analysis failed",
             "content_quality": 0,
         }
+
+    def generate_project_summary(self, content: str, description: str = "") -> str:
+        """
+        Generate a concise technical summary of an engineering project portfolio or repo.
+        Falls back cleanly to local excerpt if LLM generation fails or is unconfigured.
+        """
+        if not content and not description:
+            return "No project documentation provided."
+
+        prompt = (
+            "You are a senior engineering technical reviewer. Summarize this candidate's project "
+            "portfolio concisely in 2-3 paragraphs. Highlight the core domain, technologies/frameworks used, "
+            "architecture, and engineering complexity.\n\n"
+            f"Candidate Description: {description}\n\n"
+            f"Project Code & Content Excerpt:\n{content[:12000]}\n\n"
+            "Summary:"
+        )
+
+        try:
+            if getattr(self, "_available", False) and self.api_key:
+                resp = self.model.generate_content(prompt)
+                if resp and resp.text and resp.text.strip():
+                    return resp.text.strip()
+        except Exception as e:
+            logger.warning(f"[GEMINI] generate_project_summary LLM failed: {e}")
+
+        # Deterministic fallback summary
+        desc_part = f"Description: {description.strip()}." if description.strip() else ""
+        content_snippet = " ".join((content or "").split()[:100])
+        snippet_part = f" Technical content highlights: {content_snippet}..." if content_snippet else ""
+        return (f"{desc_part}{snippet_part} (Evaluated via local extraction fallback)").strip()
+

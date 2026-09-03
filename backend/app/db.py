@@ -128,6 +128,8 @@ class CandidateProfile(SQLModel, table=True):
     project_description: Optional[str] = None
     project_summary: Optional[str] = None
     project_general_score: Optional[int] = None
+    project_score: Optional[float] = None
+    candidate_status: Optional[str] = "applied"  # applied | shortlisted | not_selected | interview | final_result
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Optional EEO self-identification — candidate-controlled, never exposed to recruiters
@@ -209,6 +211,7 @@ class Application(SQLModel, table=True):
     pending_human_review: bool = Field(default=False)
     human_reviewer: Optional[str] = None
     human_decision_notes: Optional[str] = None
+    candidate_status: Optional[str] = "applied"  # applied | shortlisted | not_selected | interview | final_result
 
 
 class DecisionAuditLog(SQLModel, table=True):
@@ -319,6 +322,7 @@ def _migrate_sqlite():
             ("pending_human_review", "BOOLEAN DEFAULT 0"),
             ("human_reviewer", "VARCHAR"),
             ("human_decision_notes", "VARCHAR"),
+            ("candidate_status", "VARCHAR DEFAULT 'applied'"),
         ]
         with engine.begin() as conn:
             for col_name, col_type in new_cols:
@@ -330,7 +334,9 @@ def _migrate_sqlite():
         cp_new_cols = [
             ("project_description", "VARCHAR"),
             ("project_summary", "VARCHAR"),
-            ("project_general_score", "INTEGER")
+            ("project_general_score", "INTEGER"),
+            ("project_score", "FLOAT"),
+            ("candidate_status", "VARCHAR DEFAULT 'applied'"),
         ]
         with engine.begin() as conn:
             for col_name, col_type in cp_new_cols:

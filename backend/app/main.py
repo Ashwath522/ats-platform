@@ -92,6 +92,15 @@ app.include_router(candidate_posts.router)
 app.include_router(recruiter_jobs.router)
 app.include_router(admin.router)
 
+# Aliases for candidate project-upload and simplified status without /profile prefix
+from .api.candidate_profile import upload_candidate_project, get_candidate_status
+from .api.recruiter_jobs import run_repo_verification_batch
+app.add_api_route("/candidate/project-upload", upload_candidate_project, methods=["POST"])
+app.add_api_route("/api/candidate/project-upload", upload_candidate_project, methods=["POST"])
+app.add_api_route("/candidate/status", get_candidate_status, methods=["GET"])
+app.add_api_route("/api/candidate/status", get_candidate_status, methods=["GET"])
+app.add_api_route("/recruiter/jobs/{job_id}/repo-verify", run_repo_verification_batch, methods=["POST"])
+
 
 @app.get("/")
 async def root():

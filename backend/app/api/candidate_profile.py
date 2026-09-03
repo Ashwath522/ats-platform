@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlmodel import Session, select
 
-from ..db import engine, CandidateUser, CandidateProfile, Resume, utc_now
+from ..db import engine, CandidateUser, CandidateProfile, Application, Resume, utc_now
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..utils.email_utils import send_welcome_email
@@ -186,3 +186,113 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume)
+
+
+@router.post("/project-upload")
+async def upload_candidate_project(
+    file: UploadFile = File(...),
+    description: str = Form(""),
+    candidate: str = Depends(get_current_candidate),
+):
+    """
+    Candidate project upload endpoint.
+    Accepts multipart: file (PDF, DOCX, ZIP, code, text) + description.
+    Parses file, generates technical summary with Gemini, updates CandidateProfile,
+    and ensures candidate_status is set to 'applied'.
+    """
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+
+        # 1. Save uploaded file to temp
+        suffix = os.path.splitext(file.filename or "")[1] or ".bin"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        try:
+            # 2. Parse file using project_parsers
+            from ..services.project_parsers import parse_project_file
+            content = parse_project_file(tmp_path)
+
+            # 3. Generate summary using GeminiClient
+            from ..services.gemini_client import GeminiClient
+            gemini_key = os.environ.get("GEMINI_API_KEY", "")
+            g_client = GeminiClient(gemini_key)
+            summary = g_client.generate_project_summary(content, description)
+
+            # 4. Store on candidate profile
+            profile.project_description = description
+            profile.project_summary = summary
+            profile.candidate_status = "applied"
+            profile.updated_at = utc_now()
+            session.add(profile)
+
+            # 5. Set candidate_status = applied on active applications
+            apps = session.exec(select(Application).where(Application.candidate_id == user.id)).all()
+            for app in apps:
+                if not app.candidate_status or app.candidate_status == "applied":
+                    app.candidate_status = "applied"
+                if not app.project_summary:
+                    app.project_summary = summary
+                session.add(app)
+
+            session.commit()
+            session.refresh(profile)
+
+            # 6. Audit event
+            from ..services.audit import record_audit_event
+            record_audit_event(
+                session=session,
+                event_type="candidate_project_upload",
+                candidate_id=user.id,
+                final_recommendation=f"Candidate uploaded project portfolio file {file.filename}: {description[:100]}",
+            )
+
+            return {
+                "message": "Project uploaded successfully",
+                "filename": file.filename,
+                "project_summary": summary,
+                "candidate_status": "applied",
+            }
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+
+@router.get("/status")
+async def get_candidate_status(
+    candidate: str = Depends(get_current_candidate),
+):
+    """
+    Candidate simplified status endpoint.
+    Returns ONLY the simplified enum (applied, shortlisted, not_selected, interview, final_result).
+    Never returns numbers, scores, logs, analysis text, or 'ATS' / 'verification' terminology.
+    """
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        app = session.exec(
+            select(Application)
+            .where(Application.candidate_id == user.id)
+            .order_by(Application.applied_at.desc())
+        ).first()
+
+        status = "applied"
+        if app and app.candidate_status:
+            status = app.candidate_status
+        else:
+            profile = session.exec(
+                select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)
+            ).first()
+            if profile and profile.candidate_status:
+                status = profile.candidate_status
+
+        allowed = {"applied", "shortlisted", "not_selected", "interview", "final_result"}
+        if status not in allowed:
+            status = "applied"
+
+        return {"status": status}
+
