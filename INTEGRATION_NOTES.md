@@ -57,3 +57,14 @@
   - `npx tsc --noEmit`: 0 errors.
   - `npx vitest run`: 16 passed (100% passing).
   - `npm run build`: Production build succeeded.
+
+## 6. Python Environment Setup
+- **Working Python Version**: Python 3.11.15 (macOS arm64).
+- **Environment Creation**: Created isolated environment via existing conda installation:
+  ```bash
+  conda create -n ats-backend python=3.11 -y
+  /Users/ashwathm/miniconda3/envs/ats-backend/bin/pip install --upgrade pip
+  /Users/ashwathm/miniconda3/envs/ats-backend/bin/pip install -r backend/requirements.txt
+  ```
+- **Rationale**: Python 3.14 lacks prebuilt wheels for C-extensions such as `PyMuPDF` (mupdf) on macOS arm64, resulting in clang compilation failures in zlib. Python 3.11 ships prebuilt wheels for all dependencies (`PyMuPDF==1.24.5`, `torch`, `sentence-transformers`, `spacy`, `sqlmodel`, `fastapi`, `uvicorn`), ensuring clean and fast installation with zero compilation issues.
+

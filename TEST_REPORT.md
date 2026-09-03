@@ -271,3 +271,26 @@ The full existing test suites were executed to verify zero collateral regression
 ## QA Sign-Off
 
 The entire hiring pipeline—from candidate resume ATS scoring, project upload & parsing across multiple formats, database summary persistence with strict candidate leak prevention, two-stage recruiter shortlisting with verified mathematics, batch interview scheduling in chunks of 5 with email delivery verification, through to final shortlist evaluation and simplified candidate status reporting—has been proved end-to-end with zero regressions.
+
+---
+
+## Live HTTP Server Test Flow (Steps 0–12 Autonomous Run)
+
+Executed live against `http://localhost:8000` on Python 3.11.15 environment via `backend/tests/run_live_http_flow.py`:
+
+| Step | Scope / Action | Real Request / Response Evidence | Verdict |
+|---|---|---|---|
+| **0** | Test Project Zip & Resume Generation | Created `/tmp/testproj/test_project.zip` (882 bytes) containing FastAPI order-processing microservice and `/tmp/testproj/test_resume.pdf` (1842 bytes). | **PASS** |
+| **1** | Candidate Register & Login | `POST /api/candidate/auth/register` $\implies$ 200 OK<br>`POST /api/candidate/auth/login` $\implies$ 200 OK<br>Captured real JWT token: `eyJhbGciOiJIUzI1NiIsInR5cCI6Ik...` | **PASS** |
+| **2** | Candidate Resume Upload | `POST /api/candidate/profile/resume` $\implies$ 200 OK<br>Resume parsed and linked to profile: `resume.id = 1`, `filename = "test_resume.pdf"`. | **PASS** |
+| **3** | Recruiter Register, Admin Approval, Login & Post Job | `POST /api/recruiter/auth/register` $\implies$ 403 Forbidden (*"Recruiter accounts require admin approval"* confirmed).<br>`POST /api/recruiter-requests` $\implies$ 200 OK.<br>`POST /api/admin/recruiter-requests/{id}/approve` $\implies$ 200 OK with temporary password.<br>`POST /api/recruiter/auth/login` $\implies$ 200 OK.<br>`POST /api/recruiter/jobs` $\implies$ 200 OK (Created Job ID 12: *"Senior Distributed Systems Engineer - Order Processing"*). | **PASS** |
+| **4** | Candidate Applies to Job | `POST /api/candidate/jobs/12/apply` $\implies$ 200 OK<br>Captured `application_id: 38`, `ats_score: 88`. Matched skills: Docker, FastAPI, Microservices, PostgreSQL, Python, Redis. | **PASS** |
+| **5** | Candidate Uploads Project Zip | `POST /api/candidate/profile/project-upload` $\implies$ 200 OK (`filename: "test_project.zip"`). Confirmed `project_summary` is NOT leaked in candidate response. | **PASS** |
+| **6** | Project Summary DB Persistence Check | Direct SQLite query (`CandidateProfile.project_summary`) confirms non-empty summary (>200 chars) generated and mentions FastAPI, Docker, order processing, and PostgreSQL. | **PASS** |
+| **7** | JD-vs-Summary Project Matching | `POST /api/candidate/score-project` $\implies$ 200 OK.<br>Captured `project_score: 35.0`, `final_score: 56.2`, `priority_level: "Medium"`. | **PASS** |
+| **8** | Recruiter View Score Consistency | `GET /api/recruiter/jobs/12/applicants` $\implies$ 200 OK.<br>Confirmed `ats_score: 88`, `project_score: 35.0`, `final_score: 56.2` match Step 4 and Step 7 exactly. | **PASS** |
+| **9** | Move Applicant to Shortlisted | `PUT /api/recruiter/jobs/12/applicants/38/status` with `status=shortlisted` $\implies$ 200 OK (`new_status: "shortlisted"`). | **PASS** |
+| **10** | Run Repo-Verify Batch & Verify Math | `POST /api/recruiter/jobs/12/repo-verify?slot_count=5` $\implies$ 200 OK.<br>Rank 1: `ats_score: 88`, `project_score: 70.7`, `final_score: 77.6`.<br>**Math Hand-Check:** $0.4 \times 88 + 0.6 \times 70.7 = 35.2 + 42.42 = 77.62 \approx 77.6$ (Exact Match). | **PASS** |
+| **11** | Candidate Status Simplified Check | `GET /api/candidate/profile/status` and `GET /candidate/status` $\implies$ 200 OK: `{"status": "shortlisted"}`.<br>Audited response: 0% leakage of scores, logs, or analysis. | **PASS** |
+| **12** | LLM Interview Gating & Submission | `GET /api/candidate/applications/38/interview_access` $\implies$ 200 OK (`allowed: false` before unlock).<br>`POST /recruiter/jobs/12/schedule-interviews?batch_size=5` $\implies$ 200 OK (Batch 1 dispatched).<br>`GET .../interview_access` $\implies$ 200 OK (`allowed: true` after unlock).<br>`POST /api/candidate/applications/38/submit_interview` $\implies$ 200 OK (`interview_status: "completed"`, `eval_score: 94`). | **PASS** |
+
