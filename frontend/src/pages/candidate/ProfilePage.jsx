@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import { useOutletContext } from 'react-router-dom'
+import ProjectUploadForm from '../../components/ProjectUploadForm.jsx'
 
 export default function ProfilePage() {
   const { candidateToken, logoutCandidate } = useAuth()
@@ -423,42 +424,11 @@ export default function ProfilePage() {
 
       {/* Project Section */}
       <div className="panel">
-        <h3>Project / Portfolio</h3>
-        <p className="panel-desc">Upload a project repository (ZIP) or describe your work. It will be evaluated by AI to strengthen your profile.</p>
-        
-        {profile.project_summary && profile.project_summary !== "Evaluation failed." ? (
-          <div className="project-status" style={{ marginBottom: 16, padding: 12, background: 'var(--bg-card)', borderRadius: 6, border: '1px solid var(--border-color)' }}>
-            <strong>✅ Project Evaluated</strong>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-              Your project "{profile.project_description}" has been analyzed. The evaluation summary is visible to recruiters.
-            </p>
-          </div>
-        ) : null}
-
-        <div className="project-upload-form" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <textarea 
-            rows={3} 
-            value={projectDesc} 
-            onChange={e => setProjectDesc(e.target.value)} 
-            placeholder="Describe the project (e.g., 'Built a scalable REST API using FastAPI...')"
-          />
-          <div className="resume-upload-row">
-            <input
-              type="file"
-              accept=".zip,.pdf,.txt"
-              onChange={e => setProjectFile(e.target.files[0])}
-              id="project-upload-input"
-            />
-            <label htmlFor="project-upload-input" className="file-upload-label">
-              {projectFile ? projectFile.name : 'Choose project file (optional)'}
-            </label>
-            <button className="primary" onClick={uploadProject} disabled={uploadingProject || !projectDesc.trim()}>
-              {uploadingProject ? 'Evaluating...' : 'Upload & Evaluate Project'}
-            </button>
-          </div>
-          {projectError && <p className="error-msg">{projectError}</p>}
-          {projectSuccess && <p style={{color: 'green', fontSize: 13}}>Project evaluated successfully!</p>}
-        </div>
+        <ProjectUploadForm
+          api={api}
+          onUploadSuccess={loadProfile}
+          initialSummary={profile.project_summary}
+        />
       </div>
 
       {/* Posts Section */}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { Plus, MapPin, Briefcase } from 'lucide-react'
+import JobDetail from './JobDetail.jsx'
 
 export default function RecruiterJobs() {
   const { api } = useOutletContext()
@@ -268,7 +269,17 @@ export default function RecruiterJobs() {
             <h2 style={{ margin: 0 }}>Pipeline — {applicants.job_title}</h2>
           </div>
 
-          <div style={{ flex: 1, padding: '32px 40px', overflowX: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, padding: '32px 40px', overflowX: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {applicants && (
+              <JobDetail
+                jobId={selectedJobId}
+                job={myJobs.find(j => j.id === selectedJobId) || { title: applicants.job_title }}
+                applicants={applicants.applicants || []}
+                api={api}
+                onRefresh={() => loadApplicants(selectedJobId)}
+              />
+            )}
+
             {applicantsLoading && <div className="empty-state" style={{ background: 'rgba(255,255,255,0.6)', borderRadius: 16 }}>Loading applicants…</div>}
 
             {!applicantsLoading && applicants.applicants.length === 0 && (

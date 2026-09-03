@@ -3,6 +3,7 @@ import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import { Link } from 'react-router-dom'
 import { CandidateStepper } from '../../components/CandidateStepper.jsx'
 import { AIInterviewModal } from '../../components/AIInterviewModal.jsx'
+import CandidateStatusBanner from '../../components/CandidateStatusBanner.jsx'
 import { canTakeInterview } from '../../lib/interview-access.ts'
 
 export default function ApplicationsPage() {
@@ -134,18 +135,15 @@ export default function ApplicationsPage() {
                   </div>
 
                   <div style={{ textAlign: 'right' }}>
-                    <div className="chip matched" style={{ fontWeight: 'bold' }}>{app.ats_score}/100 Match</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>
                       Applied: {new Date(app.applied_at).toLocaleDateString()}
                     </div>
-                    <button
-                      onClick={() => handleOpenExplainability(app)}
-                      className="btn"
-                      style={{ marginTop: 6, fontSize: 11, padding: '4px 8px', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary-color)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
-                    >
-                      💡 Why this score?
-                    </button>
                   </div>
+                </div>
+
+                {/* Candidate Status Banner */}
+                <div style={{ marginTop: 12, marginBottom: 12 }}>
+                  <CandidateStatusBanner status={app.candidate_status || app.status} />
                 </div>
 
                 {/* Candidate Progression Stepper */}
@@ -179,13 +177,7 @@ export default function ApplicationsPage() {
 
                 {/* Interview Gatekeeper & Action Button */}
                 <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                  <div>
-                    {app.project_score != null && (
-                      <div style={{ fontSize: 13 }}>
-                        <strong>Repo Match Score:</strong> <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{app.project_score}%</span>
-                      </div>
-                    )}
-                  </div>
+                  <div />
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {gate.allowed ? (
