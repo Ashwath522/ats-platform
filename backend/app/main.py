@@ -9,11 +9,13 @@ load_dotenv()  # loads backend/.env if present; no-op (and no error) if it doesn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .db import init_db, engine
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
-from .api import recruiter_jobs, admin
+from .api import recruiter_jobs, recruiter_profile, admin
+from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
 logger = logging.getLogger("ats-platform")
@@ -90,6 +92,7 @@ app.include_router(candidate_profile.router)
 app.include_router(candidate_jobs.router)
 app.include_router(candidate_posts.router)
 app.include_router(recruiter_jobs.router)
+app.include_router(recruiter_profile.router)
 app.include_router(admin.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix
@@ -102,6 +105,10 @@ app.add_api_route("/api/candidate/status", get_candidate_status, methods=["GET"]
 app.add_api_route("/recruiter/jobs/{job_id}/repo-verify", run_repo_verification_batch, methods=["POST"])
 app.add_api_route("/recruiter/jobs/{job_id}/schedule-interviews", schedule_interviews_batch, methods=["POST"])
 app.add_api_route("/recruiter/jobs/{job_id}/final-shortlist", generate_final_shortlist, methods=["POST"])
+
+# Mount static media directory for serving avatars, cover photos, and certification files
+if os.path.exists(MEDIA_DIR):
+    app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 
 @app.get("/")

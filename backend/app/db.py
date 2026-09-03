@@ -123,7 +123,10 @@ class CandidateProfile(SQLModel, table=True):
     branch: Optional[str] = None      # candidate's target core branch
     skills_json: str = "[]"           # JSON array of skill strings
     experience_json: str = "[]"       # JSON array of {title, company, start, end, description}
-    education_json: str = "[]"        # JSON array of {degree, institution, year}
+    education_json: str = "[]"        # JSON array of {level, institution, field_of_study, start_year, end_year, grade}
+    certifications_json: str = "[]"   # JSON array of {name, issuing_organization, issue_date, credential_url, file_path}
+    avatar_path: Optional[str] = None
+    cover_photo_path: Optional[str] = None
     resume_id: Optional[int] = Field(default=None, foreign_key="resume.id")
     project_description: Optional[str] = None
     project_summary: Optional[str] = None
@@ -136,6 +139,18 @@ class CandidateProfile(SQLModel, table=True):
     gender: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class RecruiterProfile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recruiter_id: int = Field(foreign_key="recruiteruser.id", unique=True, index=True)
+    headline: str = ""
+    bio: str = ""
+    avatar_path: Optional[str] = None
+    cover_photo_path: Optional[str] = None
+    company_name: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -337,11 +352,28 @@ def _migrate_sqlite():
             ("project_general_score", "INTEGER"),
             ("project_score", "FLOAT"),
             ("candidate_status", "VARCHAR DEFAULT 'applied'"),
+            ("certifications_json", "VARCHAR DEFAULT '[]'"),
+            ("avatar_path", "VARCHAR"),
+            ("cover_photo_path", "VARCHAR"),
         ]
         with engine.begin() as conn:
             for col_name, col_type in cp_new_cols:
                 if col_name not in cp_columns:
                     conn.execute(text(f"ALTER TABLE candidateprofile ADD COLUMN {col_name} {col_type}"))
+
+    if "recruiterprofile" in inspector.get_table_names():
+        rp_columns = {column["name"] for column in inspector.get_columns("recruiterprofile")}
+        rp_new_cols = [
+            ("headline", "VARCHAR DEFAULT ''"),
+            ("bio", "VARCHAR DEFAULT ''"),
+            ("avatar_path", "VARCHAR"),
+            ("cover_photo_path", "VARCHAR"),
+            ("company_name", "VARCHAR"),
+        ]
+        with engine.begin() as conn:
+            for col_name, col_type in rp_new_cols:
+                if col_name not in rp_columns:
+                    conn.execute(text(f"ALTER TABLE recruiterprofile ADD COLUMN {col_name} {col_type}"))
 
 
 

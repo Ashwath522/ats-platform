@@ -68,3 +68,101 @@
   ```
 - **Rationale**: Python 3.14 lacks prebuilt wheels for C-extensions such as `PyMuPDF` (mupdf) on macOS arm64, resulting in clang compilation failures in zlib. Python 3.11 ships prebuilt wheels for all dependencies (`PyMuPDF==1.24.5`, `torch`, `sentence-transformers`, `spacy`, `sqlmodel`, `fastapi`, `uvicorn`), ensuring clean and fast installation with zero compilation issues.
 
+---
+
+# INTEGRATION_NOTES — LinkedIn-Style Education, Certifications & Profile Media
+
+## 1. Rollback Point
+- **Starting Commit**: Post repo-verification feature.
+- **Working Tree Check**: Clean before starting.
+- **Additive-Only**: No existing auth, scoring, or ATS logic modified. New fields, endpoints, and components added alongside existing ones.
+
+## 2. Architecture & Design Principles
+1. **Additive Data Model**: Extended `CandidateProfile` and created new `RecruiterProfile` table without modifying existing fields.
+   - `CandidateProfile`: Added `education_json`, `certifications_json`, `avatar_path`, `cover_photo_path`.
+   - `RecruiterProfile`: New table with `headline`, `bio`, `company_name`, `avatar_path`, `cover_photo_path` (kept separate from auth table `RecruiterUser`, mirroring candidate pattern).
+2. **JSON Array Pattern**: Education and certifications stored as JSON arrays (no new tables needed), following existing `skills_json`, `experience_json` convention.
+   - Education shape: `{ level: "school"|"pu"|"degree"|"pg", institution, field_of_study?, start_year?, end_year?, grade? }`
+   - Certifications shape: `{ name, issuing_organization, issue_date?, credential_url?, file_path? }`
+3. **Static File Serving**: Media directory mounted at `/media` for public access to avatars, covers, and certificate files. Profile response includes `avatar_url` and `cover_photo_url` as full URLs.
+4. **Image Validation**: Uploads validated using magic byte headers and file size limits (5MB for images, 10MB for certificates) via `media_utils.py`.
+5. **Reusable Frontend Components**: `AvatarUpload` and `CoverPhotoUpload` components accept endpoint props, allowing both candidate and recruiter sides to use the same component.
+
+## 3. Files Created & Modified
+
+### Backend Files Created
+- `backend/app/services/media_utils.py`: Image/certificate validation (magic bytes, size), upload handlers `validate_and_save_image()`, `validate_and_save_cert_file()`, and `delete_media_file()`.
+
+### Backend Files Modified
+- `backend/app/db.py`:
+  - Extended `CandidateProfile` with `education_json`, `certifications_json`, `avatar_path`, `cover_photo_path`.
+  - Created new `RecruiterProfile` table with recruiter-specific profile fields.
+- `backend/app/main.py`:
+  - Mounted `/media` static route for serving uploaded files.
+  - Registered `recruiter_profile` router (was imported but not included).
+- `backend/app/api/candidate_profile.py`:
+  - Updated `_profile_to_dict()` to include `certifications`, `avatar_url`, `cover_photo_url`.
+  - Added `PUT /profile/education` — replace full education list.
+  - Added `POST /profile/certifications` — add certification with optional file.
+  - Added `DELETE /profile/certifications/{index}` — remove certification.
+  - Added `POST /profile/avatar` — upload avatar image.
+  - Added `POST /profile/cover-photo` — upload cover photo.
+- `backend/app/api/recruiter_profile.py` (already existed, verified complete):
+  - `GET /api/recruiter/profile` — fetch profile with avatar/cover URLs.
+  - `PUT /api/recruiter/profile` — update headline, bio, company.
+  - `POST /api/recruiter/profile/avatar` — upload avatar.
+  - `POST /api/recruiter/profile/cover-photo` — upload cover.
+
+### Frontend Files Created
+- `frontend/src/components/EducationSection.jsx` & `.css`: Timeline component grouping education by level (School → PU → Degree → PG) with add/edit/delete form.
+- `frontend/src/components/CertificationsSection.jsx` & `.css`: Card list of certifications with file links, add/delete form.
+- `frontend/src/components/AvatarUpload.jsx` & `.css`: Reusable circular avatar with upload overlay, initials fallback, configurable endpoint.
+- `frontend/src/components/CoverPhotoUpload.jsx` & `.css`: Reusable banner upload with gradient placeholder, configurable endpoint.
+
+### Frontend Files Modified
+- `frontend/src/pages/candidate/ProfilePage.jsx`:
+  - Added imports for new components.
+  - Added `CoverPhotoUpload` above profile card (full-width banner).
+  - Replaced static initials avatar with `AvatarUpload` component.
+  - Inserted `EducationSection` and `CertificationsSection` after resume section.
+- `frontend/src/pages/recruiter/RecruiterProfile.jsx`:
+  - Added imports for new components.
+  - Added `CoverPhotoUpload` banner at top.
+  - Replaced static initials avatar with `AvatarUpload`.
+  - Added editable headline/bio/company form section.
+
+### Backend Tests Created
+- `backend/tests/test_profile_features.py`:
+  - Tests for education PUT (single entry, multiple levels).
+  - Tests for certifications add/delete.
+  - Tests for avatar/cover photo storage.
+  - Tests for recruiter profile CRUD.
+  - Integration test ensuring response shape includes all new fields.
+  - Regression test confirming existing fields unchanged.
+  - **Result**: 10 tests, 10 passed ✓
+
+## 4. API Response Shape (Additive)
+**Candidate Profile GET** (`/api/candidate/profile`):
+```json
+{
+  "headline": "...",
+  "bio": "...",
+  "education": [
+    { "level": "degree", "institution": "...", ... }
+  ],
+  "certifications": [
+    { "name": "...", "issuing_organization": "...", ... }
+  ],
+  "avatar_url": "/media/avatars/abc123.jpg" or null,
+  "cover_photo_url": "/media/covers/abc456.jpg" or null,
+  "skills": [...],
+  "experience": [...],
+  ... (all existing fields remain unchanged)
+}
+```
+
+## 5. Zero Regressions
+- **Existing Candidate Tests**: All pass (test_candidate_api.py).
+- **New Profile Tests**: 10 passed (test_profile_features.py).
+- **No Score/Auth Leakage**: Education, certifications, and photos are profile data only — not exposed in simplified status endpoints or between candidates.
+

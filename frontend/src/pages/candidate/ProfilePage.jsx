@@ -2,6 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import { useOutletContext } from 'react-router-dom'
 import ProjectUploadForm from '../../components/ProjectUploadForm.jsx'
+import AvatarUpload from '../../components/AvatarUpload.jsx'
+import CoverPhotoUpload from '../../components/CoverPhotoUpload.jsx'
+import EducationSection from '../../components/EducationSection.jsx'
+import CertificationsSection from '../../components/CertificationsSection.jsx'
 
 export default function ProfilePage() {
   const { candidateToken, logoutCandidate } = useAuth()
@@ -257,18 +261,37 @@ export default function ProfilePage() {
 
   return (
     <div className="profile-page">
+      {/* Cover Photo */}
+      <div className="panel" style={{ padding: 0, border: 'none', marginBottom: 0 }}>
+        <CoverPhotoUpload
+          coverPhotoUrl={profile.cover_photo_url}
+          onUpload={() => loadProfile()}
+          endpoint="/api/candidate/profile/cover-photo"
+          apiCall={api}
+        />
+      </div>
+
       {/* Profile Card */}
       <div className="panel profile-card">
         <div className="profile-card-header">
-          <div className="profile-avatar">{(profile.headline || '?')[0]?.toUpperCase()}</div>
-          <div className="profile-card-info">
-            <h2 className="profile-headline">{profile.headline || 'Set your headline'}</h2>
-            {profile.branch && (
-              <span className="profile-branch-badge badge" style={{ display: 'inline-block', marginBottom: 8, background: 'var(--primary-light)', color: 'var(--primary-color)', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 'bold' }}>
-                ⚙️ {branches.find(b => b.id === profile.branch)?.name || profile.branch}
-              </span>
-            )}
-            <p className="profile-bio">{profile.bio || 'Add a short bio about yourself'}</p>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flex: 1 }}>
+            <AvatarUpload
+              avatarUrl={profile.avatar_url}
+              username={profile.headline || 'Candidate'}
+              onUpload={() => loadProfile()}
+              endpoint="/api/candidate/profile/avatar"
+              apiCall={api}
+              size="medium"
+            />
+            <div className="profile-card-info" style={{ flex: 1 }}>
+              <h2 className="profile-headline">{profile.headline || 'Set your headline'}</h2>
+              {profile.branch && (
+                <span className="profile-branch-badge badge" style={{ display: 'inline-block', marginBottom: 8, background: 'var(--primary-light)', color: 'var(--primary-color)', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 'bold' }}>
+                  ⚙️ {branches.find(b => b.id === profile.branch)?.name || profile.branch}
+                </span>
+              )}
+              <p className="profile-bio">{profile.bio || 'Add a short bio about yourself'}</p>
+            </div>
           </div>
           <button className="edit-toggle-btn" onClick={() => setEditing(!editing)}>
             {editing ? 'Cancel' : '✏️ Edit'}
@@ -421,6 +444,32 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
+
+      {/* Education Section */}
+      <EducationSection
+        education={profile.education || []}
+        onUpdate={async (educationList) => {
+          try {
+            const res = await api('/api/candidate/profile/education', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(educationList),
+            })
+            if (!res.ok) throw new Error('Failed to update education')
+            await loadProfile()
+          } catch (e) {
+            setError(e.message)
+          }
+        }}
+      />
+
+      {/* Certifications Section */}
+      <CertificationsSection
+        certifications={profile.certifications || []}
+        onAdd={() => loadProfile()}
+        onDelete={() => loadProfile()}
+        apiCall={api}
+      />
 
       {/* Project Section */}
       <div className="panel">

@@ -1,8 +1,9 @@
 """Candidate profile CRUD + resume upload linked to profile."""
 import json
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form, Path
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlmodel import Session, select
@@ -11,11 +12,14 @@ from ..db import engine, CandidateUser, CandidateProfile, Application, Resume, u
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..utils.email_utils import send_welcome_email
+from ..services.media_utils import validate_and_save_image, validate_and_save_cert_file, delete_media_file
 import tempfile
 import os
 import shutil
 from ..services.report_parsers.router import route_file
 from ..services.scorer import evaluate_profile_project
+
+logger = logging.getLogger("ats-platform")
 
 router = APIRouter(prefix="/api/candidate/profile", tags=["candidate-profile"])
 
@@ -61,6 +65,9 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None) -> dict:
         "skills": json.loads(profile.skills_json),
         "experience": json.loads(profile.experience_json),
         "education": json.loads(profile.education_json),
+        "certifications": json.loads(profile.certifications_json),
+        "avatar_url": f"/media/{profile.avatar_path}" if profile.avatar_path else None,
+        "cover_photo_url": f"/media/{profile.cover_photo_path}" if profile.cover_photo_path else None,
         "contact_email": profile.contact_email,
         "contact_phone": profile.contact_phone,
         "latitude": profile.latitude,
@@ -311,3 +318,154 @@ async def get_candidate_status(
 
         return {"status": status}
 
+
+# ────── Education Management ──────
+
+@router.put("/education")
+async def update_candidate_education(
+    education_list: List[dict],
+    candidate: str = Depends(get_current_candidate),
+):
+    """
+    Replace the full education list. Each entry should have:
+    { level: "school" | "pu" | "degree" | "pg",
+      institution: string,
+      field_of_study: string (optional),
+      start_year: string (optional),
+      end_year: string (optional),
+      grade: string (optional) }
+    """
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+        profile.education_json = json.dumps(education_list)
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
+
+
+# ────── Certifications Management ──────
+
+@router.post("/certifications")
+async def add_candidate_certification(
+    name: str = Form(...),
+    issuing_organization: str = Form(...),
+    issue_date: Optional[str] = Form(None),
+    credential_url: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    candidate: str = Depends(get_current_candidate),
+):
+    """
+    Add a certification entry with optional file upload (PDF, PNG, JPG, etc).
+    Returns updated profile with certifications list.
+    """
+    cert_file_path = None
+    if file:
+        try:
+            cert_file_path = validate_and_save_cert_file(file)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to upload certification file: {str(e)}")
+
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+
+        certifications = json.loads(profile.certifications_json)
+        new_cert = {
+            "name": name.strip(),
+            "issuing_organization": issuing_organization.strip(),
+            "issue_date": issue_date,
+            "credential_url": credential_url,
+            "file_path": cert_file_path,
+        }
+        certifications.append(new_cert)
+        profile.certifications_json = json.dumps(certifications)
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
+
+
+@router.delete("/certifications/{cert_index}")
+async def delete_candidate_certification(
+    cert_index: int = Path(..., ge=0),
+    candidate: str = Depends(get_current_candidate),
+):
+    """
+    Remove a certification entry by index and delete its associated file if present.
+    """
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+
+        certifications = json.loads(profile.certifications_json)
+        if cert_index < 0 or cert_index >= len(certifications):
+            raise HTTPException(status_code=400, detail="Invalid certification index")
+
+        cert = certifications[cert_index]
+        if cert.get("file_path"):
+            delete_media_file(cert["file_path"])
+
+        certifications.pop(cert_index)
+        profile.certifications_json = json.dumps(certifications)
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
+
+
+# ────── Avatar & Cover Photo Management ──────
+
+@router.post("/avatar")
+async def upload_candidate_avatar(
+    file: UploadFile = File(...),
+    candidate: str = Depends(get_current_candidate),
+):
+    """Upload or replace candidate profile avatar photo."""
+    rel_path = validate_and_save_image(file, "avatars")
+
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+
+        if profile.avatar_path and profile.avatar_path != rel_path:
+            delete_media_file(profile.avatar_path)
+
+        profile.avatar_path = rel_path
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
+
+
+@router.post("/cover-photo")
+async def upload_candidate_cover_photo(
+    file: UploadFile = File(...),
+    candidate: str = Depends(get_current_candidate),
+):
+    """Upload or replace candidate profile cover banner photo."""
+    rel_path = validate_and_save_image(file, "covers")
+
+    with Session(engine) as session:
+        user = _get_candidate_user(session, candidate)
+        profile = _get_or_create_profile(session, user.id)
+
+        if profile.cover_photo_path and profile.cover_photo_path != rel_path:
+            delete_media_file(profile.cover_photo_path)
+
+        profile.cover_photo_path = rel_path
+        profile.updated_at = utc_now()
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
+        return _profile_to_dict(profile, resume)
