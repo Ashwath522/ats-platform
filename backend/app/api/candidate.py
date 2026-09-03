@@ -407,8 +407,9 @@ async def score_project(
                     app_record.skills_gap_detail = json.dumps(result.get("skills_missing", []))
                     app_record.api_used = result.get("api_used")
                     app_record.parse_method = method
-                    app_record.status = "repo_verification"
-                    app_record.interview_status = "unlocked"
+                    if app_record.status != "shortlisted":
+                        app_record.status = "repo_verification"
+                    # Do NOT auto-unlock interview; requires explicit recruiter Stage 2 unlock action
                     session.add(app_record)
                     session.commit()
                     session.refresh(app_record)
@@ -442,6 +443,7 @@ def can_take_interview(app_record: Application) -> dict:
     Interview is unlocked ONLY AFTER:
     1. Candidate application status is shortlisted, repo_verification, or automated_interview.
     2. Repo / Project Verification is complete (repo_match_score is not None).
+    3. Recruiter has reviewed Stage 2 and explicitly set interview_status = "unlocked".
     """
     if not app_record:
         return {"allowed": False, "reason": "Application not found", "status": "locked"}
@@ -468,6 +470,13 @@ def can_take_interview(app_record: Application) -> dict:
             "allowed": False,
             "reason": "Interview is already completed.",
             "status": "completed"
+        }
+
+    if app_record.interview_status != "unlocked":
+        return {
+            "allowed": False,
+            "reason": "Interview is locked pending recruiter Stage 2 review.",
+            "status": "locked"
         }
 
     return {"allowed": True, "reason": "Interview unlocked and ready to take", "status": "unlocked"}

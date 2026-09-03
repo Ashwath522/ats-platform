@@ -60,6 +60,25 @@ def count_words(result: dict) -> int:
         if val: total += len(str(val).split())
     return total
 
+def get_scoring_weights() -> tuple[float, float]:
+    """Return (w_ats, w_proj) from environment variables or defaults (0.40, 0.60)."""
+    try:
+        w_ats = float(os.environ.get("WEIGHT_ATS", "0.40"))
+    except (ValueError, TypeError):
+        w_ats = 0.40
+    try:
+        w_proj = float(os.environ.get("WEIGHT_PROJECT", "0.60"))
+    except (ValueError, TypeError):
+        w_proj = 0.60
+    return w_ats, w_proj
+
+
+def calculate_final_score(ats_score: float, project_score: float) -> float:
+    """Calculate blended final score using configured weights."""
+    w_ats, w_proj = get_scoring_weights()
+    return round((w_ats * float(ats_score or 0)) + (w_proj * float(project_score or 0)), 1)
+
+
 def build_full_project_text(project_texts: list) -> str:
     valid = [t.strip() for t in project_texts if t and len(t.strip()) > 20]
     if not valid: return ""
@@ -157,7 +176,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
 
     project_score = float(best_result.get('project_score', 0) or 0)
     ats_score     = float(student.get("ats_score", 0) or 0)
-    final_score   = round((0.40 * ats_score) + (0.60 * project_score), 1)
+    final_score   = calculate_final_score(ats_score, project_score)
     priority = "High" if final_score >= 75 else "Medium" if final_score >= 50 else "Low"
 
     return {

@@ -103,17 +103,15 @@ def test_full_hiring_flow_end_to_end(client):
     assert score_data["ats_score"] > 60
     assert "FastAPI" in score_data["matched_skills"] or "Python" in score_data["matched_skills"]
 
-    # Step 3: Application submission
+    # Step 3: Application submission (initial status = ats_check, interview_status = locked)
     with Session(engine) as session:
-        final_score_val = round(0.4 * score_data["ats_score"] + 0.6 * 88)
         app_record = Application(
             candidate_id=cand_id,
             job_id=job_id,
             ats_score=score_data["ats_score"],
-            repo_match_score=88,
             final_ats_score=score_data["ats_score"],
-            final_score=final_score_val,
             status="ats_check",
+            interview_status="locked",
             pending_human_review=True,
             suitability_verdict="Review Required",
             matched_skills_csv=",".join(score_data["matched_skills"]),
@@ -124,42 +122,101 @@ def test_full_hiring_flow_end_to_end(client):
         session.refresh(app_record)
         app_id = app_record.id
 
-    # Step 4: Recruiter reviews applicants for the job
+    # Step 4: Gate check — Repo verification is REJECTED on a non-shortlisted applicant (Stage 1 gate)
+    premature_repo_res = client.post(
+        f"/api/recruiter/jobs/{job_id}/applicants/{app_id}/evaluate-repo",
+        headers=rec_headers,
+    )
+    assert premature_repo_res.status_code == 400
+    assert "shortlisted state" in premature_repo_res.json()["detail"].lower()
+
+    # Step 5: Candidate uploads project file — interview_status MUST STAY "locked" (no auto-unlock)
+    project_upload_res = client.post(
+        "/api/candidate/score-project",
+        files={"file": ("project.py", b"import fastapi\napp = fastapi.FastAPI()\n# High performance async backend with postgres connection pool", "text/plain")},
+        data={"application_id": str(app_id), "description": "Production FastAPI backend service with PostgreSQL pooling"},
+        headers=cand_headers,
+    )
+    assert project_upload_res.status_code == 200
+
+    with Session(engine) as session:
+        app_after_upload = session.get(Application, app_id)
+        assert app_after_upload.interview_status == "locked"
+
+    # Candidate checking interview access is DENIED
+    access_res = client.get(f"/api/candidate/applications/{app_id}/interview_access")
+    assert access_res.status_code == 200
+    assert access_res.json()["allowed"] is False
+    assert access_res.json()["interview_status"] == "locked"
+
+    # Step 6: Recruiter reviews applicants and approves Stage 1 (shortlist)
     rec_view_res = client.get(f"/api/recruiter/jobs/{job_id}/applicants", headers=rec_headers)
     assert rec_view_res.status_code == 200
     applicants = rec_view_res.json().get("applicants", [])
     matched_app = next((a for a in applicants if a["application_id"] == app_id), None)
     assert matched_app is not None
-    assert matched_app["final_score"] > 0
-    assert matched_app["pending_human_review"] is True
 
-    # Step 5: Recruiter confirms human decision (shortlist candidate)
     confirm_res = client.post(
         f"/api/recruiter/jobs/{job_id}/applicants/{app_id}/confirm-decision",
-        data={"decision": "shortlisted", "notes": "Strong Python & FastAPI background confirmed"},
+        data={"decision": "shortlisted", "notes": "Stage 1: Strong Python & FastAPI background confirmed"},
         headers=rec_headers,
     )
     assert confirm_res.status_code == 200
-    confirm_data = confirm_res.json()
-    assert confirm_data["new_status"] == "shortlisted"
-    assert confirm_data["pending_human_review"] is False
+    assert confirm_res.json()["new_status"] == "shortlisted"
 
-    # Assert DB state and DecisionAuditLog
+    # Step 7: Recruiter performs Stage 2 Repo Verification (now allowed on shortlisted candidate)
+    repo_eval_res = client.post(
+        f"/api/recruiter/jobs/{job_id}/applicants/{app_id}/evaluate-repo",
+        headers=rec_headers,
+    )
+    assert repo_eval_res.status_code == 200
+    repo_data = repo_eval_res.json()
+    assert "repo_match_score" in repo_data
+    assert "final_score" in repo_data
+    assert repo_data["final_score"] is not None
+
+    # Assert final_score is correctly computed using configurable weights and persisted
     with Session(engine) as session:
-        updated_app = session.get(Application, app_id)
-        assert updated_app.status == "shortlisted"
-        assert updated_app.pending_human_review is False
+        verified_app = session.get(Application, app_id)
+        assert verified_app.status == "shortlisted"
+        assert verified_app.repo_match_score is not None
+        assert verified_app.final_score is not None
+        from app.services.scorer import calculate_final_score
+        expected_final = calculate_final_score(float(verified_app.ats_score), float(verified_app.repo_match_score))
+        assert verified_app.final_score == expected_final
+        # Interview MUST STILL be locked (repo evaluation does not auto-unlock)
+        assert verified_app.interview_status == "locked"
 
-        audit_entry = session.exec(
+    # Step 8: Recruiter explicitly unlocks interview (Stage 2 human gate)
+    unlock_res = client.post(
+        f"/api/recruiter/jobs/{job_id}/applicants/{app_id}/unlock-interview",
+        data={"notes": "Stage 2 repo verified: architecture approved, unlocking AI interview."},
+        headers=rec_headers,
+    )
+    assert unlock_res.status_code == 200
+    assert unlock_res.json()["interview_status"] == "unlocked"
+
+    # Verify DB state and DecisionAuditLog event for unlock
+    with Session(engine) as session:
+        unlocked_app = session.get(Application, app_id)
+        assert unlocked_app.interview_status == "unlocked"
+
+        unlock_audit = session.exec(
             select(DecisionAuditLog)
             .where(DecisionAuditLog.application_id == app_id)
-            .where(DecisionAuditLog.event_type == "recruiter_confirmation")
+            .where(DecisionAuditLog.event_type == "recruiter_interview_unlock")
         ).first()
-        assert audit_entry is not None
-        assert audit_entry.human_reviewer == rec_email
-        assert audit_entry.human_action == "confirmed_shortlisted"
+        assert unlock_audit is not None
+        assert unlock_audit.human_reviewer == rec_email
+        assert unlock_audit.human_action == "unlocked_interview"
 
-    # Step 6: Candidate inspects explainability breakdown
+    # Now candidate checking interview access is ALLOWED
+    access_unlocked_res = client.get(f"/api/candidate/applications/{app_id}/interview_access")
+    assert access_unlocked_res.status_code == 200
+    assert access_unlocked_res.json()["allowed"] is True
+    assert access_unlocked_res.json()["interview_status"] == "unlocked"
+
+    # Step 9: Candidate inspects explainability breakdown
     explain_res = client.get(f"/api/candidate/jobs/applications/{app_id}/explainability", headers=cand_headers)
     assert explain_res.status_code == 200
     explain_data = explain_res.json()
@@ -171,4 +228,5 @@ def test_full_hiring_flow_end_to_end(client):
     assert explain_data["human_review_status"] == "Confirmed"
     assert explain_data["human_reviewer"] == rec_email
     assert len(explain_data["recommendations"]) > 0
+
 

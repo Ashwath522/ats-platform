@@ -107,6 +107,7 @@ flowchart TD
 | **CV Proctoring & Risk Engine** | **Implemented** | Multi-signal behavioral anomaly scoring combining face count, gaze/head pose, shoulder visibility, lighting, and liveness (`risk-engine.ts`). |
 | **Decision Audit Trail** | **Implemented** | Append-only, immutable `DecisionAuditLog` recording every scoring event, LLM output, candidate deletion, and human reviewer confirmation (`audit.py`). |
 | **Candidate Explainability** | **Implemented** | Plain-language score breakdown (`/explainability`) detailing semantic fit, matched vs missing skills, and actionable improvement tips without extra LLM cost. |
+| **Candidate Score Visibility** | **Implemented** | Candidates intentionally have full visibility into their own ATS and project scores (`/ats-score`, `/applications/mine`, `/explainability`) as an intentional transparency and empowerment design decision, while proctoring risk telemetry and recruiter notes remain recruiter-only. |
 | **Consent & Data Retention** | **Implemented** | Pre-interview consent disclosure modal, 30-day automated media retention purge (`retention.py`), and candidate right-to-be-forgotten deletion. |
 | **Authentication & RBAC** | **Implemented** | JWT + bcrypt auth with strict role separation (`candidate`, `recruiter`, `admin`), rate limiting via `slowapi`, and recruiter company ownership enforcement. |
 

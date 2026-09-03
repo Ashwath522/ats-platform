@@ -366,26 +366,106 @@ async def evaluate_applicant_repo(
         app = session.get(Application, application_id)
         if not app or app.job_id != job_id:
             raise HTTPException(status_code=404, detail="Application not found for this job")
-            
+
+        # Task 1: Gate repo verification to Stage 1 shortlisted applicants only
+        if app.status != "shortlisted":
+            raise HTTPException(
+                status_code=400,
+                detail="Candidate must be in a recruiter-approved shortlisted state (Stage 1 approved) before repo verification can be performed.",
+            )
+
         profile = session.exec(
             select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)
         ).first()
-        
-        if not profile or not profile.project_summary or profile.project_summary == "Evaluation failed.":
+
+        project_summary = app.project_summary or (profile.project_summary if profile else None)
+        if not project_summary or project_summary == "Evaluation failed.":
             raise HTTPException(status_code=400, detail="Candidate has not uploaded a valid project portfolio.")
 
-        # Evaluate candidate's general project summary against the recruiter's Job Description
-        result = evaluate_repo_against_jd(profile.project_summary, job.description)
-        
+        # Evaluate candidate's project summary against the recruiter's Job Description
+        result = evaluate_repo_against_jd(project_summary, job.description)
+
         app.repo_match_score = result.get("repo_match_score", 0)
         app.repo_match_reasoning = result.get("repo_match_reasoning", "Failed to evaluate.")
-        
+        app.project_score = float(app.repo_match_score)
+        app.project_summary = project_summary
+
+        # Task 2: Compute and persist app.final_score using configurable weights
+        from ..services.scorer import calculate_final_score
+        app.final_score = calculate_final_score(float(app.ats_score or 0), float(app.repo_match_score or 0))
+
         session.add(app)
         session.commit()
-        
+        session.refresh(app)
+
         return {
             "repo_match_score": app.repo_match_score,
-            "repo_match_reasoning": app.repo_match_reasoning
+            "repo_match_reasoning": app.repo_match_reasoning,
+            "final_score": app.final_score,
+        }
+
+
+@router.post("/{job_id}/applicants/{application_id}/unlock-interview")
+async def unlock_applicant_interview(
+    job_id: int,
+    application_id: int,
+    notes: str = Form(""),
+    recruiter: str = Depends(get_current_recruiter),
+):
+    """
+    Recruiter explicit Stage 2 human oversight gate:
+    Unlocks AI Interview ONLY after recruiter has reviewed the candidate's
+    repo_match_score and Stage 2 verification results.
+    Logs the unlock event in DecisionAuditLog with full reviewer attribution.
+    """
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        app = session.get(Application, application_id)
+        if not app or app.job_id != job_id:
+            raise HTTPException(status_code=404, detail="Application not found for this job")
+
+        if app.status != "shortlisted":
+            raise HTTPException(
+                status_code=400,
+                detail="Candidate must be in a recruiter-approved shortlisted state before unlocking interview.",
+            )
+
+        if app.repo_match_score is None and app.project_score is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Repo verification must be completed before unlocking interview.",
+            )
+
+        app.interview_status = "unlocked"
+        app.human_reviewer = recruiter
+        if notes:
+            app.human_decision_notes = notes
+        session.add(app)
+        session.commit()
+        session.refresh(app)
+
+        from ..services.audit import record_audit_event
+        record_audit_event(
+            session=session,
+            event_type="recruiter_interview_unlock",
+            application_id=app.id,
+            candidate_id=app.candidate_id,
+            job_id=job_id,
+            ats_score=app.ats_score,
+            project_score=app.project_score or app.repo_match_score,
+            final_score=app.final_score,
+            human_reviewer=recruiter,
+            human_action="unlocked_interview",
+            final_recommendation=notes or f"Recruiter {recruiter} verified Stage 2 repo score ({app.repo_match_score}) and unlocked AI interview.",
+        )
+
+        return {
+            "message": "Interview unlocked successfully",
+            "application_id": application_id,
+            "interview_status": app.interview_status,
+            "human_reviewer": recruiter,
         }
 
 @router.post("/{job_id}/applicants/{application_id}/finalize")

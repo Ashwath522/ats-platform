@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo }) {
+export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo, onUnlockInterview }) {
   const [showTranscript, setShowTranscript] = useState(false)
   const [showRepoDetails, setShowRepoDetails] = useState(false)
 
@@ -160,11 +160,21 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
               <p className="text-xs text-slate-300 line-clamp-2 mt-1">{interview_recommendation}</p>
             </div>
           ) : (
-            <p className="text-xs text-slate-500 italic">
-              {interview_status === 'unlocked'
-                ? 'Candidate invited to live AI interview.'
-                : 'Interview will unlock after Repo Verification.'}
-            </p>
+            <div>
+              <p className="text-xs text-slate-500 italic">
+                {interview_status === 'unlocked'
+                  ? 'Candidate invited to live AI interview.'
+                  : 'Interview will unlock after Recruiter Stage 2 review.'}
+              </p>
+              {interview_status !== 'unlocked' && effectiveRepoScore !== null && effectiveRepoScore !== undefined && (
+                <button
+                  onClick={() => onUnlockInterview && onUnlockInterview(id)}
+                  className="text-xs font-medium bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 px-3 rounded-lg mt-2 transition"
+                >
+                  Unlock AI Interview
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>

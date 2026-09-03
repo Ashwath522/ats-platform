@@ -64,6 +64,42 @@ export default function RecruiterTalent() {
     }
   }
 
+  const handleVerifyRepo = async (appId) => {
+    const applicant = allApplicants.find(a => (a.application_id || a.id) === appId)
+    if (!applicant) return
+    try {
+      const res = await api(`/api/recruiter/jobs/${applicant.job_id}/applicants/${appId}/evaluate-repo`, {
+        method: 'POST'
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        alert(err.detail || 'Evaluation failed')
+        return
+      }
+      loadTalent()
+    } catch (e) {
+      alert('Failed to evaluate repo: ' + e.message)
+    }
+  }
+
+  const handleUnlockInterview = async (appId) => {
+    const applicant = allApplicants.find(a => (a.application_id || a.id) === appId)
+    if (!applicant) return
+    try {
+      const res = await api(`/api/recruiter/jobs/${applicant.job_id}/applicants/${appId}/unlock-interview`, {
+        method: 'POST'
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        alert(err.detail || 'Failed to unlock interview')
+        return
+      }
+      loadTalent()
+    } catch (e) {
+      alert('Failed to unlock interview: ' + e.message)
+    }
+  }
+
   return (
     <div className="recruiter-talent space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -96,6 +132,8 @@ export default function RecruiterTalent() {
               key={app.application_id || app.id}
               application={app}
               onUpdateStatus={handleUpdateStatus}
+              onVerifyRepo={handleVerifyRepo}
+              onUnlockInterview={handleUnlockInterview}
             />
           ))}
         </div>
