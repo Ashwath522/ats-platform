@@ -14,9 +14,12 @@ import time
 import logging
 
 import os
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 GEMINI_MODEL_PREFERENCES = [
-    "gemini-1.5-pro",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.7-flash",
     "gemini-1.5-flash",
 ]
 
@@ -218,7 +221,7 @@ class GeminiClient:
                 return self.model.generate_content(
                     prompt,
                     generation_config=config,
-                    request_options={"timeout": 15.0}
+                    request_options={"timeout": 45.0}
                 )
             except Exception as e:
                 error_str = str(e).lower()
