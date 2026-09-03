@@ -105,20 +105,9 @@ export default function ProjectUploadForm({ api, onUploadSuccess, initialSummary
           disabled={uploading}
           className="px-5 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {uploading ? 'Processing Project...' : 'Upload & Generate Project Summary'}
+          {uploading ? 'Uploading Project...' : 'Upload Project Portfolio'}
         </button>
       </form>
-
-      {summary && (
-        <div className="mt-4 pt-4 border-t border-slate-800/80">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-            Generated Project Summary
-          </span>
-          <p className="text-xs text-slate-300 whitespace-pre-line leading-relaxed bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            {summary}
-          </p>
-        </div>
-      )}
     </div>
   )
 }

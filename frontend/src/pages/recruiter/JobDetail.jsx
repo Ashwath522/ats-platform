@@ -68,6 +68,51 @@ export default function JobDetail({ jobId, job, applicants = [], api, onRefresh 
     }
   }
 
+  const [schedulingInterviews, setSchedulingInterviews] = useState(false)
+  const [generatingFinalShortlist, setGeneratingFinalShortlist] = useState(false)
+  const [interviewBatches, setInterviewBatches] = useState(null)
+  const [finalShortlist, setFinalShortlist] = useState(null)
+
+  const handleScheduleInterviews = async () => {
+    setSchedulingInterviews(true)
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await api(`/api/recruiter/jobs/${jobId}/schedule-interviews?batch_size=5`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Scheduling failed')
+      setInterviewBatches(data.batches || [])
+      setSuccessMsg(`Successfully scheduled ${data.total_scheduled} candidate(s) in ${data.total_batches} batch(es) of 5. Invitations dispatched.`)
+      if (onRefresh) await onRefresh()
+    } catch (err) {
+      setError(err.message || 'Failed to schedule interviews')
+    } finally {
+      setSchedulingInterviews(false)
+    }
+  }
+
+  const handleFinalShortlist = async () => {
+    setGeneratingFinalShortlist(true)
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await api(`/api/recruiter/jobs/${jobId}/final-shortlist`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Final shortlist generation failed')
+      setFinalShortlist(data.final_shortlist || [])
+      setSuccessMsg(`Final Shortlist produced! Evaluated ${data.total_evaluated} candidate(s). Status updated to final_result.`)
+      if (onRefresh) await onRefresh()
+    } catch (err) {
+      setError(err.message || 'Failed to generate final shortlist')
+    } finally {
+      setGeneratingFinalShortlist(false)
+    }
+  }
+
   return (
     <div className="job-detail-pipeline space-y-6">
       {/* Header and Controls */}
@@ -80,7 +125,7 @@ export default function JobDetail({ jobId, job, applicants = [], api, onRefresh 
         </div>
 
         {/* Action Button Bar */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={handleRunATSShortlist}
             disabled={runningATS || applicants.length === 0}
@@ -96,6 +141,24 @@ export default function JobDetail({ jobId, job, applicants = [], api, onRefresh 
             className="px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed border border-indigo-400/30"
           >
             {runningRepoVerify ? 'Verifying Repos...' : 'Repo Verification'}
+          </button>
+
+          <button
+            onClick={handleScheduleInterviews}
+            disabled={schedulingInterviews || (!repoShortlist && shortlist1.length === 0)}
+            title="Schedule Shortlist #2 candidates in batches of 5"
+            className="px-4 py-2 text-xs font-bold rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed border border-purple-400/30"
+          >
+            {schedulingInterviews ? 'Scheduling...' : 'Schedule Interviews (Batches of 5)'}
+          </button>
+
+          <button
+            onClick={handleFinalShortlist}
+            disabled={generatingFinalShortlist}
+            title="Generate Final Shortlist reflecting interview outcomes"
+            className="px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed border border-emerald-400/30"
+          >
+            {generatingFinalShortlist ? 'Generating...' : 'Final Shortlist'}
           </button>
         </div>
       </div>
@@ -154,6 +217,59 @@ export default function JobDetail({ jobId, job, applicants = [], api, onRefresh 
                     </td>
                     <td className="py-3 px-3 text-slate-400 max-w-xs truncate" title={item.repo_match_reasoning}>
                       {item.repo_match_reasoning || 'Evaluated'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Final Shortlist Table */}
+      {finalShortlist && finalShortlist.length > 0 && (
+        <div className="p-6 bg-slate-900/70 border border-emerald-500/30 rounded-2xl space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-sm font-bold text-emerald-300 uppercase tracking-wider">
+              Stage 3: Final Shortlist (Post-Interview Outcome)
+            </h3>
+            <span className="text-xs bg-emerald-500/20 text-emerald-300 px-3 py-1 rounded-full border border-emerald-500/30">
+              {finalShortlist.length} Candidate(s) Evaluated
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th className="py-2 px-3">Rank</th>
+                  <th className="py-2 px-3">Candidate ID</th>
+                  <th className="py-2 px-3">Composite Score</th>
+                  <th className="py-2 px-3">Interview Eval</th>
+                  <th className="py-2 px-3">Risk Score</th>
+                  <th className="py-2 px-3">Decision</th>
+                  <th className="py-2 px-3">Candidate Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 text-slate-200">
+                {finalShortlist.map((item) => (
+                  <tr key={item.application_id} className="hover:bg-slate-800/40">
+                    <td className="py-3 px-3 font-bold text-emerald-400">#{item.rank}</td>
+                    <td className="py-3 px-3 font-mono">{item.candidate_id}</td>
+                    <td className="py-3 px-3 text-emerald-300 font-bold">{item.composite_score}%</td>
+                    <td className="py-3 px-3">{item.interview_eval_score ?? '—'}%</td>
+                    <td className="py-3 px-3">{item.interview_risk_score ?? 0}/100</td>
+                    <td className="py-3 px-3">
+                      <span className={`px-2 py-0.5 rounded-full uppercase text-[10px] font-bold ${
+                        item.final_decision === 'selected' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-900/30 text-rose-300 border border-rose-800'
+                      }`}>
+                        {item.final_decision}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="px-2 py-0.5 rounded-full uppercase text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {item.candidate_status}
+                      </span>
                     </td>
                   </tr>
                 ))}

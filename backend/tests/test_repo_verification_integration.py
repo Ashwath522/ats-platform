@@ -135,7 +135,7 @@ def test_candidate_project_upload_and_status(client, monkeypatch):
     assert res.status_code == 200
     data = res.json()
     assert data["candidate_status"] == "applied"
-    assert "project_summary" in data
+    assert "project_summary" not in data
 
     # Simplified status endpoint via GET /candidate/status
     status_res = client.get("/candidate/status", headers=headers)

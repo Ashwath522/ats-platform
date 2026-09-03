@@ -252,7 +252,6 @@ async def upload_candidate_project(
             return {
                 "message": "Project uploaded successfully",
                 "filename": file.filename,
-                "project_summary": summary,
                 "candidate_status": "applied",
             }
         finally:

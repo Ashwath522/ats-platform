@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from ..db import engine, Job, Application, RecruiterUser, Resume, CandidateProfile, utc_now
+from ..db import engine, Job, Application, RecruiterUser, Resume, CandidateProfile, CandidateUser, utc_now
 from ..auth import get_current_recruiter
 from ..services.geocoding import geocode
 from ..services.embeddings import EmbeddingModel
@@ -658,5 +658,225 @@ async def run_repo_verification_batch(
             "shortlist_count": min(cap, len(evaluated_apps)),
             "shortlist": ranked_results,
         }
+
+
+@router.post("/{job_id}/schedule-interviews")
+async def schedule_interviews_batch(
+    job_id: int,
+    batch_size: int = 5,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    """
+    Stage 6 & 7: Schedules AI Interviews for Shortlist #2 candidates in batches of 5.
+    Fires email notification (or dev-mode fallback log) with interview details for each candidate.
+    """
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        # Fetch candidates from Shortlist #2
+        apps = session.exec(
+            select(Application)
+            .where(Application.job_id == job_id)
+            .where(Application.candidate_status == "shortlisted")
+        ).all()
+
+        if not apps:
+            apps = session.exec(
+                select(Application)
+                .where(Application.job_id == job_id)
+                .where(Application.status == "shortlisted")
+            ).all()
+
+        if not apps:
+            raise HTTPException(
+                status_code=400,
+                detail="No shortlisted candidates available to schedule interviews.",
+            )
+
+        # Sort by final_score descending
+        apps.sort(key=lambda a: (a.final_score or 0, a.project_score or 0, a.ats_score or 0), reverse=True)
+
+        effective_batch_size = max(1, batch_size)
+        raw_batches = [apps[i : i + effective_batch_size] for i in range(0, len(apps), effective_batch_size)]
+
+        from ..services.audit import record_audit_event
+        from ..services.email_delivery import send_email
+        import logging
+        log = logging.getLogger("interview_scheduler")
+
+        structured_batches = []
+        for b_idx, batch_apps in enumerate(raw_batches, start=1):
+            batch_candidates = []
+            for app in batch_apps:
+                app.interview_status = "unlocked"
+                app.candidate_status = "interview"
+                app.status = "automated_interview"
+                app.human_reviewer = recruiter
+
+                profile = session.exec(
+                    select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)
+                ).first()
+                cand_user = session.get(CandidateUser, app.candidate_id)
+                cand_email = (
+                    (profile.contact_email if profile and profile.contact_email else None)
+                    or (cand_user.username if cand_user else None)
+                    or f"candidate_{app.candidate_id}@example.com"
+                )
+                cand_name = getattr(profile, "full_name", None) or getattr(cand_user, "username", None) or "Candidate"
+
+                interview_link = f"/interview/{app.id}"
+                subject = f"Interview Invitation: {job.title}"
+                body = (
+                    f"Hello {cand_name},\n\n"
+                    f"Congratulations! You have been selected for the AI Video Interview for {job.title}.\n"
+                    f"Your interview session is scheduled in Batch #{b_idx}.\n\n"
+                    f"Interview Link: {interview_link}\n\n"
+                    f"Please log in to your candidate portal to begin when ready."
+                )
+
+                email_delivery_status = "sent"
+                try:
+                    send_email(cand_email, subject, body)
+                except Exception as mail_err:
+                    log.info(f"[DEV_MODE EMAIL] To: {cand_email} | Subject: {subject} | Link: {interview_link} | Log: {mail_err}")
+                    email_delivery_status = f"dev_mode_logged: {str(mail_err)}"
+
+                session.add(app)
+                record_audit_event(
+                    session=session,
+                    event_type="interview_scheduled",
+                    application_id=app.id,
+                    candidate_id=app.candidate_id,
+                    job_id=job_id,
+                    ats_score=app.ats_score,
+                    project_score=app.project_score,
+                    final_score=app.final_score,
+                    human_reviewer=recruiter,
+                    human_action=f"scheduled_interview_batch_{b_idx}",
+                    final_recommendation=f"Candidate scheduled for AI interview in Batch #{b_idx}. Link: {interview_link}. Email: {email_delivery_status}.",
+                )
+
+                batch_candidates.append({
+                    "application_id": app.id,
+                    "candidate_id": app.candidate_id,
+                    "candidate_name": cand_name,
+                    "email": cand_email,
+                    "interview_status": app.interview_status,
+                    "candidate_status": app.candidate_status,
+                    "interview_link": interview_link,
+                    "email_delivery": email_delivery_status,
+                })
+
+            structured_batches.append({
+                "batch_index": b_idx,
+                "count": len(batch_candidates),
+                "candidates": batch_candidates,
+            })
+
+        session.commit()
+
+        return {
+            "job_id": job_id,
+            "total_scheduled": len(apps),
+            "batch_size": effective_batch_size,
+            "total_batches": len(structured_batches),
+            "batches": structured_batches,
+        }
+
+
+@router.post("/{job_id}/final-shortlist")
+async def generate_final_shortlist(
+    job_id: int,
+    slot_count: Optional[int] = None,
+    recruiter: str = Depends(get_current_recruiter),
+):
+    """
+    Stage 9: Final Shortlist Generation
+    Ranks candidates who completed the AI interview reflecting interview outcomes,
+    caps at slot count, and updates candidate_status to 'final_result'.
+    """
+    with Session(engine) as session:
+        user = _get_recruiter_user(session, recruiter)
+        job = _get_owned_job_or_403(session, job_id, user.id)
+
+        apps = session.exec(
+            select(Application)
+            .where(Application.job_id == job_id)
+            .where(
+                (Application.interview_status == "completed")
+                | (Application.interview_eval_score != None)
+                | (Application.status == "automated_interview")
+            )
+        ).all()
+
+        if not apps:
+            raise HTTPException(
+                status_code=400,
+                detail="No interviewed candidates found to generate final shortlist.",
+            )
+
+        def compute_composite(a: Application) -> float:
+            base = float(a.final_score or a.ats_score or 0)
+            eval_s = float(a.interview_eval_score if a.interview_eval_score is not None else 60.0)
+            risk_s = float(a.interview_risk_score or 0)
+            composite = (0.5 * base) + (0.5 * eval_s) - (0.2 * risk_s)
+            return round(max(0.0, min(100.0, composite)), 1)
+
+        ranked = sorted(apps, key=compute_composite, reverse=True)
+        cap = slot_count if (slot_count is not None and slot_count > 0) else len(ranked)
+
+        from ..services.audit import record_audit_event
+        results = []
+        for idx, app in enumerate(ranked):
+            comp_score = compute_composite(app)
+            app.candidate_status = "final_result"
+            if idx < cap:
+                app.status = "shortlisted"
+                decision = "selected"
+            else:
+                app.status = "rejected"
+                decision = "not_selected"
+
+            app.human_reviewer = recruiter
+            session.add(app)
+
+            record_audit_event(
+                session=session,
+                event_type="final_shortlist",
+                application_id=app.id,
+                candidate_id=app.candidate_id,
+                job_id=job_id,
+                ats_score=app.ats_score,
+                project_score=app.project_score,
+                final_score=app.final_score,
+                human_reviewer=recruiter,
+                human_action=f"final_decision_{decision}",
+                final_recommendation=f"Final rank #{idx+1} (composite: {comp_score}). Decision: {decision}.",
+            )
+
+            results.append({
+                "rank": idx + 1,
+                "application_id": app.id,
+                "candidate_id": app.candidate_id,
+                "composite_score": comp_score,
+                "ats_score": app.ats_score,
+                "project_score": app.project_score,
+                "final_score": app.final_score,
+                "interview_eval_score": app.interview_eval_score,
+                "interview_risk_score": app.interview_risk_score,
+                "candidate_status": app.candidate_status,
+                "final_decision": decision,
+            })
+
+        session.commit()
+
+        return {
+            "job_id": job_id,
+            "total_evaluated": len(ranked),
+            "final_shortlist_count": min(cap, len(ranked)),
+            "final_shortlist": results,
+        }
+
 
 
