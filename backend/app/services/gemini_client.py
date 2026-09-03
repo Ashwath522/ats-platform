@@ -226,8 +226,13 @@ class GeminiClient:
                         or 'rate' in error_str or 'limit' in error_str
                         or 'exhausted' in error_str or 'resource' in error_str):
                     raise RateLimitError(f"Gemini rate limit hit: {e}")
+                # 504 / deadline / server overload — no point retrying same key
+                if ('504' in error_str or 'deadline' in error_str
+                        or '503' in error_str or 'unavailable' in error_str
+                        or '500' in error_str):
+                    raise RateLimitError(f"Gemini server error (skip key): {e}")
                 if 'timeout' in error_str and attempt < max_retries - 1:
-                    time.sleep(5)
+                    time.sleep(2)
                     continue
                 raise e
         # Should not reach here (loop returns or raises), but be safe.

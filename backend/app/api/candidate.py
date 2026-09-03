@@ -427,7 +427,7 @@ async def score_project(
                         final_score=result.get("final_score"),
                         matched_skills=result.get("skills_matched", []),
                         missing_skills=result.get("skills_missing", []),
-                        llm_providers_consulted=[result.get("api_used")] if result.get("api_used") in ("groq", "gemini") else [],
+                        llm_providers_consulted=[p for p in (result.get("api_used") or "").split("+") if p in ("groq", "gemini")],
                         raw_verdicts=result,
                         final_recommendation=result.get("ai_recommendation"),
                     )

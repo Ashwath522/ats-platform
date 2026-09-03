@@ -118,29 +118,42 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         logger.error(f"Embedding error: {e}")
         semantic_score = 0.0
 
-    groq_key = os.environ.get("GROQ_API_KEY")
+    # ── DUAL-LLM SCORING: Both Groq and Gemini run unconditionally ───────────
+    # Key rotation: iterate comma-separated keys, retry on rate-limit
+    groq_key_raw = os.environ.get("GROQ_API_KEY", "")
+    groq_keys = [k.strip() for k in groq_key_raw.replace("\n", ",").split(",") if k.strip()]
+
+    gemini_key_raw = os.environ.get("GEMINI_API_KEY", "")
+    gemini_keys = [k.strip() for k in gemini_key_raw.replace("\n", ",").split(",") if k.strip()]
+
     groq_result = None
-    if groq_key:
-        groq_keys = [k.strip() for k in groq_key.replace("\n", ",").split(",") if k.strip()]
+    if groq_keys:
         for k in groq_keys:
             try:
                 gc = GroqClient(k)
                 groq_result = gc.analyze_project(student, combined, job)
-                if groq_result:
+                if groq_result and (groq_result.get('project_score', 0) > 0 or count_words(groq_result) >= 20):
                     break
+                groq_result = None  # useless result, try next key
+            except GRateLimitError:
+                logger.warning("[SCORER] Groq key rate-limited, rotating to next key")
+                continue
             except Exception as e:
                 logger.error(f"[SCORER] Groq exception: {e}")
 
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    # Gemini always runs regardless of Groq outcome (unconditional dual-LLM)
     gemini_result = None
-    if not groq_result and gemini_key:
-        gemini_keys = [k.strip() for k in gemini_key.replace("\n", ",").split(",") if k.strip()]
+    if gemini_keys:
         for k in gemini_keys:
             try:
                 gmc = GeminiClient(k)
                 gemini_result = gmc.analyze_project(student, combined, job)
-                if gemini_result:
+                if gemini_result and (gemini_result.get('project_score', 0) > 0 or count_words(gemini_result) >= 20):
                     break
+                gemini_result = None  # useless result, try next key
+            except GemRateLimitError:
+                logger.warning("[SCORER] Gemini key rate-limited, rotating to next key")
+                continue
             except Exception as e:
                 logger.error(f"[SCORER] Gemini exception: {e}")
 
@@ -151,14 +164,37 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         if not r: return False
         return (r.get('project_score', 0) > 0 or r.get('content_quality', 0) > 0 or count_words(r) >= 20)
 
-    candidates = []
-    if _has_useful_content(groq_result): candidates.append(('groq', groq_result, groq_words))
-    if _has_useful_content(gemini_result): candidates.append(('gemini', gemini_result, gemini_words))
+    groq_useful = _has_useful_content(groq_result)
+    gemini_useful = _has_useful_content(gemini_result)
 
-    if candidates:
-        best_name, best_result, best_words = max(candidates, key=lambda x: (x[1].get('content_quality', 0), x[2]))
-        api_used = best_name
+    # ── Combine both results per Ganesh's Core-link-pro dual-LLM design ───────
+    if groq_useful and gemini_useful:
+        # Both succeeded: average scores, merge skills (deduplicated), use more-verbose as primary text source
+        groq_score = float(groq_result.get('project_score', 0) or 0)
+        gem_score  = float(gemini_result.get('project_score', 0) or 0)
+        combined_proj_score = round((groq_score + gem_score) / 2.0, 1)
+
+        # Merge skills lists, deduplicated, case-insensitive
+        sm_merged = list({s.lower(): s for s in (groq_result.get('skills_matched', []) + gemini_result.get('skills_matched', []))}.values())
+        miss_merged = list({s.lower(): s for s in (groq_result.get('skills_missing', []) + gemini_result.get('skills_missing', []))}.values())
+
+        # Primary text source: whichever has more total words
+        primary = groq_result if groq_words >= gemini_words else gemini_result
+        best_result = {
+            **primary,
+            'project_score': combined_proj_score,
+            'skills_matched': sm_merged,
+            'skills_missing': miss_merged,
+        }
+        api_used = 'groq+gemini'
+    elif groq_useful:
+        best_result = groq_result
+        api_used = 'groq'
+    elif gemini_useful:
+        best_result = gemini_result
+        api_used = 'gemini'
     else:
+        # Neither LLM returned anything useful — pure deterministic fallback
         best_result = {
             'project_score': round(keyword_score * 0.6 + semantic_score * 0.4, 1),
             'skills_matched': kw_result.get('matched', []),
@@ -174,15 +210,14 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         }
         api_used = 'fallback'
 
+    # ── Third LLM call: synthesized conclusion referencing both models ─────────
     conclusion = ""
     if groq_result or gemini_result:
         conclusion_client = None
-        if groq_key:
-            first_groq = groq_keys[0] if ('groq_keys' in locals() and groq_keys) else groq_key
-            conclusion_client = GroqClient(first_groq)
-        elif gemini_key:
-            first_gemini = gemini_keys[0] if ('gemini_keys' in locals() and gemini_keys) else gemini_key
-            conclusion_client = GeminiClient(first_gemini)
+        if groq_keys:
+            conclusion_client = GroqClient(groq_keys[0])
+        elif gemini_keys:
+            conclusion_client = GeminiClient(gemini_keys[0])
         if conclusion_client:
             conclusion = _generate_conclusion(gemini_result, groq_result, conclusion_client)
 
