@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 
 const scoutCSS = `
@@ -51,6 +51,8 @@ const scoutCSS = `
 
 import { useNavigate, Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import Onboarding from '../../components/Onboarding.jsx'
+import AppShell from '../../components/AppShell.jsx'
+import RecruiterAccessRequest from '../../components/RecruiterAccessRequest.jsx'
 import { Home, Briefcase, Users, Building, LogOut } from 'lucide-react'
 
 export default function RecruiterLayout() {
@@ -58,10 +60,8 @@ export default function RecruiterLayout() {
   const [role, setRole] = useState(() => localStorage.getItem('ats_recruiter_role') || 'recruiter')
   const [isInitializing, setIsInitializing] = useState(true)
 
-  React.useEffect(() => {
-    const timer = setTimeout(() => setIsInitializing(false), 1500)
-    return () => clearTimeout(timer)
-  }, [])
+  // (Removed an artificial 1.5 s "initializing" splash — it only added latency.)
+  React.useEffect(() => { setIsInitializing(false) }, [])
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -71,11 +71,11 @@ export default function RecruiterLayout() {
     loginRecruiter(token, username)
   }
 
-  function handleLogout() {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('ats_recruiter_role')
     logoutRecruiter()
     navigate('/')
-  }
+  }, [logoutRecruiter, navigate])
 
     if (isInitializing && recruiterToken) {
     return (
@@ -101,52 +101,37 @@ export default function RecruiterLayout() {
   }
 
   const navItems = [
-    { id: 'home', label: 'Home', path: '/recruiter/home', icon: <Home size={20} /> },
-    { id: 'jobs', label: 'Jobs', path: '/recruiter/jobs', icon: <Briefcase size={20} /> },
-    { id: 'talent', label: 'Talent', path: '/recruiter/talent', icon: <Users size={20} /> },
-    { id: 'profile', label: 'Profile', path: '/recruiter/profile', icon: <Building size={20} /> },
+    { to: '/recruiter/home', label: 'Home', icon: Home },
+    { to: '/recruiter/jobs', label: 'Jobs', icon: Briefcase },
+    { to: '/recruiter/talent', label: 'Talent', icon: Users },
+    { to: '/recruiter/profile', label: 'Company', icon: Building },
   ]
+  const display = (recruiterUsername || '').split('@')[0]
 
   return (
-    <div className="recruiter-dashboard-layout" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <AppShell
+      tabs={navItems}
+      brandSuffix="for Recruiters"
+      quickLinks={[
+        { to: '/recruiter/jobs?new=1', label: 'Post a job' },
+        { to: '/recruiter/jobs', label: 'Review applicants' },
+        { to: '/recruiter/talent', label: 'Search talent' },
+        { to: '/recruiter/profile', label: 'Company profile' },
+      ]}
+      searchPlaceholder="Search candidates by skill, e.g. React, AutoCAD"
+      onSearch={(q) => navigate(`/recruiter/talent${q ? `?q=${encodeURIComponent(q)}` : ''}`)}
+      account={{ initials: display.substring(0, 2).toUpperCase() || 'RC', label: display || 'Recruiter', sublabel: 'Recruiter', to: '/recruiter/profile' }}
+      actions={
+        <button type="button" className="as-icon-btn" onClick={handleLogout} aria-label="Log out" title="Log out">
+          <LogOut size={18} />
+        </button>
+      }
+    >
       <Onboarding type="recruiter" />
-      
-      {/* Sidebar Navigation (Desktop) */}
-      <div className="recruiter-sidebar" style={{ width: 260, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
-        <div className="admin-topbar-brand" style={{ padding: '24px 20px', borderBottom: '1px solid var(--border)' }}>
-          <div className="admin-topbar-logo">C</div>
-          <div>
-            <div className="admin-topbar-title">CoreLink Recruiter</div>
-          </div>
-        </div>
-        
-        <div style={{ display: 'flex', flexDirection: 'column', padding: '20px 12px', gap: 8, flex: 1 }}>
-          {navItems.map(item => {
-            const isActive = location.pathname.startsWith(item.path)
-            return (
-              <Link 
-                key={item.id}
-                to={item.path}
-                className={`btn ${isActive ? 'btn-primary' : 'btn-ghost'}`} 
-                style={{ textAlign: 'left', justifyContent: 'flex-start', padding: '10px 16px', fontWeight: isActive ? 'bold' : 'normal', textDecoration: 'none', color: isActive ? 'white' : 'var(--text)' }}
-              >
-                <span style={{ marginRight: 12 }}>{item.icon}</span> {item.label}
-              </Link>
-            )
-          })}
-        </div>
-
-        <div style={{ padding: 20, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Signed in as <strong style={{ color: 'var(--text)' }}>{recruiterUsername}</strong></span>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ justifyContent: "flex-start", padding: "8px 12px", color: "var(--text-secondary)" }}><LogOut size={16} style={{ marginRight: 8 }} /> Log out</button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="recruiter-content" style={{ flex: 1, overflowY: 'auto', padding: '40px 60px', background: 'var(--background)' }}>
+      <div className="recruiter-content">
         <Outlet context={{ token: recruiterToken, username: recruiterUsername, api: createAuthedFetch(recruiterToken, handleLogout) }} />
       </div>
-    </div>
+    </AppShell>
   )
 }
 
@@ -211,6 +196,14 @@ function RecruiterAuthPanel({ onLogin }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (mode === 'request') {
+    return (
+      <div className="auth-page">
+        <RecruiterAccessRequest onSwitchToLogin={() => { setMode('login'); setError(null); setMessage(null) }} />
+      </div>
+    )
   }
 
   return (

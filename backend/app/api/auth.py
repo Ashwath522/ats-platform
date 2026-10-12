@@ -1,4 +1,6 @@
 import hashlib
+import json
+import logging
 import os
 import secrets
 import string
@@ -7,13 +9,17 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import create_access_token, get_current_admin, hash_password, verify_password
 from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine, utc_now
 from ..rate_limit import limiter
-from ..services.email_delivery import EmailDeliveryError, send_email
+from ..services import email_templates
+from ..services.email_delivery import EmailDeliveryError, queue_email, send_email
+from ..services.recruiter_verification import verify_recruiter
 
 router = APIRouter(tags=["auth"])
+log = logging.getLogger("ats-platform.auth")
 
 
 def _serialize_user(user: User) -> dict:
@@ -60,14 +66,34 @@ def _invalidate_email_tokens(session: Session, email: str, purpose: str) -> None
     session.commit()
 
 
-def _send_email_or_dev(to: str, subject: str, body: str, dev_payload: Optional[dict] = None) -> dict:
+def _send_email_or_dev(
+    to: str,
+    subject: str,
+    body: str,
+    dev_payload: Optional[dict] = None,
+    html: Optional[str] = None,
+    category: str = "general",
+) -> dict:
     try:
-        send_email(to, subject, body)
+        send_email(to, subject, body, html=html, category=category)
         return {"email_sent": True}
-    except EmailDeliveryError:
+    except EmailDeliveryError as exc:
+        log.warning("Email (%s) to %s not delivered: %s", category, to, exc)
         if _dev_mode_enabled():
             return {"email_sent": False, "dev_only": dev_payload or {}}
         raise HTTPException(status_code=502, detail="Email delivery is not configured")
+
+
+def _queue_quietly(to: Optional[str], message: tuple, category: str) -> Optional[int]:
+    """Fire-and-forget templated email; never raises."""
+    if not to:
+        return None
+    subject, text, html = message
+    try:
+        return queue_email(to, subject, text, html=html, category=category)
+    except Exception as exc:  # pragma: no cover - queue_email already swallows delivery errors
+        log.warning("Could not queue %s email to %s: %s", category, to, exc)
+        return None
 
 
 def _create_user(
@@ -147,11 +173,14 @@ async def register_candidate(request: Request, name: str = Form(""), email: str 
         user = _create_user(session, name=name or email, email=email, password=password, role="candidate")
         user_email = user.email
         otp = _create_email_token(session, user_email, "signup_otp", ttl_minutes=10, digits=True)
+    subject, text, html = email_templates.signup_otp(name.strip() if name else None, otp, minutes=10)
     delivery = _send_email_or_dev(
         user_email,
-        "Verify your ATS Platform account",
-        f"Your ATS Platform verification OTP is {otp}. It expires in 10 minutes.",
+        subject,
+        text,
         {"otp": otp, "purpose": "signup_otp"},
+        html=html,
+        category="signup_otp",
     )
     return {"registered": True, "email": user_email, "verification_required": True, **delivery}
 
@@ -216,18 +245,23 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
 async def request_password_reset(request: Request, email: str = Form(...)):
     normalized_email = email.strip().lower()
     token = None
+    user_name = None
     with Session(engine) as session:
         user = session.exec(select(User).where(User.email == normalized_email)).first()
         if user:
+            user_name = user.name if user.name and user.name != user.email else None
             _invalidate_email_tokens(session, normalized_email, "password_reset")
             token = _create_email_token(session, normalized_email, "password_reset", ttl_minutes=15)
     if not token:
         return {"ok": True}
+    subject, text, html = email_templates.password_reset(user_name, normalized_email, token, minutes=15)
     delivery = _send_email_or_dev(
         normalized_email,
-        "Reset your ATS Platform password",
-        f"Use this reset token within 15 minutes: {token}",
+        subject,
+        text,
         {"reset_token": token, "purpose": "password_reset"},
+        html=html,
+        category="password_reset",
     )
     return {"ok": True, **delivery}
 
@@ -283,11 +317,80 @@ async def recruiter_register_disabled():
     raise HTTPException(status_code=403, detail="Recruiter accounts require admin approval")
 
 
+def _verification_network_enabled() -> bool:
+    """DNS/HTTP verification checks. Off under tests unless explicitly enabled."""
+    flag = os.environ.get("RECRUITER_VERIFY_NETWORK", "").strip().lower()
+    if flag:
+        return flag in {"1", "true", "yes", "on"}
+    return os.environ.get("TESTING") != "1"
+
+
+def _clean(value: Optional[str], limit: int = 300) -> Optional[str]:
+    value = (value or "").strip()
+    return value[:limit] or None
+
+
+async def _run_verification(name, email, phone, company_name, company_website, designation, gstin, cin, linkedin_url) -> dict:
+    return await run_in_threadpool(
+        verify_recruiter,
+        name,
+        email,
+        phone,
+        company_name,
+        company_website,
+        designation,
+        gstin,
+        cin,
+        linkedin_url,
+        network=_verification_network_enabled(),
+    )
+
+
+@router.post("/api/recruiter-requests/validate")
+@limiter.limit("30/minute")
+async def validate_recruiter_request(
+    request: Request,
+    name: str = Form(""),
+    email: str = Form(""),
+    phone: str = Form(""),
+    company_name: Optional[str] = Form(None),
+    company_website: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    gstin: Optional[str] = Form(None),
+    cin: Optional[str] = Form(None),
+    linkedin_url: Optional[str] = Form(None),
+):
+    """Live verification feedback for the access-request form. Nothing is stored."""
+    return await _run_verification(
+        _clean(name, 120) or "", (email or "").strip().lower()[:254], _clean(phone, 40) or "",
+        _clean(company_name, 200), _clean(company_website, 300), _clean(designation, 120),
+        _clean(gstin, 20), _clean(cin, 30), _clean(linkedin_url, 300),
+    )
+
+
 @router.post("/api/recruiter-requests")
 @limiter.limit("20/minute")
-async def create_recruiter_request(request: Request, name: str = Form(...), email: str = Form(...), phone: str = Form(...)):
+async def create_recruiter_request(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(...),
+    company_name: Optional[str] = Form(None),
+    company_website: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    gstin: Optional[str] = Form(None),
+    cin: Optional[str] = Form(None),
+    linkedin_url: Optional[str] = Form(None),
+):
+    normalized_email = email.strip().lower()
+    company_name = _clean(company_name, 200)
+    company_website = _clean(company_website, 300)
+    designation = _clean(designation, 120)
+    gstin = (_clean(gstin, 20) or "").upper() or None
+    cin = (_clean(cin, 30) or "").upper() or None
+    linkedin_url = _clean(linkedin_url, 300)
+
     with Session(engine) as session:
-        normalized_email = email.strip().lower()
         existing_user = session.exec(select(User).where(User.email == normalized_email)).first()
         if existing_user:
             raise HTTPException(status_code=409, detail="Email already registered")
@@ -299,15 +402,91 @@ async def create_recruiter_request(request: Request, name: str = Form(...), emai
         ).first()
         if existing_pending:
             raise HTTPException(status_code=409, detail="Recruiter request already pending")
-        recruiter_request = RecruiterRequest(name=name.strip(), email=normalized_email, phone=phone.strip())
+
+    verification = await _run_verification(
+        name.strip(), normalized_email, phone.strip(), company_name, company_website, designation, gstin, cin, linkedin_url
+    )
+    if verification["blocked"]:
+        raise HTTPException(status_code=422, detail=verification["block_reason"] or "Request could not be accepted")
+
+    with Session(engine) as session:
+        recruiter_request = RecruiterRequest(
+            name=name.strip(),
+            email=normalized_email,
+            phone=phone.strip(),
+            company_name=company_name,
+            company_website=company_website,
+            designation=designation,
+            gstin=gstin,
+            cin=cin,
+            linkedin_url=linkedin_url,
+            verification_score=verification["score"],
+            verification_verdict=verification["verdict"],
+            verification_json=json.dumps(verification),
+        )
         session.add(recruiter_request)
         session.commit()
         session.refresh(recruiter_request)
-        return {
+        result = {
             "id": recruiter_request.id,
             "status": recruiter_request.status,
             "submitted_at": recruiter_request.submitted_at,
+            "verification": {"score": verification["score"], "verdict": verification["verdict"]},
         }
+        request_id = recruiter_request.id
+
+    _queue_quietly(
+        normalized_email,
+        email_templates.recruiter_request_received(name.strip(), company_name),
+        "recruiter_request_received",
+    )
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    if admin_email:
+        _queue_quietly(
+            admin_email,
+            email_templates.admin_new_recruiter_request(
+                request_id=request_id,
+                name=name.strip(),
+                email=normalized_email,
+                phone=phone.strip(),
+                company_name=company_name,
+                company_website=company_website,
+                designation=designation,
+                score=verification["score"],
+                verdict=verification["verdict"],
+            ),
+            "admin_new_recruiter_request",
+        )
+    return result
+
+
+def _parse_verification(raw: Optional[str]) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _serialize_recruiter_request(item: RecruiterRequest) -> dict:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "email": item.email,
+        "phone": item.phone,
+        "status": item.status,
+        "submitted_at": item.submitted_at,
+        "company_name": item.company_name,
+        "company_website": item.company_website,
+        "designation": item.designation,
+        "gstin": item.gstin,
+        "cin": item.cin,
+        "linkedin_url": item.linkedin_url,
+        "verification_score": item.verification_score,
+        "verification_verdict": item.verification_verdict,
+        "verification": _parse_verification(item.verification_json),
+    }
 
 
 @router.get("/api/admin/recruiter-requests")
@@ -318,17 +497,29 @@ async def list_recruiter_requests(admin: User = Depends(get_current_admin)):
             .where(RecruiterRequest.status == "pending")
             .order_by(RecruiterRequest.submitted_at.asc())
         ).all()
-        return [
-            {
-                "id": item.id,
-                "name": item.name,
-                "email": item.email,
-                "phone": item.phone,
-                "status": item.status,
-                "submitted_at": item.submitted_at,
-            }
-            for item in requests
-        ]
+        return [_serialize_recruiter_request(item) for item in requests]
+
+
+@router.post("/api/admin/recruiter-requests/{request_id}/reverify")
+async def reverify_recruiter_request(request_id: int, admin: User = Depends(get_current_admin)):
+    with Session(engine) as session:
+        item = session.get(RecruiterRequest, request_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Recruiter request not found")
+        args = (item.name, item.email, item.phone, item.company_name, item.company_website,
+                item.designation, item.gstin, item.cin, item.linkedin_url)
+    verification = await _run_verification(*args)
+    with Session(engine) as session:
+        item = session.get(RecruiterRequest, request_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Recruiter request not found")
+        item.verification_score = verification["score"]
+        item.verification_verdict = verification["verdict"]
+        item.verification_json = json.dumps(verification)
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+        return _serialize_recruiter_request(item)
 
 
 @router.post("/api/admin/recruiter-requests/{request_id}/approve")
@@ -356,12 +547,15 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
         recruiter_request.decided_at = utc_now()
         session.add(recruiter_request)
         session.commit()
+    subject, text, html = email_templates.recruiter_approved(user_data.get("name"), user_email, generated_password)
     try:
         delivery = _send_email_or_dev(
             user_email,
-            "Your ATS Platform recruiter account is approved",
-            f"Your recruiter account is ready.\n\nEmail: {user_email}\nTemporary password: {generated_password}",
+            subject,
+            text,
             {"temporary_password": generated_password, "purpose": "recruiter_credentials"},
+            html=html,
+            category="recruiter_approved",
         )
         response = {"approved": True, "user": user_data, **delivery}
     except HTTPException as e:
@@ -381,7 +575,11 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
 
 
 @router.post("/api/admin/recruiter-requests/{request_id}/reject")
-async def reject_recruiter_request(request_id: int, admin: User = Depends(get_current_admin)):
+async def reject_recruiter_request(
+    request_id: int,
+    reason: Optional[str] = Form(None),
+    admin: User = Depends(get_current_admin),
+):
     with Session(engine) as session:
         recruiter_request = session.get(RecruiterRequest, request_id)
         if not recruiter_request:
@@ -392,4 +590,11 @@ async def reject_recruiter_request(request_id: int, admin: User = Depends(get_cu
         recruiter_request.decided_at = utc_now()
         session.add(recruiter_request)
         session.commit()
+        rejected_email = recruiter_request.email
+        rejected_name = recruiter_request.name
+    _queue_quietly(
+        rejected_email,
+        email_templates.recruiter_rejected(rejected_name, _clean(reason, 500)),
+        "recruiter_rejected",
+    )
     return {"rejected": True, "id": request_id}

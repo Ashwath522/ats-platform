@@ -1,0 +1,147 @@
+.vr {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: var(--font);
+  color: var(--text);
+}
+
+.vr-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.vr-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vr-summary,
+.vr-domain {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.vr-domain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  word-break: break-word;
+}
+
+.vr-domain-title {
+  color: var(--text-muted);
+}
+
+.vr-empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.vr-blocked {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Verdict chip */
+.vr-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.vr-verdict--verified { background: var(--success-bg); color: var(--success); border-color: transparent; }
+.vr-verdict--review { background: var(--warning-bg); color: #8a5a00; border-color: transparent; }
+.vr-verdict--high_risk { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
+
+.vr-verdict-score {
+  padding-left: 6px;
+  margin-left: 2px;
+  border-left: 1px solid currentColor;
+  opacity: 0.85;
+}
+
+/* Score ring */
+.vr-ring {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vr-ring svg { position: absolute; inset: 0; }
+.vr-ring-track { stroke: var(--border); }
+.vr-ring-value { stroke: var(--text-muted); transition: stroke-dashoffset 0.5s ease, stroke var(--transition); }
+.vr-ring--verified .vr-ring-value { stroke: var(--success); }
+.vr-ring--review .vr-ring-value { stroke: var(--warning); }
+.vr-ring--high_risk .vr-ring-value { stroke: var(--danger); }
+
+.vr-ring-label {
+  position: relative;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.vr--compact .vr-ring-label { font-size: 15px; }
+
+/* Checks */
+.vr-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vr-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vr-check:last-child { border-bottom: none; }
+
+.vr-check-icon { flex-shrink: 0; margin-top: 2px; }
+.vr-check--pass .vr-check-icon { color: var(--success); }
+.vr-check--warn .vr-check-icon { color: var(--warning); }
+.vr-check--fail .vr-check-icon { color: var(--danger); }
+.vr-check--skip .vr-check-icon { color: var(--text-muted); }
+.vr-check--skip { opacity: 0.7; }
+
+.vr-check-body { min-width: 0; }
+
+.vr-check-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.vr-check-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.vr--compact .vr-check { padding: 6px 2px; }
+.vr--compact .vr-check-label { font-size: 13px; }
+.vr--compact .vr-check-detail { font-size: 12px; }

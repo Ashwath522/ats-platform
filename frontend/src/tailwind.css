@@ -1,0 +1,7 @@
+/* Several existing components (stepper, recruiter cards, status banner) were
+   written with Tailwind utility classes but Tailwind was never installed, so
+   they rendered unstyled. We load only Tailwind's theme + utilities (no
+   preflight reset) so they render as designed without disturbing styles.css. */
+@layer theme, legacy, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);

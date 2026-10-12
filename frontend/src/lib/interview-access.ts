@@ -76,6 +76,16 @@ export function canTakeInterview(app: ApplicationGate): { allowed: boolean; reas
     }
   }
 
+  // Mirror the backend gate (api/candidate.py::can_take_interview): the
+  // recruiter must explicitly unlock the interview after Stage-2 review.
+  // 'in_progress' lets a candidate resume after a dropped connection.
+  if (app.interview_status !== 'unlocked' && app.interview_status !== 'in_progress') {
+    return {
+      allowed: false,
+      reason: 'Interview unlocks after the recruiter reviews your project.',
+    }
+  }
+
   return { allowed: true, reason: 'Interview unlocked and ready to take' }
 }
 

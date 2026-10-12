@@ -57,8 +57,8 @@ export default function CandidateLogin() {
             : 'Create an account to start building your portfolio and applying to jobs.'}
         </p>
 
-        <label>Username</label>
-        <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. alex" />
+        <label>Email</label>
+        <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="you@example.com" autoComplete="email" inputMode="email" />
 
         <label>Password</label>
         <input type="password" value={password} onChange={e => setPassword(e.target.value)}

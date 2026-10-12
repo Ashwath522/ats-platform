@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CoreLink</string>
+    <string name="title_activity_main">CoreLink</string>
+    <string name="package_name">com.corelink.hiring</string>
+    <string name="custom_url_scheme">com.corelink.hiring</string>
+</resources>

@@ -67,7 +67,7 @@ def test_role_separation_rejects_wrong_role_on_admin_and_recruiter_routes():
 def test_recruiter_request_approve_creates_user_and_triggers_email(monkeypatch):
     sent = []
 
-    def fake_send_email(to, subject, body):
+    def fake_send_email(to, subject, body, **kwargs):
         sent.append({"to": to, "subject": subject, "body": body})
 
     monkeypatch.setattr(auth_api, "send_email", fake_send_email)
@@ -153,7 +153,7 @@ def test_password_reset_dev_fallback_token_is_single_use(monkeypatch):
 def test_recruiter_request_approve_db_commits_even_if_email_fails(monkeypatch):
     monkeypatch.delenv("DEV_MODE", raising=False)
     
-    def fake_send_email(to, subject, body):
+    def fake_send_email(to, subject, body, **kwargs):
         raise auth_api.EmailDeliveryError("Simulated failure")
 
     monkeypatch.setattr(auth_api, "send_email", fake_send_email)

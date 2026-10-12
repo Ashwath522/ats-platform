@@ -46,10 +46,15 @@ describe('canTakeInterview Gatekeeper', () => {
     expect(res.reason).toContain('must complete Repo / Project Verification')
   })
 
-  it('allows interview after shortlist and repo verification complete', () => {
-    const res = canTakeInterview({ status: 'shortlisted', repo_match_score: 85 })
+  it('allows interview after shortlist, repo verification and recruiter unlock', () => {
+    const res = canTakeInterview({ status: 'shortlisted', repo_match_score: 85, interview_status: 'unlocked' })
     expect(res.allowed).toBe(true)
     expect(res.reason).toContain('unlocked')
+  })
+
+  it('stays locked until the recruiter unlocks it (matches backend gate)', () => {
+    const res = canTakeInterview({ status: 'repo_verification', repo_match_score: 85, interview_status: 'locked' })
+    expect(res.allowed).toBe(false)
   })
 })
 

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .db import init_db, engine
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
-from .api import recruiter_jobs, recruiter_profile, admin
+from .api import recruiter_jobs, recruiter_profile, admin, interview
 from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
@@ -94,6 +94,7 @@ app.include_router(candidate_posts.router)
 app.include_router(recruiter_jobs.router)
 app.include_router(recruiter_profile.router)
 app.include_router(admin.router)
+app.include_router(interview.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix
 from .api.candidate_profile import upload_candidate_project, get_candidate_status
@@ -106,9 +107,19 @@ app.add_api_route("/recruiter/jobs/{job_id}/repo-verify", run_repo_verification_
 app.add_api_route("/recruiter/jobs/{job_id}/schedule-interviews", schedule_interviews_batch, methods=["POST"])
 app.add_api_route("/recruiter/jobs/{job_id}/final-shortlist", generate_final_shortlist, methods=["POST"])
 
-# Mount static media directory for serving avatars, cover photos, and certification files
-if os.path.exists(MEDIA_DIR):
-    app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+# Serve avatars, cover photos and certification files. Disk first, then the
+# database mirror (MediaBlob) so uploads survive restarts on ephemeral hosts.
+@app.get("/media/{media_path:path}")
+async def serve_media(media_path: str):
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+    from .services.media_utils import load_media
+
+    found = load_media(media_path)
+    if not found:
+        raise HTTPException(status_code=404, detail="Not found")
+    data, ctype = found
+    return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/")

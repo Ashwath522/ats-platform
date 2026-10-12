@@ -23,7 +23,17 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    engine = create_engine(DATABASE_URL, echo=False)
+    # pool_pre_ping/pool_recycle: serverless Postgres (Neon) suspends idle
+    # compute and drops connections; without these the first request after
+    # idle fails with "SSL connection has been closed unexpectedly".
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_recycle=280,
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),
+        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "5")),
+    )
 else:
     DB_PATH = os.path.join(DATA_DIR, "ats.db")
     engine = create_engine(
@@ -87,6 +97,16 @@ class RecruiterRequest(SQLModel, table=True):
     status: str = Field(default="pending", index=True)  # pending | approved | rejected
     submitted_at: datetime = Field(default_factory=utc_now)
     decided_at: Optional[datetime] = None
+    # Company / business verification (see services/recruiter_verification.py)
+    company_name: Optional[str] = None
+    company_website: Optional[str] = None
+    designation: Optional[str] = None
+    gstin: Optional[str] = None
+    cin: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    verification_score: Optional[int] = None
+    verification_verdict: Optional[str] = None  # verified | review | high_risk
+    verification_json: Optional[str] = None
 
 
 class EmailToken(SQLModel, table=True):
@@ -275,10 +295,89 @@ class Suggestion(SQLModel, table=True):
 
 
 
+class VectorDoc(SQLModel, table=True):
+    """Database-backed vector store (used instead of ChromaDB on hosts with an
+    ephemeral disk, e.g. Render free tier + Neon Postgres)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    collection: str = Field(index=True)
+    doc_id: str = Field(index=True)
+    document: str = ""
+    metadata_json: str = "{}"
+    embedding_json: str = "[]"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class MediaBlob(SQLModel, table=True):
+    """Durable copy of uploaded media (avatars, covers, certificates) so files
+    survive container restarts on hosts without a persistent disk."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    path: str = Field(index=True, unique=True)
+    content_type: str = "application/octet-stream"
+    data: bytes = Field(default=b"")
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class EmailLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    to_email: str = Field(index=True)
+    subject: str
+    category: str = Field(default="general", index=True)
+    provider: Optional[str] = None
+    status: str = Field(default="queued", index=True)  # queued | sent | failed | logged
+    attempts: int = 0
+    error: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    sent_at: Optional[datetime] = None
+
+
+class InterviewSession(SQLModel, table=True):
+    """One live AI interview run for an application."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(foreign_key="application.id", index=True)
+    candidate_id: int = Field(index=True)
+    job_id: Optional[int] = Field(default=None, index=True)
+    status: str = Field(default="active", index=True)  # active | completed | abandoned
+    plan_json: str = "[]"          # planned base questions
+    transcript_json: str = "[]"    # [{role, text, kind, q_index, ts}]
+    question_index: int = 0
+    followups_on_current: int = 0
+    provider: Optional[str] = None
+    latency_json: str = "[]"       # client + server latency samples
+    eval_json: Optional[str] = None
+    started_at: datetime = Field(default_factory=utc_now)
+    completed_at: Optional[datetime] = None
+
+
 def init_db():
     SQLModel.metadata.create_all(engine)
     if engine.url.drivername.startswith("sqlite"):
         _migrate_sqlite()
+    _add_missing_columns()
+
+
+def _add_missing_columns():
+    """Dialect-aware, additive-only migration: adds any model column that is
+    missing from an existing table (works for SQLite *and* PostgreSQL).
+    New columns are added as NULLable without defaults, which is safe for
+    both engines; model-level defaults apply to new rows."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    preparer = engine.dialect.identifier_preparer
+    for table in SQLModel.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        have = {c["name"] for c in inspector.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in have or col.primary_key:
+                continue
+            col_type = col.type.compile(dialect=engine.dialect)
+            ddl = f"ALTER TABLE {preparer.quote(table.name)} ADD COLUMN {preparer.quote(col.name)} {col_type}"
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+            except Exception as exc:  # pragma: no cover - best effort
+                import logging
+                logging.getLogger("ats-platform").warning("[MIGRATE] %s failed: %s", ddl, exc)
 
 
 

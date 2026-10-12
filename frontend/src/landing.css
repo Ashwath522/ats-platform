@@ -1,0 +1,34 @@
+/* App-style welcome screen */
+.lp {
+  min-height: 100vh; min-height: 100dvh;
+  background: radial-gradient(130% 70% at 80% -10%, #1f5a86 0%, #0b1f33 55%, #071726 100%);
+  color: #eaf2fb;
+  display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+}
+.lp-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; max-width: 1100px; width: 100%; margin: 0 auto; }
+.lp-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: -0.02em; user-select: none; cursor: default; }
+.lp-mark { width: 32px; height: 32px; border-radius: 10px; background: linear-gradient(135deg, #ffc24b, #f59e0b); color: #0b1f33; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; }
+.lp-signin { color: #fff; font-weight: 600; padding: 8px 14px; border-radius: 10px; background: rgba(255,255,255,0.1); }
+.lp-signin:hover { text-decoration: none; color: #fff; background: rgba(255,255,255,0.16); }
+.lp-hero { padding: 28px 20px 10px; max-width: 760px; margin: 0 auto; width: 100%; }
+.lp-pill { display: inline-block; font-size: 12px; font-weight: 600; color: #fcd34d; background: rgba(245,165,36,0.14); border: 1px solid rgba(245,165,36,0.35); padding: 6px 10px; border-radius: 999px; }
+.lp-hero h1 { font-size: clamp(32px, 8vw, 54px); line-height: 1.08; letter-spacing: -0.03em; margin: 16px 0 12px; color: #fff; }
+.lp-hero h1 em { font-style: normal; color: #f5a524; }
+.lp-hero p { font-size: 16.5px; line-height: 1.55; color: #b8c9da; margin: 0 0 22px; max-width: 600px; }
+.lp-cta { display: flex; flex-direction: column; gap: 10px; }
+@media (min-width: 560px) { .lp-cta { flex-direction: row; } }
+.lp-btn { min-height: 54px; padding: 0 22px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; }
+.lp-btn:hover { text-decoration: none; }
+.lp-btn-primary { background: #f5a524; color: #1b1300; box-shadow: 0 10px 26px rgba(245,165,36,0.3); }
+.lp-btn-primary:hover { color: #1b1300; filter: brightness(1.04); }
+.lp-btn-ghost { background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.18); }
+.lp-btn-ghost:hover { color: #fff; background: rgba(255,255,255,0.13); }
+.lp-free { display: inline-block; margin-top: 16px; color: #7dd3fc; font-weight: 600; font-size: 14.5px; }
+.lp-steps { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 26px 20px; max-width: 760px; width: 100%; margin: 0 auto; }
+@media (min-width: 700px) { .lp-steps { grid-template-columns: 1fr 1fr; } }
+.lp-step { display: flex; gap: 14px; align-items: flex-start; padding: 14px; border-radius: 16px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); }
+.lp-step-n { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; color: #0b1f33; background: #2dd4bf; }
+.lp-step strong { color: #fff; font-size: 15.5px; }
+.lp-step p { margin: 2px 0 0; color: #a9bccf; font-size: 14px; line-height: 1.45; }
+.lp-foot { margin-top: auto; padding: 18px 20px 24px; text-align: center; color: #6f87a0; font-size: 12.5px; }

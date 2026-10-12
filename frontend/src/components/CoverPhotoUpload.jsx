@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import './CoverPhotoUpload.css'
+import { mediaUrl } from '../lib/api.js'
 
 export default function CoverPhotoUpload({
   coverPhotoUrl,
@@ -72,7 +73,7 @@ export default function CoverPhotoUpload({
         }}
       >
         {coverPhotoUrl ? (
-          <img src={coverPhotoUrl} alt="Cover Photo" className="cover-photo-image" />
+          <img src={mediaUrl(coverPhotoUrl)} alt="Cover Photo" className="cover-photo-image" />
         ) : (
           <div className="cover-photo-placeholder">
             <div className="placeholder-gradient"></div>

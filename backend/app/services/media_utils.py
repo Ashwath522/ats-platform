@@ -136,7 +136,9 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
             raise e
         raise HTTPException(status_code=500, detail=f"Failed to save image: {str(e)}")
         
-    return f"{target_subfolder}/{unique_name}"
+    rel = f"{target_subfolder}/{unique_name}"
+    mirror_to_db(rel, dest_path)
+    return rel
 
 
 def validate_and_save_cert_file(file: UploadFile) -> str:
@@ -202,7 +204,9 @@ def validate_and_save_cert_file(file: UploadFile) -> str:
             raise e
         raise HTTPException(status_code=500, detail=f"Failed to save certificate: {str(e)}")
         
-    return f"certifications/{unique_name}"
+    rel = f"certifications/{unique_name}"
+    mirror_to_db(rel, dest_path)
+    return rel
 
 
 def delete_media_file(relative_path: str) -> None:
@@ -219,3 +223,75 @@ def delete_media_file(relative_path: str) -> None:
             os.remove(full_path)
         except Exception:
             pass
+    if media_db_enabled():
+        try:
+            from sqlmodel import Session, select
+            from ..db import engine, MediaBlob
+
+            with Session(engine) as session:
+                row = session.exec(select(MediaBlob).where(MediaBlob.path == clean_rel.replace(os.sep, "/"))).first()
+                if row:
+                    session.delete(row)
+                    session.commit()
+        except Exception:
+            pass
+
+
+# ── Durable media (survives container restarts on ephemeral-disk hosts) ──────
+
+def media_db_enabled() -> bool:
+    mode = os.environ.get("MEDIA_STORE", "").strip().lower()
+    if mode in {"db", "disk"}:
+        return mode == "db"
+    return bool(os.environ.get("DATABASE_URL"))
+
+
+def mirror_to_db(relative_path: str, full_path: str) -> None:
+    if not media_db_enabled():
+        return
+    try:
+        import mimetypes
+        from sqlmodel import Session, select
+        from ..db import engine, MediaBlob
+
+        with open(full_path, "rb") as fh:
+            data = fh.read()
+        ctype = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+        with Session(engine) as session:
+            row = session.exec(select(MediaBlob).where(MediaBlob.path == relative_path)).first() or MediaBlob(path=relative_path)
+            row.data, row.content_type = data, ctype
+            session.add(row)
+            session.commit()
+    except Exception as exc:  # never break the upload because of the mirror
+        import logging
+        logging.getLogger("ats-platform").warning("[MEDIA] DB mirror failed for %s: %s", relative_path, exc)
+
+
+def load_media(relative_path: str):
+    """Return (bytes, content_type) from disk or DB, or None. Rehydrates the
+    disk cache from the DB after a restart."""
+    import mimetypes
+
+    clean = os.path.normpath(relative_path).lstrip("/\\")
+    if clean.startswith("..") or os.path.isabs(clean):
+        return None
+    full = os.path.join(MEDIA_DIR, clean)
+    if os.path.isfile(full):
+        with open(full, "rb") as fh:
+            return fh.read(), mimetypes.guess_type(full)[0] or "application/octet-stream"
+    if not media_db_enabled():
+        return None
+    from sqlmodel import Session, select
+    from ..db import engine, MediaBlob
+
+    with Session(engine) as session:
+        row = session.exec(select(MediaBlob).where(MediaBlob.path == clean.replace(os.sep, "/"))).first()
+        if not row:
+            return None
+        try:
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as fh:
+                fh.write(row.data)
+        except Exception:
+            pass
+        return row.data, row.content_type

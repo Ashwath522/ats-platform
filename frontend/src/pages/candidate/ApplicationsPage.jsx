@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { CandidateStepper } from '../../components/CandidateStepper.jsx'
-import { AIInterviewModal } from '../../components/AIInterviewModal.jsx'
 import CandidateStatusBanner from '../../components/CandidateStatusBanner.jsx'
 import { canTakeInterview } from '../../lib/interview-access.ts'
 
@@ -14,7 +13,8 @@ export default function ApplicationsPage() {
   const [loading, setLoading] = useState(true)
   const [uploadingId, setUploadingId] = useState(null)
   const [uploadError, setUploadError] = useState(null)
-  const [activeInterviewApp, setActiveInterviewApp] = useState(null)
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const loadApplications = useCallback(() => {
     api('/api/candidate/jobs/applications/mine')
@@ -29,6 +29,12 @@ export default function ApplicationsPage() {
   useEffect(() => {
     loadApplications()
   }, [loadApplications])
+
+  // Deep link from the interview invitation email: /candidate/repo?interview=<id>
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('interview')
+    if (id && /^\d+$/.test(id)) navigate(`/candidate/interview/${id}`, { replace: true })
+  }, [location.search, navigate])
 
   const handleFileUpload = async (e, appId) => {
     const file = e.target.files[0]
@@ -151,6 +157,7 @@ export default function ApplicationsPage() {
                   status={app.status}
                   repoScore={app.repo_match_score ?? app.project_score}
                   interviewStatus={app.interview_status}
+                  candidateStatus={app.candidate_status}
                 />
 
                 {/* Upload Project Section */}
@@ -182,11 +189,11 @@ export default function ApplicationsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {gate.allowed ? (
                       <button
-                        onClick={() => setActiveInterviewApp(app)}
+                        onClick={() => navigate(`/candidate/interview/${app.application_id}`)}
                         className="btn btn-primary"
                         style={{ padding: '8px 16px', fontSize: 13, fontWeight: 'bold' }}
                       >
-                        🎥 Take AI Video Interview
+                        🎙️ Start AI Interview
                       </button>
                     ) : app.interview_status === 'completed' ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -292,19 +299,6 @@ export default function ApplicationsPage() {
         </div>
       )}
 
-      {/* AI Interview Modal */}
-      {activeInterviewApp && (
-        <AIInterviewModal
-          applicationId={activeInterviewApp.application_id}
-          jobTitle={activeInterviewApp.job_title}
-          candidateName={activeInterviewApp.candidate_name || 'Candidate'}
-          onClose={() => setActiveInterviewApp(null)}
-          onCompleted={() => {
-            setActiveInterviewApp(null)
-            loadApplications()
-          }}
-        />
-      )}
     </div>
   )
 }

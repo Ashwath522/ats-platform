@@ -1,5 +1,6 @@
 """Recruiter job posting CRUD + applicant ranking."""
 import json
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -488,8 +489,8 @@ async def finalize_applicant(
         
         # Get candidate profile/user to send email
         from ..db import CandidateUser
-        from ..utils.email_utils import DEV_MODE
         import logging
+        DEV_MODE = os.environ.get("DEV_MODE", "").lower() in {"1", "true", "yes"}
         
         candidate = session.get(CandidateUser, app.candidate_id)
         profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)).first()
@@ -701,7 +702,8 @@ async def schedule_interviews_batch(
         raw_batches = [apps[i : i + effective_batch_size] for i in range(0, len(apps), effective_batch_size)]
 
         from ..services.audit import record_audit_event
-        from ..services.email_delivery import send_email
+        from ..services import email_templates
+        from ..services.email_delivery import email_configured, queue_email
         import logging
         log = logging.getLogger("interview_scheduler")
 
@@ -725,22 +727,24 @@ async def schedule_interviews_batch(
                 )
                 cand_name = getattr(profile, "full_name", None) or getattr(cand_user, "username", None) or "Candidate"
 
-                interview_link = f"/interview/{app.id}"
-                subject = f"Interview Invitation: {job.title}"
-                body = (
-                    f"Hello {cand_name},\n\n"
-                    f"Congratulations! You have been selected for the AI Video Interview for {job.title}.\n"
-                    f"Your interview session is scheduled in Batch #{b_idx}.\n\n"
-                    f"Interview Link: {interview_link}\n\n"
-                    f"Please log in to your candidate portal to begin when ready."
+                interview_link = email_templates.interview_link(app.id)
+                subject, body, html_body = email_templates.interview_invitation(
+                    cand_name if cand_name != "Candidate" else None,
+                    job.title,
+                    app.id,
+                    batch_index=b_idx,
                 )
 
-                email_delivery_status = "sent"
+                configured = email_configured()
                 try:
-                    send_email(cand_email, subject, body)
+                    # Always goes through queue_email so the attempt shows up in EmailLog.
+                    queue_email(cand_email, subject, body, html=html_body, category="interview_invitation")
+                    email_delivery_status = "queued" if configured else "not_configured"
                 except Exception as mail_err:
-                    log.info(f"[DEV_MODE EMAIL] To: {cand_email} | Subject: {subject} | Link: {interview_link} | Log: {mail_err}")
-                    email_delivery_status = f"dev_mode_logged: {str(mail_err)}"
+                    log.warning("Could not queue interview invitation to %s: %s", cand_email, mail_err)
+                    email_delivery_status = "failed"
+                if not configured:
+                    log.info(f"[EMAIL NOT CONFIGURED] To: {cand_email} | Subject: {subject} | Link: {interview_link}")
 
                 session.add(app)
                 record_audit_event(

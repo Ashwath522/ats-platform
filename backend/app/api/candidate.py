@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends
 from sqlmodel import Session, select
 
-from ..db import engine, AnalysisCache, Company, JobDescription, Resume, Application, Job
+from ..db import engine, AnalysisCache, Company, JobDescription, Resume, Application, Job, CandidateUser
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
 from ..services.deep_analysis import make_cache_key, run_deep_analysis, run_resume_suggestions
@@ -502,11 +502,18 @@ async def check_interview_access(app_id: int):
 @router.post("/applications/{app_id}/submit_interview")
 async def submit_interview_results(
     app_id: int,
-    payload: dict
+    payload: dict,
+    candidate: str = Depends(get_current_candidate),
 ):
+    """Legacy endpoint (pre server-side interviewer). Now requires the owning
+    candidate's token; new clients use /api/interview/sessions/{id}/finish,
+    which computes the evaluation on the server instead of trusting the client."""
     with Session(engine) as session:
         app_record = session.get(Application, app_id)
         if not app_record:
+            raise HTTPException(status_code=404, detail="Application not found")
+        _cand = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
+        if not _cand or app_record.candidate_id != _cand.id:
             raise HTTPException(status_code=404, detail="Application not found")
         
         access = can_take_interview(app_record)

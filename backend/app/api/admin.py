@@ -99,3 +99,37 @@ async def admin_retention_purge(
         return {"success": True, **result}
 
 
+
+@router.get("/api/admin/email/status")
+async def admin_email_status(admin: User = Depends(get_current_admin)):
+    """Which email provider is active, whether it is configured, and the recent delivery log."""
+    from ..services import email_delivery
+
+    return {
+        "provider": email_delivery.provider_name(),
+        "configured": email_delivery.email_configured(),
+        "sender": email_delivery.sender_address() or None,
+        "sender_name": email_delivery.sender_name(),
+        "logs": email_delivery.recent_logs(50),
+    }
+
+
+@router.post("/api/admin/email/test")
+async def admin_email_test(
+    to: str = Form(...),
+    admin: User = Depends(get_current_admin),
+):
+    """Send a test email synchronously and report the outcome."""
+    from starlette.concurrency import run_in_threadpool
+    from ..services import email_delivery, email_templates
+
+    to = to.strip()
+    if "@" not in to or len(to) > 254:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    subject, text, html = email_templates.delivery_test()
+    provider = email_delivery.provider_name()
+    try:
+        await run_in_threadpool(email_delivery.send_email, to, subject, text, html=html, category="admin_test")
+    except email_delivery.EmailDeliveryError as exc:
+        return {"success": False, "provider": provider, "to": to, "error": str(exc)}
+    return {"success": True, "provider": provider, "to": to}

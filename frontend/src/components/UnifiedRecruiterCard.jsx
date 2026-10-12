@@ -166,7 +166,10 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
                   ? 'Candidate invited to live AI interview.'
                   : 'Interview will unlock after Recruiter Stage 2 review.'}
               </p>
-              {interview_status !== 'unlocked' && effectiveRepoScore !== null && effectiveRepoScore !== undefined && (
+              {interview_status !== 'unlocked' && effectiveRepoScore !== null && effectiveRepoScore !== undefined && status !== 'shortlisted' && (
+                <p className="text-xs text-amber-300 mt-2">Shortlist the candidate first to unlock the interview.</p>
+              )}
+              {interview_status !== 'unlocked' && effectiveRepoScore !== null && effectiveRepoScore !== undefined && status === 'shortlisted' && (
                 <button
                   onClick={() => onUnlockInterview && onUnlockInterview(id)}
                   className="text-xs font-medium bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 px-3 rounded-lg mt-2 transition"
@@ -249,7 +252,7 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
           </div>
         )}
 
-        <div className="flex justify-end gap-3 w-full">
+        <div className="flex flex-wrap justify-end gap-3 w-full">
           <button
             onClick={() => setShowNoteInput(!showNoteInput)}
             className="text-xs text-slate-400 hover:text-slate-200 underline self-center mr-auto"

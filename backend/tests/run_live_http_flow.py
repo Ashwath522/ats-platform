@@ -410,7 +410,8 @@ def run():
     }
     sub_res = client.post(
         f"/api/candidate/applications/{application_id}/submit_interview",
-        json=sub_payload
+        json=sub_payload,
+        headers=cand_headers,
     )
     print(f"Response ({sub_res.status_code}): {sub_res.text}")
     assert sub_res.status_code == 200, f"Interview submission failed: {sub_res.text}"

@@ -11,7 +11,8 @@ from sqlmodel import Session, select
 from ..db import engine, CandidateUser, CandidateProfile, Application, Resume, utc_now
 from ..auth import get_current_candidate
 from ..resume_utils import save_and_index_resume
-from ..utils.email_utils import send_welcome_email
+from ..services import email_templates
+from ..services.email_delivery import queue_email
 from ..services.media_utils import validate_and_save_image, validate_and_save_cert_file, delete_media_file
 import tempfile
 import os
@@ -155,6 +156,7 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
     with Session(engine) as session:
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
+        previous_contact_email = (profile.contact_email or "").strip().lower()
 
         if update.headline is not None:
             profile.headline = update.headline
@@ -183,13 +185,15 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
         session.add(profile)
         session.commit()
         session.refresh(profile)
-        # Send welcome email if contact email is set
-        if profile.contact_email:
+        # Welcome email the first time a contact email is set (or when it changes).
+        new_contact_email = (profile.contact_email or "").strip()
+        if new_contact_email and new_contact_email.lower() != previous_contact_email:
             try:
-                send_welcome_email(profile.contact_email, candidate)
+                display_name = getattr(profile, "full_name", None) or None
+                subject, text, html = email_templates.welcome(display_name)
+                queue_email(new_contact_email, subject, text, html=html, category="welcome")
             except Exception as e:
-                import logging
-                logging.error(f"Failed to send welcome email: {e}")
+                logger.warning("Failed to queue welcome email: %s", e)
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume)

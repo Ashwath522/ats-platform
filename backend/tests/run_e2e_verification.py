@@ -414,7 +414,7 @@ def run_stage_6_and_7(st1: Dict[str, Any]) -> Dict[str, Any]:
     # Stage 7 Email verification: Verify email details for each scheduled candidate
     for b in [b1, b2]:
         for c in b["candidates"]:
-            assert "dev_mode_logged" in c["email_delivery"] or c["email_delivery"] == "sent"
+            assert c["email_delivery"] in {"queued", "not_configured", "failed"}
             assert c["interview_link"].startswith("/interview/")
             assert c["candidate_status"] == "interview"
             assert c["interview_status"] == "unlocked"

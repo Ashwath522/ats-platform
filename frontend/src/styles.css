@@ -477,6 +477,9 @@ img { max-width: 100%; }
    Buttons
    ===================================================================== */
 
+/* Base button look lives in a cascade layer so Tailwind utility classes
+   used by some components (layer 'utilities') can override it. */
+@layer legacy {
 button, .btn {
   font-family: var(--font);
   font-size: 14px;
@@ -511,6 +514,8 @@ button:disabled, .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
+}
+
 }
 
 /* Primary */
@@ -1856,3 +1861,38 @@ td.score-cell {
 .flex { display: flex; }
 .flex-center { display: flex; align-items: center; }
 .justify-between { justify-content: space-between; }
+
+/* ── Mobile fixes found during device testing ─────────────────────────── */
+html, body { overflow-x: hidden; }
+.tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; max-width: 100%; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab-btn { flex: 0 0 auto; white-space: nowrap; min-height: 44px; }
+@media (max-width: 640px) {
+  .admin-topbar { flex-wrap: wrap; gap: 8px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .admin-body { padding: 12px !important; }
+}
+.admin-body table { display: block; overflow-x: auto; max-width: 100%; }
+.admin-body td, .admin-body th { white-space: nowrap; }
+/* Auth screens: app-like on phones */
+.auth-page { min-height: 100vh; min-height: 100dvh; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 24px; background: radial-gradient(130% 70% at 80% -10%, #1f5a86 0%, #0b1f33 55%, #071726 100%); display: flex; align-items: center; justify-content: center; }
+.auth-card { width: 100%; max-width: 440px; }
+.auth-card input { font-size: 16px; min-height: 48px; }
+.auth-card button.primary, .auth-card > .btn-primary, .auth-card > button { width: 100%; justify-content: center; margin-top: 16px; min-height: 50px; font-size: 16px; }
+.auth-card .error-msg { margin-top: 12px; }
+
+/* Aliases for variable names used by older components but never defined
+   (they rendered with transparent backgrounds / invisible text). */
+:root {
+  --surface: var(--bg-card);
+  --background: var(--bg);
+  --text-primary: var(--text);
+  --text-dim: var(--text-muted);
+  --primary-color: var(--primary);
+  --border-color: var(--border);
+  --accent: #f5a524;
+  --warn: var(--warning);
+  --warn-dim: var(--warning-bg);
+  --error: var(--danger);
+}
+
+.app-frame { min-height: 100vh; min-height: 100dvh; }

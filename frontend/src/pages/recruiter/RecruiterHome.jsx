@@ -27,19 +27,17 @@ export default function RecruiterHome() {
           if (j.status === 'open') active++
         })
 
-        for (const job of jobsData) {
-          try {
-            const appRes = await api(`/api/recruiter/jobs/${job.id}/applicants`)
-            if (appRes.ok) {
-              const appData = await appRes.json()
-              appData.applicants.forEach(a => {
-                if (a.status === 'ats_check') newApp++
-                if (a.status === 'shortlisted') short++
-              })
-            }
-          } catch (e) {}
-        }
-        
+        // Fetch every job's applicants in parallel (was one-by-one)
+        const lists = await Promise.all(jobsData.map(job =>
+          api(`/api/recruiter/jobs/${job.id}/applicants`)
+            .then(r => (r.ok ? r.json() : { applicants: [] }))
+            .catch(() => ({ applicants: [] }))
+        ))
+        lists.forEach(appData => (appData.applicants || []).forEach(a => {
+          if (a.status === 'ats_check') newApp++
+          if (a.status === 'shortlisted') short++
+        }))
+
         setStats({
           activeJobs: active,
           newApplicants: newApp,

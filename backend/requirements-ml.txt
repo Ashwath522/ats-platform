@@ -1,0 +1,4 @@
+# Optional: PyTorch-based embeddings. Install on machines with >=2GB RAM and set
+# EMBEDDING_BACKEND=sentence-transformers to use any Hugging Face model.
+-r requirements.txt
+sentence-transformers

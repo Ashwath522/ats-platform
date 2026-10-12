@@ -1,0 +1,11 @@
+.cs-steps { list-style: none; margin: 12px 0; padding: 4px 2px 8px; display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; }
+.cs-steps::-webkit-scrollbar { display: none; }
+.cs-step { position: relative; flex: 1 1 0; min-width: 50px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.cs-step::before { content: ''; position: absolute; top: 13px; left: -50%; width: 100%; height: 3px; background: var(--border); z-index: 0; }
+.cs-step:first-child::before { display: none; }
+.cs-step.done::before, .cs-step.current::before { background: #2dd4bf; }
+.cs-dot { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--bg-card); color: var(--text-muted); border: 2px solid var(--border); }
+.cs-step.done .cs-dot { background: #0f766e; border-color: #0f766e; color: #fff; }
+.cs-step.current .cs-dot { border-color: #f5a524; color: #92400e; box-shadow: 0 0 0 4px rgba(245, 165, 36, 0.2); }
+.cs-label { font-size: 10.5px; line-height: 1.2; color: var(--text-secondary); max-width: 72px; overflow-wrap: anywhere; }
+.cs-step.current .cs-label { color: var(--text); font-weight: 600; }

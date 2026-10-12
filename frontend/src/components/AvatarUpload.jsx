@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import './AvatarUpload.css'
+import { mediaUrl } from '../lib/api.js'
 
 export default function AvatarUpload({
   avatarUrl,
@@ -89,7 +90,7 @@ export default function AvatarUpload({
         }}
       >
         {avatarUrl ? (
-          <img src={avatarUrl} alt="Avatar" className="avatar-image" />
+          <img src={mediaUrl(avatarUrl)} alt="Avatar" className="avatar-image" />
         ) : (
           <div className="avatar-initials">{getInitials()}</div>
         )}

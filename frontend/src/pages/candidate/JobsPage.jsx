@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useAuth, createAuthedFetch } from '../../auth.jsx'
 import JobCard from '../../components/JobCard.jsx'
 
@@ -79,6 +80,16 @@ export default function JobsPage() {
       }
     } catch (e) {}
   }, [candidateToken])
+
+  // Header search bar / quick links drive the filters through the URL (?q=, ?remote=, ?near=1)
+  const location = useLocation()
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.has('q')) setTitleFilter(params.get('q') || '')
+    if (params.has('remote')) setRemoteFilter(params.get('remote') || '')
+    if (params.get('near') === '1' && userLat == null) requestLocation()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search])
 
   useEffect(() => { loadJobs(); loadApplications() }, [loadJobs, loadApplications])
 

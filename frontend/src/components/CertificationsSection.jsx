@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import './CertificationsSection.css'
+import { mediaUrl } from '../lib/api.js'
 
 export default function CertificationsSection({ certifications = [], onAdd, onDelete, apiCall }) {
   const [showForm, setShowForm] = useState(false)
@@ -189,7 +190,7 @@ export default function CertificationsSection({ certifications = [], onAdd, onDe
                   </a>
                 )}
                 {cert.file_path && (
-                  <a href={`/media/${cert.file_path}`} target="_blank" rel="noopener noreferrer" className="cert-link">
+                  <a href={mediaUrl(cert.file_path)} target="_blank" rel="noopener noreferrer" className="cert-link">
                     {getFileIcon(cert.file_path) === '📄' ? 'Download PDF' : 'View File'} →
                   </a>
                 )}

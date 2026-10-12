@@ -1,12 +1,12 @@
 fastapi
 uvicorn[standard]
 python-multipart
-sentence-transformers
+fastembed            # ONNX embeddings (all-MiniLM-L6-v2) - no PyTorch, fits 512MB hosts
 chromadb
 pdfplumber
 python-docx
 python-dotenv
-sqlmodel
+sqlmodel==0.0.44   # 0.0.46+ rejects naive datetimes used throughout the models
 passlib[bcrypt]
 bcrypt==4.0.1
 python-jose[cryptography]
@@ -25,4 +25,7 @@ spacy
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 groq
 google-generativeai
-sentence-transformers
+
+# --- Hosting / verification ---
+psycopg2-binary      # PostgreSQL driver (Neon / Render Postgres)
+dnspython            # MX/A lookups for recruiter company verification

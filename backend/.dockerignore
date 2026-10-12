@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+data_test/
+media/
+server.log
+.env
+tests/fixtures/*.zip

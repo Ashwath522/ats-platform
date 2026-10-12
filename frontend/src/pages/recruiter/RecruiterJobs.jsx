@@ -10,7 +10,7 @@ export default function RecruiterJobs() {
 
   const [myJobs, setMyJobs] = useState([])
   const [branches, setBranches] = useState([])
-  const [showJobForm, setShowJobForm] = useState(false)
+  const [showJobForm, setShowJobForm] = useState(() => searchParams.get('new') === '1')
   const [jobForm, setJobForm] = useState({
     title: '', description: '', branch: '', salary_min: '', salary_max: '', currency: 'INR',
     location_text: '', requirements: '', remote_type: 'onsite',
@@ -75,7 +75,11 @@ export default function RecruiterJobs() {
 
   async function closeJob(jobId) {
     try {
-      await api(`/api/recruiter/jobs/${jobId}/close`, { method: 'POST' })
+      // Backend has no /close route; closing is a PUT with status=closed.
+      const fd = new FormData()
+      fd.append('status', 'closed')
+      const res = await api(`/api/recruiter/jobs/${jobId}`, { method: 'PUT', body: fd })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not close job')
       await refreshJobs()
     } catch (e) { setError(e.message) }
   }

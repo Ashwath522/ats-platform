@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { UnifiedRecruiterCard } from '../../components/UnifiedRecruiterCard.jsx'
 
 export default function RecruiterTalent() {
@@ -17,21 +17,19 @@ export default function RecruiterTalent() {
       const jobsData = await jobsRes.json()
       setJobs(jobsData)
 
-      const applicantsData = []
-      for (const job of jobsData) {
+      // Load all jobs' applicants in parallel (was sequential → slow on mobile networks)
+      const perJob = await Promise.all(jobsData.map(async (job) => {
         try {
           const appRes = await api(`/api/recruiter/jobs/${job.id}/applicants`)
-          if (appRes.ok) {
-            const data = await appRes.json()
-            data.applicants.forEach(a => {
-              applicantsData.push({ ...a, job_title: job.title, job_id: job.id })
-            })
-          }
+          if (!appRes.ok) return []
+          const data = await appRes.json()
+          return data.applicants.map(a => ({ ...a, job_title: job.title, job_id: job.id }))
         } catch (e) {
           console.error(e)
+          return []
         }
-      }
-      
+      }))
+      const applicantsData = perJob.flat()
       applicantsData.sort((a, b) => (b.ats_score || 0) - (a.ats_score || 0))
       setAllApplicants(applicantsData)
     } catch (e) {
@@ -45,13 +43,16 @@ export default function RecruiterTalent() {
     loadTalent()
   }, [])
 
-  const filteredApplicants = selectedJobFilter === 'all' 
-    ? allApplicants 
-    : allApplicants.filter(a => a.job_id.toString() === selectedJobFilter)
+  const [searchParams] = useSearchParams()
+  const q = (searchParams.get('q') || '').trim().toLowerCase()
+  const filteredApplicants = (selectedJobFilter === 'all'
+    ? allApplicants
+    : allApplicants.filter(a => a.job_id.toString() === selectedJobFilter))
+    .filter(a => !q || JSON.stringify(a).toLowerCase().includes(q))
 
   const handleUpdateStatus = async (appId, newStatus) => {
     try {
-      const res = await api(`/api/recruiter/applications/${appId}/status`, {
+      const res = await api(`/api/recruiter/jobs/applications/${appId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -104,7 +105,7 @@ export default function RecruiterTalent() {
     <div className="recruiter-talent space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Unified Talent Dashboard</h1>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Talent</h1>
           <p className="text-sm text-slate-400">Review ATS resume matches, repo verifications, and AI proctored interviews.</p>
         </div>
         <select 

@@ -22,3 +22,9 @@ backend/data/
 demo_credentials.md
 uploads/
 *.log
+
+# Uploaded media / test artefacts
+backend/media/
+backend/data_test/
+backend/server.log
+frontend/.env.mobile

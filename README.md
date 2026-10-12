@@ -2,6 +2,14 @@
 
 An AI-assisted, proctor-verified Applicant Tracking & Candidate Evaluation Platform with immutable decision audit logging, plain-language score explainability, multi-stage project verification, and real-time computer vision proctoring.
 
+## 📱 Now an app — Android, iOS and installable web
+
+- **Mobile app shell**: shopping-app style header with search, quick-link strip and bottom tab bar (candidate and recruiter), safe-area aware, works as a PWA and as native **Android / iOS apps via Capacitor** (`frontend/android`, `frontend/ios`).
+- **Aria, the AI interviewer**: server-side LLM (Groq → Gemini → OpenRouter → Ollama failover, keys never in the browser), streamed replies spoken sentence-by-sentence, an animated lip-synced character, adaptive end-of-turn detection, typed-answer fallback, and server-side evaluation (no client-supplied scores).
+- **Recruiter business verification**: disposable/free-mail detection, MX + website checks, email↔website domain match, GSTIN checksum, CIN format, trust score for the admin queue.
+- **Reliable email**: Brevo / Resend HTTP APIs (+ SMTP, console), background sending with retries and a delivery log in the admin panel.
+- **Free hosting**: Render + Neon Postgres blueprint — see **[DEPLOY.md](DEPLOY.md)**.
+
 ## ⚡ 5-Minute Zero-Cost Quickstart
 
 The entire platform runs **100% locally with zero cloud API keys and zero paid dependencies** using local Ollama (or deterministic fallback scoring):
@@ -12,9 +20,9 @@ ollama run llama3.2    # Or lightweight models: phi3:mini / qwen2.5:3b
 
 # 2. Backend Setup
 cd backend
-python3 -m venv venv && source venv/bin/activate
+python3.11 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-pytest -v                               # Run test suite (79 tests)
+pytest -q                               # Run test suite (136 tests)
 uvicorn app.main:app --reload --port 8000
 
 # 3. Frontend Setup (in a separate terminal)

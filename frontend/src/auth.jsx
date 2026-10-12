@@ -74,17 +74,35 @@ export function useAuth() {
 
 /**
  * Wrapper around fetch that adds the Authorization header and handles 401s.
+ *
+ * Memoised per (token, onAuthExpired): pages call this on every render and
+ * then list the result in useEffect/useCallback dependencies. Returning a new
+ * function each time caused effects to re-run on every render (an endless
+ * request loop on the Applications page). Same inputs → same function now.
  */
+const _authedFetchCache = new WeakMap()
+
 export function createAuthedFetch(token, onAuthExpired) {
-  return async function authedFetch(url, options = {}) {
+  const key = onAuthExpired || createAuthedFetch
+  let byToken = _authedFetchCache.get(key)
+  if (!byToken) {
+    byToken = new Map()
+    _authedFetchCache.set(key, byToken)
+  }
+  const cached = byToken.get(token)
+  if (cached) return cached
+
+  async function authedFetch(url, options = {}) {
     const res = await fetch(url, {
       ...options,
       headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
     })
     if (res.status === 401) {
-      onAuthExpired()
+      if (onAuthExpired) onAuthExpired()
       throw new Error('Session expired — please log in again.')
     }
     return res
   }
+  byToken.set(token, authedFetch)
+  return authedFetch
 }

@@ -1,0 +1,73 @@
+# Render Blueprint — free tier deployment of CoreLink.
+#   1. Create a free Postgres database on https://neon.tech and copy its
+#      connection string (postgresql://…?sslmode=require).
+#   2. Render dashboard → New → Blueprint → pick this repo. Fill in the
+#      variables marked `sync: false` when prompted.
+# Docs: DEPLOY.md
+services:
+  - type: web
+    name: corelink-api
+    runtime: docker
+    plan: free
+    region: singapore          # closest free region to India → lower interview latency
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL       # Neon connection string
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS       # web app + Capacitor Android (https://localhost) + iOS (capacitor://localhost)
+        value: https://corelink-web.onrender.com,https://localhost,capacitor://localhost,http://localhost
+      - key: APP_PUBLIC_URL     # used for links in emails
+        value: https://corelink-web.onrender.com
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # --- AI (all have free tiers; the app also runs without any of them) ---
+      - key: GROQ_API_KEY       # fastest: live interview turns + project scoring
+        sync: false
+      - key: GEMINI_API_KEY     # fallback provider
+        sync: false
+      - key: INTERVIEW_LLM_ORDER
+        value: groq,gemini,openrouter
+      # --- Email: Render free blocks SMTP ports, so use an HTTP API provider ---
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM         # a sender verified in Brevo
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: CoreLink Hiring
+      # --- Storage on an ephemeral disk: keep everything in Postgres ---
+      - key: VECTOR_BACKEND
+        value: db
+      - key: MEDIA_STORE
+        value: db
+      - key: EMBEDDING_BACKEND
+        value: fastembed
+      - key: DEV_MODE
+        value: "false"
+
+  - type: web
+    name: corelink-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://corelink-api.onrender.com
