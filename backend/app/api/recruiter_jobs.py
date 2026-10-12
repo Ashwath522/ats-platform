@@ -51,9 +51,66 @@ def _job_to_dict(job: Job) -> dict:
         "remote_type": job.remote_type,
         "status": job.status,
         "company_id": job.company_id,
+        "job_type": job.job_type,
+        "experience_level": job.experience_level,
+        "openings": job.openings,
+        "eligibility": job.eligibility,
+        "target_colleges": _parse_target_colleges_json(job.target_colleges_json),
         "created_at": job.created_at.isoformat(),
         "updated_at": job.updated_at.isoformat(),
     }
+
+
+JOB_TYPES = ("internship", "full-time", "part-time", "apprenticeship", "contract")
+EXPERIENCE_LEVELS = ("fresher", "0-2", "2-5", "5+")
+JOB_STATUSES = ("open", "closed", "draft", "paused", "archived")
+
+
+def _parse_target_colleges_json(raw: Optional[str]) -> list:
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _clean_target_colleges(raw: Optional[str]) -> Optional[str]:
+    """Accepts a JSON list or a comma/newline separated string → JSON list (deduped, capped)."""
+    if raw is None:
+        return None
+    items = None
+    text = raw.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                items = [str(x) for x in parsed]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="target_colleges must be a JSON list or comma-separated text")
+    if items is None:
+        items = [x for x in text.replace("\n", ",").split(",")]
+    out, seen = [], set()
+    for c in items:
+        c = c.strip()[:120]
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            out.append(c)
+    if len(out) > 30:
+        raise HTTPException(status_code=400, detail="At most 30 target colleges")
+    return json.dumps(out)
+
+
+def _validate_v2_fields(job_type, experience_level, openings, eligibility):
+    if job_type not in (None, "") and job_type not in JOB_TYPES:
+        raise HTTPException(status_code=400, detail=f"job_type must be one of: {', '.join(JOB_TYPES)}")
+    if experience_level not in (None, "") and experience_level not in EXPERIENCE_LEVELS:
+        raise HTTPException(status_code=400, detail=f"experience_level must be one of: {', '.join(EXPERIENCE_LEVELS)}")
+    if openings is not None and not (1 <= openings <= 1000):
+        raise HTTPException(status_code=400, detail="openings must be between 1 and 1000")
+    if eligibility is not None and len(eligibility) > 2000:
+        raise HTTPException(status_code=400, detail="eligibility must be at most 2000 characters")
 
 
 @router.post("")
@@ -68,10 +125,23 @@ async def create_job(
     requirements: str = Form(""),
     remote_type: str = Form("onsite"),
     company_id: Optional[int] = Form(None),
+    job_type: Optional[str] = Form(None),
+    experience_level: Optional[str] = Form(None),
+    openings: Optional[int] = Form(None),
+    eligibility: Optional[str] = Form(None),
+    target_colleges: Optional[str] = Form(None),
+    status: str = Form("open"),
     recruiter: str = Depends(get_current_recruiter),
 ):
     if remote_type not in ("remote", "onsite", "hybrid"):
         raise HTTPException(status_code=400, detail="remote_type must be 'remote', 'onsite', or 'hybrid'")
+    if status not in ("open", "draft"):
+        raise HTTPException(status_code=400, detail="A new job must be created as 'open' or 'draft'")
+    _validate_v2_fields(job_type, experience_level, openings, eligibility)
+    if not title.strip() or not description.strip():
+        raise HTTPException(status_code=400, detail="title and description are required")
+    if salary_min is not None and salary_max is not None and salary_min > salary_max:
+        raise HTTPException(status_code=400, detail="salary_min cannot be greater than salary_max")
 
     # Geocode location
     lat, lng = None, None
@@ -96,6 +166,12 @@ async def create_job(
             longitude=lng,
             requirements=requirements,
             remote_type=remote_type,
+            status=status,
+            job_type=job_type or None,
+            experience_level=experience_level or None,
+            openings=openings,
+            eligibility=(eligibility or "").strip() or None,
+            target_colleges_json=_clean_target_colleges(target_colleges),
         )
         session.add(job)
         session.commit()
@@ -126,11 +202,28 @@ async def update_job(
     requirements: str = Form(None),
     remote_type: str = Form(None),
     status: str = Form(None),
+    job_type: Optional[str] = Form(None),
+    experience_level: Optional[str] = Form(None),
+    openings: Optional[int] = Form(None),
+    eligibility: Optional[str] = Form(None),
+    target_colleges: Optional[str] = Form(None),
     recruiter: str = Depends(get_current_recruiter),
 ):
+    _validate_v2_fields(job_type, experience_level, openings, eligibility)
     with Session(engine) as session:
         user = _get_recruiter_user(session, recruiter)
         job = _get_owned_job_or_403(session, job_id, user.id)
+
+        if job_type is not None:
+            job.job_type = job_type or None
+        if experience_level is not None:
+            job.experience_level = experience_level or None
+        if openings is not None:
+            job.openings = openings
+        if eligibility is not None:
+            job.eligibility = eligibility.strip() or None
+        if target_colleges is not None:
+            job.target_colleges_json = _clean_target_colleges(target_colleges)
 
         if title is not None:
             job.title = title
@@ -156,8 +249,8 @@ async def update_job(
                 raise HTTPException(status_code=400, detail="remote_type must be 'remote', 'onsite', or 'hybrid'")
             job.remote_type = remote_type
         if status is not None:
-            if status not in ("open", "closed"):
-                raise HTTPException(status_code=400, detail="status must be 'open' or 'closed'")
+            if status not in JOB_STATUSES:
+                raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(JOB_STATUSES)}")
             job.status = status
 
         job.updated_at = utc_now()

@@ -325,3 +325,230 @@ def delivery_test() -> Email:
     text = f"This is a test email from {BRAND}. If you can read this, email delivery works."
     html = _layout("Email delivery works", "Test email", _p(_e(text)))
     return subject, text, html
+
+
+# --------------------------------------------------------------------------- hiring (recruiter portal v2)
+
+def _simple_email(title: str, preheader: str, greeting_name: Optional[str], paragraphs, rows=None,
+                  button: Optional[Tuple[str, str]] = None, subject: Optional[str] = None,
+                  preformatted: Optional[str] = None) -> Email:
+    """Shared builder for the hiring emails: greeting, paragraphs, optional
+    key/value table, optional pre-formatted block (offer letter) and button."""
+    rows = [(k, v) for k, v in (rows or []) if v]
+    text_parts = [_greeting(greeting_name), ""] + list(paragraphs)
+    if rows:
+        text_parts += [""] + [f"{k}: {v}" for k, v in rows]
+    if preformatted:
+        text_parts += ["", preformatted]
+    if button:
+        text_parts += ["", f"{button[0]}: {button[1]}"]
+    text_parts += ["", f"- The {BRAND} team"]
+    html = (
+        _p(_e(_greeting(greeting_name)))
+        + "".join(_p(_e(p)) for p in paragraphs)
+        + (_kv_table([(k, _e(v)) for k, v in rows]) if rows else "")
+        + (f'<div style="margin:16px 0;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#fafbff;'
+           f'font-size:14px;line-height:1.6;color:{TEXT};white-space:pre-wrap;">{_e(preformatted)}</div>' if preformatted else "")
+        + (_button(button[0], button[1]) if button else "")
+    )
+    return subject or title, "\n".join(text_parts), _layout(title, preheader, html)
+
+
+def scheduled_interview_invitation(candidate_name: Optional[str], job_title: str, company_name: Optional[str],
+                                   round_name: str, when_ist: str, duration_min: int, mode: str,
+                                   meeting_link: Optional[str] = None, location: Optional[str] = None,
+                                   interviewers: Optional[str] = None) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "Interview scheduled",
+        f"{round_name} for {job_title} on {when_ist}",
+        candidate_name,
+        [f"Your {round_name} for {job_title}{at_company} has been scheduled. Please find the details below.",
+         "If you cannot attend at this time, reply to the recruiter as soon as possible."],
+        rows=[("Role", job_title), ("Round", round_name), ("Date & time", when_ist), ("Duration", f"{duration_min} minutes"),
+              ("Mode", "Online" if mode == "online" else "Onsite"), ("Meeting link", meeting_link if mode == "online" else None),
+              ("Location", location if mode != "online" else None), ("Interviewers", interviewers)],
+        button=("Join the interview", meeting_link) if mode == "online" and meeting_link else ("View your applications", app_url("/candidate/applications")),
+        subject=f"Interview scheduled: {round_name} — {job_title}{at_company}",
+    )
+
+
+def interview_rescheduled(candidate_name: Optional[str], job_title: str, company_name: Optional[str],
+                          round_name: str, when_ist: str, duration_min: int, mode: str,
+                          meeting_link: Optional[str] = None, location: Optional[str] = None) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "Interview rescheduled",
+        f"New time for your {round_name}: {when_ist}",
+        candidate_name,
+        [f"Your {round_name} for {job_title}{at_company} has been moved to a new time."],
+        rows=[("Role", job_title), ("Round", round_name), ("New date & time", when_ist), ("Duration", f"{duration_min} minutes"),
+              ("Mode", "Online" if mode == "online" else "Onsite"), ("Meeting link", meeting_link if mode == "online" else None),
+              ("Location", location if mode != "online" else None)],
+        button=("Join the interview", meeting_link) if mode == "online" and meeting_link else None,
+        subject=f"Interview rescheduled: {round_name} — {job_title}",
+    )
+
+
+def interview_cancelled(candidate_name: Optional[str], job_title: str, company_name: Optional[str],
+                        round_name: str, when_ist: str) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "Interview cancelled",
+        f"Your {round_name} on {when_ist} was cancelled",
+        candidate_name,
+        [f"Your {round_name} for {job_title}{at_company}, scheduled for {when_ist}, has been cancelled.",
+         "The hiring team will contact you if a new slot is arranged."],
+        button=("View your applications", app_url("/candidate/applications")),
+        subject=f"Interview cancelled: {round_name} — {job_title}",
+    )
+
+
+def offer_letter(candidate_name: Optional[str], job_title: str, company_name: Optional[str], ctc: Optional[str],
+                 joining_date: Optional[str], letter_text: str) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "You have an offer!",
+        f"Offer for {job_title}{at_company}",
+        candidate_name,
+        [f"Congratulations! You have received an offer for {job_title}{at_company}. Your offer letter is below.",
+         "Please accept or decline the offer from your applications page."],
+        rows=[("Role", job_title), ("CTC / Stipend", ctc), ("Joining date", joining_date)],
+        preformatted=letter_text,
+        button=("Respond to the offer", app_url("/candidate/applications")),
+        subject=f"Offer letter: {job_title}{at_company}",
+    )
+
+
+def offer_reminder(candidate_name: Optional[str], job_title: str, company_name: Optional[str]) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "Reminder: your offer is waiting",
+        f"Please respond to your offer for {job_title}",
+        candidate_name,
+        [f"This is a friendly reminder that your offer for {job_title}{at_company} is awaiting your response."],
+        button=("Respond to the offer", app_url("/candidate/applications")),
+        subject=f"Reminder: offer for {job_title}{at_company}",
+    )
+
+
+def offer_withdrawn(candidate_name: Optional[str], job_title: str, company_name: Optional[str]) -> Email:
+    at_company = f" at {company_name}" if company_name else ""
+    return _simple_email(
+        "Offer withdrawn",
+        f"Update on your offer for {job_title}",
+        candidate_name,
+        [f"We are writing to let you know that the offer for {job_title}{at_company} has been withdrawn.",
+         "If you have questions, please contact the recruiter directly."],
+        subject=f"Offer withdrawn: {job_title}{at_company}",
+    )
+
+
+def recruiter_offer_update(recruiter_name: Optional[str], candidate_name: str, job_title: str, status: str) -> Email:
+    return _simple_email(
+        f"Offer {status}",
+        f"{candidate_name} — {job_title}",
+        recruiter_name,
+        [f"The offer for {candidate_name} ({job_title}) is now: {status}."],
+        button=("Open Offers & Hiring", app_url("/recruiter/offers")),
+        subject=f"Offer {status}: {candidate_name} — {job_title}",
+    )
+
+
+def team_invitation(member_name: Optional[str], inviter: str, company_name: str, access_level: str) -> Email:
+    return _simple_email(
+        f"Join {company_name} on {BRAND}",
+        f"{inviter} invited you to the {company_name} hiring team",
+        member_name,
+        [f"{inviter} has added you to the {company_name} recruitment team on {BRAND} with {access_level} access.",
+         "Recruiter accounts on CoreLink are verified: an administrator must approve your recruiter access before you can sign in. "
+         "Open the recruiter login page and choose \"Request access\" using this email address."],
+        button=("Request recruiter access", app_url("/recruiter/login")),
+        subject=f"You're invited to the {company_name} hiring team on {BRAND}",
+    )
+
+
+def offer_response(candidate_name: Optional[str], job_title: str, decision: str, ctc: Optional[str] = None, joining_date: Optional[str] = None) -> Email:
+    """Sent to the recruiter when a student accepts or declines an offer."""
+    who = candidate_name or "A candidate"
+    verb = "accepted" if decision == "accepted" else "declined"
+    subject = f"Offer {verb}: {who} — {job_title}"
+    link = app_url("/recruiter/offers")
+    details = [("Candidate", _e(who)), ("Role", _e(job_title)), ("Decision", _e(verb.title()))]
+    if ctc:
+        details.append(("CTC", _e(ctc)))
+    if joining_date and verb == "accepted":
+        details.append(("Joining date", _e(joining_date)))
+    text = (
+        f"Hello,\n\n{who} has {verb} your offer for {job_title}."
+        + (f" CTC: {ctc}." if ctc else "")
+        + (f" Joining date: {joining_date}." if joining_date and verb == "accepted" else "")
+        + f"\n\nView offers: {link}\n\n- The {BRAND} team"
+    )
+    html = _layout(
+        f"Offer {verb}",
+        f"{who} has {verb} your offer",
+        _p("Hello,")
+        + _p(f"<strong>{_e(who)}</strong> has {verb} your offer for <strong>{_e(job_title)}</strong>.")
+        + _kv_table(details)
+        + _button("View offers", link),
+    )
+    return subject, text, html
+
+
+# --------------------------------------------------------------------------- recruiter portal (v2)
+def job_invitation(
+    candidate_name: Optional[str],
+    job_title: str,
+    job_id: int,
+    company_name: Optional[str] = None,
+    message: Optional[str] = None,
+) -> Email:
+    """A recruiter invites a candidate (found via search) to apply to an open job."""
+    link = app_url(f"/candidate/opportunities?job={quote(str(job_id))}")
+    at_company = f" at {company_name}" if company_name else ""
+    subject = f"You're invited to apply: {job_title}{at_company}"
+    note = (message or "").strip()
+    text = (
+        f"{_greeting(candidate_name)}\n\nA recruiter{at_company} found your {BRAND} profile and thinks you'd be a great fit "
+        f"for the {job_title} role.\n\n" + (f"Message from the recruiter:\n{note}\n\n" if note else "")
+        + f"View the job and apply: {link}\n\n- The {BRAND} team"
+    )
+    html = _layout(
+        "You're invited to apply",
+        f"{job_title}{at_company}",
+        _p(_e(_greeting(candidate_name)))
+        + _p(f"A recruiter{_e(at_company)} found your {BRAND} profile and thinks you'd be a great fit for the "
+             f"<strong>{_e(job_title)}</strong> role.")
+        + (_p(f"<em>&ldquo;{_e(note)}&rdquo;</em>") if note else "")
+        + _button("View job & apply", link),
+    )
+    return subject, text, html
+
+
+def recruiter_message(
+    candidate_name: Optional[str],
+    subject_line: str,
+    body: str,
+    company_name: Optional[str] = None,
+    job_title: Optional[str] = None,
+) -> Email:
+    """Free-form message a recruiter sends to applicants (bulk "Send Email")."""
+    link = app_url("/candidate/applications")
+    subject = subject_line.strip()
+    about = f" about your application for {job_title}" if job_title else ""
+    sender = company_name or "the hiring team"
+    text = (
+        f"{_greeting(candidate_name)}\n\n{body.strip()}\n\n"
+        f"(Sent by {sender}{about} via {BRAND}.)\nTrack your applications: {link}\n\n- The {BRAND} team"
+    )
+    paragraphs = "".join(_p(_e(par).replace("\n", "<br>")) for par in body.strip().split("\n\n") if par.strip())
+    html = _layout(
+        subject,
+        f"Message from {sender}",
+        _p(_e(_greeting(candidate_name)))
+        + paragraphs
+        + _p(f'<span style="color:{MUTED};font-size:13px;">Sent by {_e(sender)}{_e(about)} via {BRAND}.</span>')
+        + _button("View my applications", link),
+    )
+    return subject, text, html

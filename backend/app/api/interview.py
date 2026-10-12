@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 from typing import Optional
@@ -118,6 +119,25 @@ def _first_name(session: Session, cand: CandidateUser) -> str:
     if not name:
         name = cand.username.split("@")[0].replace(".", " ").replace("_", " ")
     return name.split()[0].capitalize() if name.split() else "there"
+
+
+def _is_practice(s: InterviewSession) -> bool:
+    return (s.mode or "application") == "practice" or s.application_id is None
+
+
+def _practice_meta(s: InterviewSession) -> dict:
+    for item in json.loads(s.latency_json or "[]"):
+        if isinstance(item, dict) and item.get("kind") == "plan" and isinstance(item.get("context"), dict):
+            return item["context"]
+    return {}
+
+
+def _session_context(session: Session, s: InterviewSession) -> dict:
+    if _is_practice(s):
+        meta = _practice_meta(s)
+        title = meta.get("title") or s.practice_topic or "engineering"
+        return {"title": title, "company": meta.get("company") or "", "jd": meta.get("jd") or title, "skills": meta.get("skills") or []}
+    return _job_context(session, session.get(Application, s.application_id))
 
 
 def _load(s: InterviewSession):
@@ -240,8 +260,8 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
         s = _owned_session(session, sid, candidate)
         if s.status != "active":
             raise HTTPException(status_code=409, detail="Interview already finished")
-        app_record = session.get(Application, s.application_id)
-        ctx = _job_context(session, app_record)
+        ctx = _session_context(session, s)
+        is_practice = _is_practice(s)
         plan, transcript = _load(s)
         q_idx, followups = s.question_index, s.followups_on_current
 
@@ -278,6 +298,7 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
         current_question=current_q,
         next_question=next_q,
         focus=decision.get("focus"),
+        practice=is_practice,
     )
 
     async def gen():
@@ -301,6 +322,8 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
             if not text:
                 logger.info("[INTERVIEW] scripted reply (%s)", exc)
                 text = ai.scripted_reply(action, current_question=current_q, next_question=next_q, focus=decision.get("focus"))
+                if is_practice and done:
+                    text = ai.practice_scripted_end(action)
                 result.provider = "scripted"
                 yield json.dumps({"t": "d", "v": text}) + "\n"
 
@@ -361,7 +384,11 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
     with Session(engine) as session:
         s = _owned_session(session, sid, candidate)
         if s.status == "completed":
+            if _is_practice(s):
+                return {"completed": True, "already": True, "practice": True, "evaluation": _practice_eval_view(s)}
             return {"completed": True, "already": True}
+        if _is_practice(s):
+            return await _finish_practice(sid, payload)
         app_record = session.get(Application, s.application_id)
         ctx = _job_context(session, app_record)
         plan, transcript = _load(s)
@@ -449,3 +476,193 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
             logger.info("[INTERVIEW] completion email skipped: %s", exc)
 
     return {"completed": True, "ended_reason": ended_reason}
+
+
+# ── Practice mode (student portal: private mock interviews) ───────────────────
+
+PRACTICE_DAILY_LIMIT = 40
+
+
+def _practice_eval_view(s: InterviewSession) -> Optional[dict]:
+    ev = json.loads(s.eval_json) if s.eval_json else None
+    if not ev:
+        return None
+    return {k: ev.get(k) for k in ("overall_score", "dimension_scores", "per_question", "strengths", "concerns", "recommendation", "summary", "method", "ended_reason")}
+
+
+def _practice_row(s: InterviewSession) -> dict:
+    ev = _practice_eval_view(s) or {}
+    _plan, transcript = _load(s)
+    meta = _practice_meta(s)
+    return {
+        "id": s.id,
+        "kind": s.practice_kind,
+        "topic": s.practice_topic,
+        "company": meta.get("company") or None,
+        "status": s.status,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+        "overall_score": ev.get("overall_score"),
+        "dimension_scores": ev.get("dimension_scores") or {},
+        "recommendation": ev.get("recommendation"),
+        "questions_answered": len({t.get("q_index") for t in transcript if t.get("role") == "candidate" and (t.get("text") or "").strip()}),
+        "total_questions": len(_plan),
+    }
+
+
+@router.post("/practice/session")
+@limiter.limit("20/minute")
+async def create_practice_session(request: Request, payload: dict = Body(...), candidate: str = Depends(get_current_candidate)):
+    """Start a private practice interview (never linked to an application)."""
+    kind = str(payload.get("kind") or "technical").strip().lower()
+    if kind not in ai.PRACTICE_KINDS:
+        raise HTTPException(status_code=422, detail="kind must be technical, domain, hr or mock")
+    topic = re.sub(r"\s+", " ", str(payload.get("topic") or "")).strip()[:120]
+    company = re.sub(r"\s+", " ", str(payload.get("company") or "")).strip()[:80]
+    seeds_in = payload.get("questions") or []
+    if not isinstance(seeds_in, list):
+        raise HTTPException(status_code=422, detail="questions must be a list")
+    seeds = [re.sub(r"\s+", " ", str(q)).strip() for q in seeds_in[:20] if isinstance(q, str)]
+    seeds = [q for q in seeds if 12 <= len(q) <= 300][:12]
+    if not topic:
+        topic = {"technical": "Core technical concepts", "domain": "Domain knowledge", "hr": "HR interview", "mock": "Mock interview"}[kind]
+
+    with Session(engine) as session:
+        cand = _candidate_user(session, candidate)
+        since = utc_now() - __import__("datetime").timedelta(days=1)
+        today = session.exec(select(InterviewSession.id).where(
+            InterviewSession.candidate_id == cand.id, InterviewSession.mode == "practice", InterviewSession.started_at >= since)).all()
+        if len(today) >= PRACTICE_DAILY_LIMIT:
+            raise HTTPException(status_code=429, detail="Daily practice limit reached — try again tomorrow")
+        # Only one active practice session at a time.
+        for old in session.exec(select(InterviewSession).where(
+                InterviewSession.candidate_id == cand.id, InterviewSession.mode == "practice", InterviewSession.status == "active")).all():
+            old.status = "abandoned"
+            session.add(old)
+        session.commit()
+        profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == cand.id)).first()
+        from .student_portal import branch_id, BRANCH_LABELS
+
+        bid = branch_id(profile.branch if profile else None)
+        branch_label = BRANCH_LABELS.get(bid or "", "Engineering")
+        full = (profile.full_name or "").strip() if profile else ""
+        first = full.split()[0].capitalize() if full else _first_name(session, cand)
+        skills = []
+        if profile:
+            try:
+                skills = [str(x) for x in json.loads(profile.skills_json or "[]")][:10]
+            except Exception:
+                skills = []
+
+    n = ai.PRACTICE_QUESTION_COUNT
+    t0 = time.perf_counter()
+    plan = None
+    provider = "scripted"
+    if llm_stream.configured_providers():
+        try:
+            obj = await asyncio.wait_for(
+                llm_stream.complete_json(ai.practice_plan_messages(kind, topic, branch_label, company, seeds, n), smart=False, max_tokens=700, timeout=8.0),
+                timeout=9.0,
+            )
+            plan = ai.parse_plan(obj, n)
+            if plan:
+                provider = (obj or {}).get("_provider", "llm")
+        except Exception as exc:
+            logger.warning("[INTERVIEW] practice planning failed: %s", exc)
+    if not plan:
+        plan = ai.practice_fallback_plan(kind, topic, bid, seeds, n)
+    plan_ms = int((time.perf_counter() - t0) * 1000)
+
+    greeting_text = ai.practice_greeting(first, kind, topic, company, plan[0]["q"], len(plan))
+    transcript = [{"role": "interviewer", "text": greeting_text, "q_index": 0, "kind": "base", "ts": time.time()}]
+    context = {"title": topic, "company": company, "jd": f"{kind} practice for {branch_label} engineering students: {topic}", "skills": skills, "branch": bid}
+    with Session(engine) as session:
+        s = InterviewSession(
+            application_id=None,
+            candidate_id=cand.id,
+            job_id=None,
+            mode="practice",
+            practice_kind=kind,
+            practice_topic=topic,
+            plan_json=json.dumps(plan),
+            transcript_json=json.dumps(transcript),
+            question_index=0,
+            provider=provider,
+            latency_json=json.dumps([{"kind": "plan", "server_ms": plan_ms, "provider": provider, "context": context}]),
+        )
+        session.add(s)
+        session.commit()
+        session.refresh(s)
+        out = _session_payload(s, greeting_text, resumed=False)
+        out.update({"practice": True, "kind": kind, "topic": topic, "company": company or None, "max_minutes": 15})
+        return out
+
+
+async def _finish_practice(sid: int, payload: dict) -> dict:
+    ended_reason = str(payload.get("ended_reason") or "completed")[:60]
+    with Session(engine) as session:
+        s = session.get(InterviewSession, sid)
+        ctx = _session_context(session, s)
+        plan, transcript = _load(s)
+    qa = ai.qa_pairs(transcript, plan)
+    evaluation = None
+    if llm_stream.configured_providers() and any(x.get("answer") for x in qa):
+        try:
+            obj = await asyncio.wait_for(
+                llm_stream.complete_json(ai.eval_messages(ctx["title"], ctx["jd"], ctx["skills"], qa), smart=True, max_tokens=1200, timeout=25.0),
+                timeout=27.0,
+            )
+        except Exception:
+            obj = None
+        if obj:
+            evaluation = ai.normalise_eval(obj)
+    if evaluation is None:
+        evaluation = ai.heuristic_eval(qa)
+        fb = ai.practice_feedback(qa)
+        evaluation["dimension_scores"] = fb["dimension_scores"]
+        evaluation["strengths"] = fb["strengths"]
+        evaluation["concerns"] = fb["concerns"]
+        evaluation["summary"] = f"Estimated from the structure and detail of {len([x for x in qa if x.get('answer')])} answers (offline scoring)."
+    with Session(engine) as session:
+        s = session.get(InterviewSession, sid)
+        lat = json.loads(s.latency_json or "[]")
+        client_latency = payload.get("latency") or []
+        if isinstance(client_latency, list):
+            lat.append({"kind": "client_summary", "samples": client_latency[-40:]})
+        s.latency_json = json.dumps(lat)
+        s.status = "completed"
+        s.completed_at = utc_now()
+        s.eval_json = json.dumps({**evaluation, "ended_reason": ended_reason, "qa": qa})
+        session.add(s)
+        session.commit()
+        session.refresh(s)
+        return {"completed": True, "ended_reason": ended_reason, "practice": True, "evaluation": _practice_eval_view(s)}
+
+
+@router.get("/practice/history")
+async def practice_history(limit: int = 50, candidate: str = Depends(get_current_candidate)):
+    limit = max(1, min(int(limit or 50), 200))
+    with Session(engine) as session:
+        cand = _candidate_user(session, candidate)
+        rows = session.exec(
+            select(InterviewSession)
+            .where(InterviewSession.candidate_id == cand.id, InterviewSession.mode == "practice")
+            .order_by(InterviewSession.started_at.desc())
+        ).all()[:limit]
+        return {"sessions": [_practice_row(s) for s in rows]}
+
+
+@router.get("/practice/sessions/{sid}")
+async def practice_session_detail(sid: int, candidate: str = Depends(get_current_candidate)):
+    with Session(engine) as session:
+        s = _owned_session(session, sid, candidate)
+        if not _is_practice(s):
+            raise HTTPException(status_code=404, detail="Practice session not found")
+        plan, transcript = _load(s)
+        ev = json.loads(s.eval_json) if s.eval_json else {}
+        return {
+            **_practice_row(s),
+            "evaluation": _practice_eval_view(s),
+            "qa": ev.get("qa") or ai.qa_pairs(transcript, plan),
+            "transcript": [{"role": t.get("role"), "text": t.get("text")} for t in transcript],
+        }

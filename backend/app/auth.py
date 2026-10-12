@@ -74,6 +74,8 @@ def get_current_user(
         user = session.exec(select(User).where(User.email == payload["sub"])).first()
         if not user or user.role != payload["role"]:
             raise credentials_exception
+        if (user.status or "active") == "suspended":
+            raise HTTPException(status_code=403, detail="This account is suspended")
         return user
 
 
@@ -98,7 +100,19 @@ def get_current_candidate(
     payload = decode_token_payload(credentials.credentials)
     if payload.get("role") != "candidate":
         raise HTTPException(status_code=403, detail="Insufficient role")
+    _reject_suspended_candidate(payload["sub"])
     return payload["sub"]
+
+
+def _reject_suspended_candidate(username: str) -> None:
+    """Suspended students are locked out immediately (not only at next login).
+    Single-column lookup on the unique, indexed CandidateUser.username."""
+    from .db import CandidateUser
+
+    with Session(engine) as session:
+        status_value = session.exec(select(CandidateUser.status).where(CandidateUser.username == username)).first()
+    if status_value == "suspended":
+        raise HTTPException(status_code=403, detail="This account is suspended")
 
 def get_current_admin(user: User = Depends(require_role("admin"))) -> str:
     return user.email

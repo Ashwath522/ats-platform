@@ -248,6 +248,7 @@ def turn_messages(
     current_question: str,
     next_question: Optional[str],
     focus: Optional[str] = None,
+    practice: bool = False,
 ) -> List[Dict[str, str]]:
     ack = (
         "Start with ONE short, specific acknowledgement (max 10 words) that references a concrete detail "
@@ -275,6 +276,16 @@ def turn_messages(
             "They used inappropriate language. Calmly and respectfully ask to keep things professional, then re-ask the "
             f"current question. Current question: {current_question}"
         )
+    elif action in {"complete", "end_by_candidate", "end_conduct"} and practice:
+        reason = {
+            "complete": "That was the last practice question.",
+            "end_by_candidate": "The student asked to stop; respect that without pressure.",
+            "end_conduct": "End politely because the conversation is no longer professional.",
+        }[action]
+        task = (
+            f"{reason} Briefly thank them by acknowledging something specific they shared, tell them the practice "
+            "session is complete and their feedback is on screen. Do not ask any question. Max 35 words."
+        )
     elif action in {"complete", "end_by_candidate", "end_conduct"}:
         reason = {
             "complete": "That was the last question.",
@@ -294,7 +305,8 @@ def turn_messages(
         convo.append({"role": role, "content": t.get("text", "")[:1200]})
     if not convo or convo[-1]["role"] != "user":
         convo.append({"role": "user", "content": answer[:1500]})
-    return [{"role": "system", "content": _persona(job_title, company) + " TASK FOR THIS TURN: " + task}] + convo
+    persona = _persona(job_title, company) + (practice_persona_note() if practice else "")
+    return [{"role": "system", "content": persona + " TASK FOR THIS TURN: " + task}] + convo
 
 
 _ACKS = [
@@ -441,3 +453,197 @@ def qa_pairs(transcript: List[Dict], plan: List[Dict]) -> List[Dict]:
             "answer": " ".join(a for a in answers if a).strip(),
         })
     return pairs
+
+
+# ── Practice mode (private mock interviews from the student portal) ───────────
+#
+# Practice sessions reuse the same turn policy / streaming / evaluation as the
+# application interview, but are never attached to an Application and the
+# candidate sees their own score + feedback afterwards.
+
+PRACTICE_KINDS = {"technical", "domain", "hr", "mock"}
+PRACTICE_QUESTION_COUNT = 5
+
+_BRANCH_TECH_BANK = {
+    "mechanical": [
+        "Walk me through how you would select a bearing for a shaft carrying both radial and axial loads.",
+        "Explain the difference between stress concentration and fatigue failure, with an example from a real component.",
+        "How would you decide between welding and bolting for a structural joint in a machine frame?",
+        "Describe how you would set up a static structural FEA of a bracket, including boundary conditions and mesh checks.",
+        "What does GD&T add over plain plus-minus tolerancing, and when have you used it?",
+        "How would you reduce the cycle time of a CNC machining operation without hurting surface finish?",
+    ],
+    "civil": [
+        "Explain how you would check a reinforced concrete beam for flexure and shear as per IS 456.",
+        "What factors decide the type of foundation for a multi-storey building on clayey soil?",
+        "How do you model and analyse a simple portal frame in STAAD.Pro, and what results do you check first?",
+        "Describe the main causes of cracks in concrete and how you would prevent them on site.",
+        "How would you prepare a quantity estimate for a residential slab, step by step?",
+        "What checks do you perform before approving a formwork and reinforcement pour?",
+    ],
+    "eee": [
+        "Explain how a protection relay coordinates with circuit breakers during a fault.",
+        "How would you size a cable for a three-phase motor feeder, and which factors would you consider?",
+        "Describe the working of a PLC scan cycle and how you would debug a ladder program.",
+        "What is power factor, why does it matter to industry, and how is it corrected?",
+        "Explain how a grid-tied solar inverter synchronises with the grid.",
+        "How would you approach a load-flow study for a small industrial plant?",
+    ],
+    "ece": [
+        "Explain the difference between blocking and non-blocking assignments in Verilog with an example.",
+        "How would you debounce a push button in an embedded system, in hardware and in firmware?",
+        "Walk me through how you would design a two-layer PCB for a microcontroller board with an ADC input.",
+        "What are setup and hold time violations, and how do you fix them?",
+        "Explain how you would choose between UART, SPI and I2C for connecting a sensor.",
+        "Describe how an IoT node can be designed for low power consumption.",
+    ],
+    "chemical": [
+        "How would you size a shell-and-tube heat exchanger for a given duty?",
+        "Explain how you would set up a distillation column simulation in Aspen HYSYS or DWSIM.",
+        "What is a HAZOP study, and how would you run one for a simple reactor system?",
+        "Describe how temperature affects reaction rate and selectivity in a CSTR.",
+        "How would you troubleshoot a pump that is cavitating in a process plant?",
+        "Explain the role of a P&ID and what you would check when reviewing one.",
+    ],
+    "aerospace": [
+        "Explain how lift is generated over an airfoil and what happens at stall.",
+        "How would you set up a CFD analysis of a NACA airfoil, including mesh and turbulence model choices?",
+        "Describe the main components of a turbofan engine and the role of the bypass ratio.",
+        "Why are composites used in aircraft structures, and what are their drawbacks?",
+        "Explain static and dynamic stability of an aircraft in simple terms.",
+        "How would you validate a structural model of a wing spar?",
+    ],
+    "automobile": [
+        "Explain how an EV battery management system protects the battery pack.",
+        "Describe the main differences between a petrol and diesel engine combustion cycle.",
+        "How would you approach vehicle dynamics testing for understeer and oversteer?",
+        "What is a DFMEA and how would you apply it to a brake system component?",
+        "Explain how the CAN bus works and why it is used in vehicles.",
+        "How would you improve the fuel efficiency of a vehicle through design changes?",
+    ],
+    "metallurgy": [
+        "Explain what happens during quenching and tempering of a medium-carbon steel.",
+        "How would you read an iron-carbon phase diagram to predict microstructure?",
+        "Describe the common NDT methods and when you would choose each.",
+        "What causes corrosion in welded joints, and how would you prevent it?",
+        "Explain how you would prepare and examine a sample for metallography.",
+        "How do grain size and heat treatment affect the strength and toughness of a steel?",
+    ],
+}
+
+_HR_BANK = [
+    "Tell me about yourself and why you chose engineering.",
+    "Why do you want to work in a core engineering role rather than another field?",
+    "Describe a time you worked in a team that disagreed. How did you handle it?",
+    "Tell me about a mistake you made on a project and what you learned from it.",
+    "Where do you see yourself in three years, and how does this role fit in?",
+    "Describe a situation where you had to learn a new tool quickly to meet a deadline.",
+    "What is one strength and one area of improvement you are working on?",
+    "Tell me about a time you took ownership of something outside your responsibilities.",
+]
+
+
+def _bank_for(kind: str, branch: Optional[str]) -> List[str]:
+    if kind == "hr":
+        return list(_HR_BANK)
+    return list(_BRANCH_TECH_BANK.get(branch or "", _BRANCH_TECH_BANK["mechanical"]))
+
+
+def practice_fallback_plan(kind: str, topic: str, branch: Optional[str], seeds: List[str], n: int = PRACTICE_QUESTION_COUNT) -> List[Dict]:
+    """Scripted plan: client-supplied topic questions first, then the branch / HR bank."""
+    qk = "behavioral" if kind == "hr" else "technical"
+    pool = [s for s in seeds if s] or _bank_for(kind, branch)
+    random.shuffle(pool)
+    plan: List[Dict] = []
+    if kind in {"mock", "hr"}:
+        intro = f"To start, tell me a little about yourself and your interest in {topic}." if topic else "To start, tell me a little about yourself."
+        plan.append({"kind": "intro", "q": intro})
+    for q in pool:
+        if len(plan) >= n:
+            break
+        plan.append({"kind": qk, "q": q})
+    if kind == "mock" and len(plan) >= 3:
+        plan[-1] = {"kind": "behavioral", "q": random.choice(_HR_BANK[2:])}
+    extra = [x for x in _bank_for(kind, branch) if x not in {p["q"] for p in plan}]
+    while len(plan) < min(n, 3) and extra:
+        plan.append({"kind": qk, "q": extra.pop(0)})
+    return plan[:n]
+
+
+def practice_plan_messages(kind: str, topic: str, branch_label: str, company: str, seeds: List[str], n: int) -> List[Dict[str, str]]:
+    focus = {
+        "technical": "core technical concepts and problem solving",
+        "domain": "domain-specific engineering knowledge and applied scenarios",
+        "hr": "HR and behavioural questions (motivation, teamwork, ownership, learning)",
+        "mock": "a realistic campus interview mix: 1 intro, 3 technical/domain, 1 behavioural",
+    }[kind]
+    sys = (
+        "You design practice interviews for engineering students. Output strict JSON only: "
+        '{"questions":[{"kind":"intro|technical|project|behavioral","q":"..."}]}. '
+        f"Write exactly {n} questions focused on {focus}, spoken-style (one sentence, max 30 words), open-ended, "
+        "no yes/no questions, no multi-part lists, nothing about protected personal traits. Vary difficulty from easy to harder."
+    )
+    user = json.dumps({"topic": topic, "branch": branch_label, "company": company or "", "example_questions": seeds[:8]})
+    return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+
+
+def practice_greeting(first_name: str, kind: str, topic: str, company: str, first_question: str, total: int) -> str:
+    what = {"technical": "technical practice", "domain": "domain practice", "hr": "HR practice", "mock": "mock interview"}.get(kind, "practice")
+    about = f" on {topic}" if topic else ""
+    at = f", in the style of a {company} interview" if company else ""
+    return (
+        f"Hi {first_name}, I'm {INTERVIEWER_NAME}. Welcome to your {what}{about}{at}. "
+        f"This session is private, it's just for you. We'll go through {total} questions; answer as you would in a real interview. "
+        f"{first_question}"
+    )
+
+
+def practice_persona_note() -> str:
+    return (
+        " This is a PRIVATE PRACTICE session for a student, not a real hiring interview. When wrapping up, "
+        "say the practice session is complete and their feedback is on screen; never mention a hiring team."
+    )
+
+
+def practice_scripted_end(action: str) -> str:
+    if action == "end_by_candidate":
+        return "No problem, we can stop here. Your practice feedback is ready on screen. Thanks for practicing!"
+    if action == "end_conduct":
+        return "Let's stop this practice session here. Your feedback is on screen."
+    return "That's the end of this practice session. Nice work sticking with it. Your feedback is ready on screen."
+
+
+def practice_feedback(qa: List[Dict]) -> Dict:
+    """Heuristic dimension scores + coaching notes (used when no LLM is available)."""
+    answered = [x for x in qa if x.get("answer")]
+    if not answered:
+        return {"dimension_scores": {}, "strengths": [], "concerns": ["No answers were recorded — try answering out loud next time."]}
+    agg = {k: 0 for k in DIMENSIONS}
+    words = []
+    for x in answered:
+        _s, hits = completeness(x["answer"])
+        words.append(word_count(x["answer"]))
+        for k, v in hits.items():
+            agg[k] += 1 if v else 0
+    n = len(answered)
+    r = {k: v / n for k, v in agg.items()}
+    avg_words = sum(words) / n
+    length = min(avg_words / 90.0, 1.0)
+    dims = {
+        "technical_depth": round(min(10, 10 * (0.45 * r["action"] + 0.3 * r["tradeoff"] + 0.25 * length)), 1),
+        "problem_solving": round(min(10, 10 * (0.35 * r["context"] + 0.35 * r["action"] + 0.3 * r["outcome"])), 1),
+        "communication": round(min(10, 10 * (0.6 * length + 0.4 * (n / max(len(qa), 1)))), 1),
+        "ownership_impact": round(min(10, 10 * (0.5 * r["metrics"] + 0.3 * r["outcome"] + 0.2 * r["learning"])), 1),
+    }
+    labels = {
+        "context": "setting up the context of the problem", "action": "explaining what you did and how",
+        "metrics": "quantifying results with numbers", "outcome": "describing the outcome",
+        "tradeoff": "discussing trade-offs and alternatives", "learning": "reflecting on what you learned",
+    }
+    strengths = [f"Good at {labels[k]}" for k, v in sorted(r.items(), key=lambda kv: -kv[1]) if v >= 0.5][:3]
+    concerns = [f"Work on {labels[k]}" for k, v in sorted(r.items(), key=lambda kv: kv[1]) if v < 0.5][:3]
+    if avg_words < 35:
+        concerns.insert(0, f"Answers were short (about {int(avg_words)} words on average) — aim for 60–120 words with an example.")
+    if not strengths and avg_words >= 60:
+        strengths.append("Detailed, complete answers")
+    return {"dimension_scores": dims, "strengths": strengths[:4], "concerns": concerns[:4]}
