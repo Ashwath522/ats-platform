@@ -99,6 +99,7 @@ def test_recruiter_request_approve_creates_user_and_triggers_email(monkeypatch):
 def test_signup_otp_validation_and_expiry(monkeypatch):
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("EMAIL_PROVIDER", raising=False)
     email = _email("otp")
 
     register_response = client.post(
@@ -130,6 +131,7 @@ def test_signup_otp_validation_and_expiry(monkeypatch):
 def test_password_reset_dev_fallback_token_is_single_use(monkeypatch):
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("EMAIL_PROVIDER", raising=False)
     email = _email("reset")
     _create_user(email, "candidate")
 
