@@ -6,7 +6,7 @@ import shutil
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Set environment variables for testing before importing anything
-TEST_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data_test"))
+TEST_DATA_DIR = os.environ.get("ATS_TEST_DATA_DIR") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data_test"))
 os.environ["ATS_DATA_DIR"] = TEST_DATA_DIR
 os.environ["TESTING"] = "1"
 

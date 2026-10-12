@@ -37,6 +37,24 @@ class ProfileUpdate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     gender: Optional[str] = None  # EEO self-ID, candidate-controlled
+    # v2 student portal fields
+    full_name: Optional[str] = None
+    college: Optional[str] = None
+    degree: Optional[str] = None
+    grad_year: Optional[int] = None
+    current_year: Optional[str] = None
+    cgpa: Optional[float] = None
+    location_text: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    interests: Optional[List[str]] = None
+    achievements: Optional[List[dict]] = None
+    skill_levels: Optional[dict] = None
+    preferences: Optional[dict] = None
+    privacy: Optional[dict] = None
+    notifications: Optional[dict] = None
 
 
 def _get_candidate_user(session: Session, username: str) -> CandidateUser:
@@ -58,8 +76,44 @@ def _get_or_create_profile(session: Session, candidate_id: int) -> CandidateProf
     return profile
 
 
-def _profile_to_dict(profile: CandidateProfile, resume: Resume = None) -> dict:
+def _j(raw, default):
+    try:
+        return json.loads(raw) if raw else default
+    except Exception:
+        return default
+
+
+_V2_SCALARS = ("full_name", "college", "degree", "grad_year", "current_year", "cgpa", "location_text",
+               "date_of_birth", "portfolio_url", "linkedin_url", "github_url")
+_V2_JSON = {"interests": ("interests_json", []), "achievements": ("achievements_json", []),
+            "skill_levels": ("skill_levels_json", {}), "preferences": ("preferences_json", {}),
+            "privacy": ("privacy_json", {}), "notifications": ("notifications_json", {})}
+
+
+def profile_completion(profile: CandidateProfile, has_resume: bool, project_count: int = 0) -> dict:
+    """Checklist shown on dashboard / profile / settings (same rules everywhere)."""
+    items = [
+        ("personal", "Personal Information", bool((profile.full_name or "").strip() and (profile.contact_email or profile.contact_phone))),
+        ("education", "Education Details", bool(profile.college or _j(profile.education_json, []))),
+        ("skills", "Skills & Keywords", len(_j(profile.skills_json, [])) >= 3),
+        ("projects", "Projects (Add at least 2)", project_count >= 2),
+        ("resume", "Resume Upload", has_resume),
+        ("certifications", "Certifications", len(_j(profile.certifications_json, [])) >= 1),
+        ("portfolio", "Portfolio Links", bool(profile.portfolio_url or profile.github_url or profile.linkedin_url)),
+    ]
+    done = sum(1 for _, _, ok in items if ok)
+    return {"percent": round(done * 100 / len(items)), "items": [{"key": k, "label": l, "done": ok} for k, l, ok in items]}
+
+
+def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_count: Optional[int] = None) -> dict:
+    if project_count is None:
+        with Session(engine) as _s:
+            project_count = _project_count(_s, profile.candidate_id)
+    v2 = {k: getattr(profile, k, None) for k in _V2_SCALARS}
+    v2.update({k: _j(getattr(profile, col, None), d) for k, (col, d) in _V2_JSON.items()})
     return {
+        **v2,
+        "completion": profile_completion(profile, bool(resume), project_count),
         "headline": profile.headline,
         "bio": profile.bio,
         "branch": profile.branch,
@@ -90,7 +144,12 @@ async def get_profile(candidate: str = Depends(get_current_candidate)):
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
-        return _profile_to_dict(profile, resume)
+        return _profile_to_dict(profile, resume, _project_count(session, user.id))
+
+
+def _project_count(session: Session, candidate_id: int) -> int:
+    from ..db import StudentProject
+    return len(session.exec(select(StudentProject.id).where(StudentProject.candidate_id == candidate_id)).all())
 
 
 @router.post("/resume")
@@ -180,6 +239,14 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
             profile.longitude = update.longitude
         if update.gender is not None:
             profile.gender = update.gender
+        for k in _V2_SCALARS:
+            v = getattr(update, k)
+            if v is not None:
+                setattr(profile, k, v.strip() if isinstance(v, str) else v)
+        for k, (col, _d) in _V2_JSON.items():
+            v = getattr(update, k)
+            if v is not None:
+                setattr(profile, col, json.dumps(v))
 
         profile.updated_at = utc_now()
         session.add(profile)
@@ -196,7 +263,7 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
                 logger.warning("Failed to queue welcome email: %s", e)
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
-        return _profile_to_dict(profile, resume)
+        return _profile_to_dict(profile, resume, _project_count(session, user.id))
 
 
 @router.post("/project-upload")

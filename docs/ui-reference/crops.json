@@ -1,0 +1,444 @@
+{
+ "hero-ece-chiplab": {
+  "source": "04-student-dashboard.png",
+  "box": [
+   560,
+   77,
+   1228,
+   346
+  ],
+  "size": [
+   668,
+   269
+  ]
+ },
+ "hero-mech-cad-robotics": {
+  "source": "07-projects.png",
+  "box": [
+   600,
+   71,
+   1514,
+   291
+  ],
+  "size": [
+   914,
+   220
+  ]
+ },
+ "hero-mech-cad-gearbox": {
+  "source": "11-learning-resources.png",
+  "box": [
+   640,
+   71,
+   1156,
+   266
+  ],
+  "size": [
+   516,
+   195
+  ]
+ },
+ "hero-mech-cad-opps": {
+  "source": "08-opportunities.png",
+  "box": [
+   610,
+   68,
+   1183,
+   262
+  ],
+  "size": [
+   573,
+   194
+  ]
+ },
+ "hero-mech-profile-cover": {
+  "source": "05-my-profile.png",
+  "box": [
+   470,
+   73,
+   1018,
+   259
+  ],
+  "size": [
+   548,
+   186
+  ]
+ },
+ "hero-mech-resume": {
+  "source": "06-resume-and-skills.png",
+  "box": [
+   600,
+   68,
+   1516,
+   241
+  ],
+  "size": [
+   916,
+   173
+  ]
+ },
+ "hero-mech-applications": {
+  "source": "09-my-applications.png",
+  "box": [
+   600,
+   69,
+   1138,
+   258
+  ],
+  "size": [
+   538,
+   189
+  ]
+ },
+ "hero-mech-ai-interview": {
+  "source": "10-ai-interview-preparation.png",
+  "box": [
+   700,
+   70,
+   990,
+   274
+  ],
+  "size": [
+   290,
+   204
+  ]
+ },
+ "hero-mech-settings": {
+  "source": "12-student-settings.png",
+  "box": [
+   600,
+   70,
+   1122,
+   253
+  ],
+  "size": [
+   522,
+   183
+  ]
+ },
+ "hero-recruiter-team": {
+  "source": "13-recruiter-dashboard.png",
+  "box": [
+   660,
+   71,
+   1165,
+   288
+  ],
+  "size": [
+   505,
+   217
+  ]
+ },
+ "hero-recruiter-jobs": {
+  "source": "14-jobs-and-requisitions.png",
+  "box": [
+   660,
+   71,
+   1153,
+   284
+  ],
+  "size": [
+   493,
+   213
+  ]
+ },
+ "hero-plant-engineers": {
+  "source": "01-landing-page.png",
+  "box": [
+   1031,
+   64,
+   1536,
+   478
+  ],
+  "size": [
+   505,
+   414
+  ]
+ },
+ "landing-student": {
+  "source": "01-landing-page.png",
+  "box": [
+   1000,
+   722,
+   1141,
+   998
+  ],
+  "size": [
+   141,
+   276
+  ]
+ },
+ "landing-recruiter": {
+  "source": "01-landing-page.png",
+  "box": [
+   1360,
+   722,
+   1519,
+   998
+  ],
+  "size": [
+   159,
+   276
+  ]
+ },
+ "login-student": {
+  "source": "02-student-login.png",
+  "box": [
+   0,
+   0,
+   1226,
+   844
+  ],
+  "size": [
+   1226,
+   844
+  ]
+ },
+ "login-recruiter": {
+  "source": "03-recruiter-login.png",
+  "box": [
+   0,
+   0,
+   1242,
+   848
+  ],
+  "size": [
+   1242,
+   848
+  ]
+ },
+ "thumb-mech-gearbox": {
+  "source": "07-projects.png",
+  "box": [
+   246,
+   414,
+   563,
+   515
+  ],
+  "size": [
+   317,
+   101
+  ]
+ },
+ "thumb-ece-robot-arm": {
+  "source": "07-projects.png",
+  "box": [
+   584,
+   414,
+   897,
+   515
+  ],
+  "size": [
+   313,
+   101
+  ]
+ },
+ "thumb-aero-airfoil": {
+  "source": "07-projects.png",
+  "box": [
+   918,
+   412,
+   1231,
+   515
+  ],
+  "size": [
+   313,
+   103
+  ]
+ },
+ "thumb-mech-cnc-fixture": {
+  "source": "07-projects.png",
+  "box": [
+   246,
+   746,
+   563,
+   833
+  ],
+  "size": [
+   317,
+   87
+  ]
+ },
+ "thumb-eee-solar": {
+  "source": "07-projects.png",
+  "box": [
+   584,
+   746,
+   897,
+   833
+  ],
+  "size": [
+   313,
+   87
+  ]
+ },
+ "thumb-auto-manifold": {
+  "source": "07-projects.png",
+  "box": [
+   918,
+   746,
+   1231,
+   832
+  ],
+  "size": [
+   313,
+   86
+  ]
+ },
+ "thumb-mech-gears": {
+  "source": "11-learning-resources.png",
+  "box": [
+   252,
+   566,
+   465,
+   631
+  ],
+  "size": [
+   213,
+   65
+  ]
+ },
+ "thumb-civil-steel-frame": {
+  "source": "11-learning-resources.png",
+  "box": [
+   481,
+   566,
+   693,
+   631
+  ],
+  "size": [
+   212,
+   65
+  ]
+ },
+ "thumb-sim-fea": {
+  "source": "11-learning-resources.png",
+  "box": [
+   707,
+   566,
+   919,
+   631
+  ],
+  "size": [
+   212,
+   65
+  ]
+ },
+ "thumb-meta-cnc-machining": {
+  "source": "11-learning-resources.png",
+  "box": [
+   933,
+   566,
+   1146,
+   631
+  ],
+  "size": [
+   213,
+   65
+  ]
+ },
+ "thumb-mech-machine-design": {
+  "source": "10-ai-interview-preparation.png",
+  "box": [
+   257,
+   576,
+   468,
+   634
+  ],
+  "size": [
+   211,
+   58
+  ]
+ },
+ "thumb-sim-fea-2": {
+  "source": "10-ai-interview-preparation.png",
+  "box": [
+   484,
+   576,
+   696,
+   634
+  ],
+  "size": [
+   212,
+   58
+  ]
+ },
+ "thumb-meta-manufacturing": {
+  "source": "10-ai-interview-preparation.png",
+  "box": [
+   710,
+   576,
+   921,
+   634
+  ],
+  "size": [
+   211,
+   58
+  ]
+ },
+ "thumb-hr-panel": {
+  "source": "10-ai-interview-preparation.png",
+  "box": [
+   936,
+   574,
+   1147,
+   634
+  ],
+  "size": [
+   211,
+   60
+  ]
+ },
+ "thumb-ece-lab-1": {
+  "source": "04-student-dashboard.png",
+  "box": [
+   345,
+   512,
+   540,
+   580
+  ],
+  "size": [
+   195,
+   68
+  ]
+ },
+ "thumb-ece-lab-2": {
+  "source": "04-student-dashboard.png",
+  "box": [
+   690,
+   512,
+   890,
+   580
+  ],
+  "size": [
+   200,
+   68
+  ]
+ },
+ "thumb-mech-lab-3": {
+  "source": "04-student-dashboard.png",
+  "box": [
+   1040,
+   512,
+   1240,
+   580
+  ],
+  "size": [
+   200,
+   68
+  ]
+ },
+ "thumb-profile-builder": {
+  "source": "04-student-dashboard.png",
+  "box": [
+   1222,
+   778,
+   1432,
+   909
+  ],
+  "size": [
+   210,
+   131
+  ]
+ }
+}

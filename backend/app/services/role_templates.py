@@ -10,6 +10,8 @@ BRANCHES = [
     {"id": "aerospace", "name": "Aerospace"},
     {"id": "software", "name": "CS / Software"},
     {"id": "chemical", "name": "Chemical"},
+    {"id": "automobile", "name": "Automobile"},
+    {"id": "metallurgy", "name": "Metallurgy & Materials"},
 ]
 
 

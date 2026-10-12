@@ -87,6 +87,9 @@ class User(SQLModel, table=True):
     password_hash: str
     email_verified: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utc_now)
+    status: Optional[str] = Field(default="active", index=True)  # active | suspended
+    last_login_at: Optional[datetime] = None
+    settings_json: Optional[str] = None  # per-user notification / privacy prefs (recruiter & admin)
 
 
 class RecruiterRequest(SQLModel, table=True):
@@ -133,6 +136,8 @@ class CandidateUser(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: datetime = Field(default_factory=utc_now)
+    status: Optional[str] = Field(default="active", index=True)  # active | suspended
+    last_login_at: Optional[datetime] = None
 
 
 class CandidateProfile(SQLModel, table=True):
@@ -159,6 +164,24 @@ class CandidateProfile(SQLModel, table=True):
     gender: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    # --- Student portal (v2 UI) ---
+    full_name: Optional[str] = None
+    college: Optional[str] = None
+    degree: Optional[str] = None
+    grad_year: Optional[int] = None
+    current_year: Optional[str] = None
+    cgpa: Optional[float] = None
+    location_text: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    interests_json: Optional[str] = None        # ["Design & Manufacturing", ...]
+    achievements_json: Optional[str] = None     # [{title, year, issuer}]
+    skill_levels_json: Optional[str] = None     # {"SolidWorks": "Advanced", ...}
+    preferences_json: Optional[str] = None      # {roles, locations, job_types, salary, relocate}
+    privacy_json: Optional[str] = None          # {visibility, show_contact, allow_messages, share_profile}
+    notifications_json: Optional[str] = None    # {email_updates, interview_alerts, job_recommendations, newsletter}
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -204,7 +227,12 @@ class Job(SQLModel, table=True):
     longitude: Optional[float] = None
     requirements: str = ""            # free-text or comma-separated skills
     remote_type: str = "onsite"       # "remote" | "onsite" | "hybrid"
-    status: str = "open"              # "open" | "closed"
+    status: str = "open"              # "open" | "closed" | "draft" | "paused" | "archived"
+    job_type: Optional[str] = None    # internship | full-time | part-time | apprenticeship
+    experience_level: Optional[str] = None   # fresher | 0-2 | 2-5 | 5+
+    openings: Optional[int] = None
+    target_colleges_json: Optional[str] = None
+    eligibility: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -333,9 +361,12 @@ class EmailLog(SQLModel, table=True):
 class InterviewSession(SQLModel, table=True):
     """One live AI interview run for an application."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    application_id: int = Field(foreign_key="application.id", index=True)
+    application_id: Optional[int] = Field(default=None, foreign_key="application.id", index=True)
     candidate_id: int = Field(index=True)
     job_id: Optional[int] = Field(default=None, index=True)
+    mode: Optional[str] = Field(default="application", index=True)  # application | practice
+    practice_kind: Optional[str] = None   # technical | domain | hr | mock
+    practice_topic: Optional[str] = None
     status: str = Field(default="active", index=True)  # active | completed | abandoned
     plan_json: str = "[]"          # planned base questions
     transcript_json: str = "[]"    # [{role, text, kind, q_index, ts}]
@@ -348,11 +379,181 @@ class InterviewSession(SQLModel, table=True):
     completed_at: Optional[datetime] = None
 
 
+# ─── v2 portal models (student / recruiter / admin redesign) ─────────────────
+
+class StudentProject(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="candidateuser.id", index=True)
+    title: str
+    description: str = ""
+    category: str = "academic"          # academic | personal | team
+    tags_json: str = "[]"
+    tools_json: str = "[]"
+    image_path: Optional[str] = None     # media path (uploaded) or None → branch thumbnail
+    file_path: Optional[str] = None      # attachment (zip/pdf/cad) stored under media/projects
+    links_json: str = "[]"               # [{label, url}]
+    status: str = Field(default="draft", index=True)   # draft | under_review | verified | rejected
+    verification_note: Optional[str] = None
+    team_size: int = 1
+    month: Optional[str] = None          # "Apr 2026"
+    featured: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class SavedJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="candidateuser.id", index=True)
+    job_id: int = Field(foreign_key="job.id", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ScheduledInterview(SQLModel, table=True):
+    """Human (recruiter-run) interview rounds — distinct from the AI interview."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(foreign_key="application.id", index=True)
+    job_id: int = Field(foreign_key="job.id", index=True)
+    candidate_id: int = Field(index=True)
+    recruiter_id: int = Field(index=True)            # RecruiterUser.id (owner)
+    round_name: str = "Technical Round 1"
+    starts_at: datetime = Field(index=True)
+    duration_min: int = 60
+    mode: str = "online"                 # online | onsite
+    meeting_link: Optional[str] = None
+    location: Optional[str] = None
+    interviewers: str = ""               # comma-separated names/emails
+    status: str = Field(default="scheduled", index=True)  # scheduled | completed | cancelled | no_show
+    feedback_json: Optional[str] = None  # {rating 1-5, recommendation, notes, by}
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Offer(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(foreign_key="application.id", index=True)
+    job_id: int = Field(foreign_key="job.id", index=True)
+    candidate_id: int = Field(index=True)
+    recruiter_id: int = Field(index=True)
+    ctc: Optional[str] = None            # "₹6.5 LPA" or "₹25,000 / month"
+    ctc_amount: Optional[float] = None   # numeric (LPA) for analytics
+    offer_date: datetime = Field(default_factory=utc_now)
+    joining_date: Optional[str] = None   # ISO date
+    status: str = Field(default="sent", index=True)  # draft | sent | accepted | declined | negotiation | withdrawn | joined
+    notes: Optional[str] = None
+    letter_text: Optional[str] = None
+    responded_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CompanyProfile(SQLModel, table=True):
+    """Public employer profile owned by a recruiter account (one per company)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_recruiter_id: int = Field(index=True, unique=True)
+    name: str = ""
+    tagline: Optional[str] = None
+    industries_json: str = "[]"
+    headquarters: Optional[str] = None
+    location_text: Optional[str] = None
+    website: Optional[str] = None
+    linkedin: Optional[str] = None
+    legal_name: Optional[str] = None
+    company_type: Optional[str] = None
+    size: Optional[str] = None
+    founded: Optional[str] = None
+    about: Optional[str] = None
+    mission: Optional[str] = None
+    vision: Optional[str] = None
+    values_json: str = "[]"
+    highlights_json: str = "[]"          # [{label, value}]
+    locations_json: str = "[]"           # [{name, address, tag, main}]
+    hiring_focus_json: str = "[]"
+    preferences_json: str = "{}"         # {employment_types, experience, locations, campus}
+    benefits_json: str = "[]"
+    logo_path: Optional[str] = None
+    cover_path: Optional[str] = None
+    gallery_json: str = "[]"             # media paths
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class TeamMember(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_recruiter_id: int = Field(index=True)
+    name: str
+    email: str
+    title: Optional[str] = None
+    access_level: str = "recruiter"      # admin | recruiter | viewer
+    status: str = "invited"              # invited | active | inactive
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class RecruiterNote(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recruiter_id: int = Field(index=True)
+    candidate_id: int = Field(index=True)
+    application_id: Optional[int] = Field(default=None, index=True)
+    text: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class NewsletterSubscriber(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True)
+    source: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ContentFlag(SQLModel, table=True):
+    """Moderation queue items (reported jobs, profiles, spam)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)        # job | profile | company | application | other
+    target_id: Optional[int] = None
+    title: str
+    detail: Optional[str] = None
+    severity: str = "medium"             # low | medium | high
+    status: str = Field(default="open", index=True)  # open | resolved | dismissed
+    reported_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    resolved_at: Optional[datetime] = None
+
+
 def init_db():
     SQLModel.metadata.create_all(engine)
     if engine.url.drivername.startswith("sqlite"):
         _migrate_sqlite()
     _add_missing_columns()
+    _relax_not_null("interviewsession", "application_id")
+
+
+def _relax_not_null(table: str, column: str) -> None:
+    """Drop a NOT NULL constraint that an older schema created.
+    PostgreSQL supports it directly; SQLite needs a table rebuild."""
+    insp = inspect(engine)
+    if table not in insp.get_table_names():
+        return
+    cols = {c["name"]: c for c in insp.get_columns(table)}
+    if column not in cols or cols[column].get("nullable", True):
+        return
+    try:
+        if engine.url.drivername.startswith("sqlite"):
+            with engine.begin() as conn:
+                ddl = conn.execute(text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:t"), {"t": table}).scalar()
+                import re as _re
+                new_ddl = _re.sub(rf'("?{column}"?\s+INTEGER)\s+NOT NULL', r"\1", ddl, count=1)
+                if new_ddl == ddl:
+                    return
+                conn.execute(text("PRAGMA foreign_keys=OFF"))
+                conn.execute(text(f"ALTER TABLE {table} RENAME TO _{table}_old"))
+                conn.execute(text(new_ddl))
+                names = ", ".join(f'"{c}"' for c in cols)
+                conn.execute(text(f"INSERT INTO {table} ({names}) SELECT {names} FROM _{table}_old"))
+                conn.execute(text(f"DROP TABLE _{table}_old"))
+        else:
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE "{table}" ALTER COLUMN "{column}" DROP NOT NULL'))
+    except Exception as exc:  # pragma: no cover
+        import logging
+        logging.getLogger("ats-platform").warning("[MIGRATE] relax %s.%s failed: %s", table, column, exc)
 
 
 def _add_missing_columns():

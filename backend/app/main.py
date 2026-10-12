@@ -15,6 +15,7 @@ from .db import init_db, engine
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, recruiter_profile, admin, interview
+from .api import student_portal, recruiter_portal, hiring, admin_portal, notifications
 from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
@@ -95,6 +96,8 @@ app.include_router(recruiter_jobs.router)
 app.include_router(recruiter_profile.router)
 app.include_router(admin.router)
 app.include_router(interview.router)
+for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications):
+    app.include_router(_r.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix
 from .api.candidate_profile import upload_candidate_project, get_candidate_status
