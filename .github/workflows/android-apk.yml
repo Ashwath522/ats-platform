@@ -1,0 +1,44 @@
+# To enable: move this file to .github/workflows/android-apk.yml (needs a token/login with the "workflow" scope to push).
+# Builds an installable debug APK of the CoreLink app on every push to main
+# (and on demand). Download it from the run's "Artifacts" section.
+# Set the repository variable VITE_API_URL (Settings → Secrets and variables →
+# Actions → Variables) to your backend URL, e.g. https://corelink-api.onrender.com
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/android-apk.yml"]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - name: Build web bundle for the app
+        run: npx vite build --mode mobile
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+      - run: npx cap sync android
+      - name: Assemble debug APK
+        working-directory: frontend/android
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corelink-debug-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
