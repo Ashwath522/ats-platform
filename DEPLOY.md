@@ -62,7 +62,7 @@ npm run android                          # builds, syncs, opens Android Studio �
 npm run ios                              # macOS + Xcode; then `cd ios/App && pod install` once
 ```
 
-Or let CI build it: move `docs/ci/android-apk.yml` to `.github/workflows/`, then in GitHub → *Settings → Secrets and variables → Actions → Variables* add `VITE_API_URL`, push to `main`, and download **corelink-debug-apk** from the workflow run.
+Or let CI build it: in GitHub → *Settings → Secrets and variables → Actions → Variables* add `VITE_API_URL`, push to `main`, and download **corelink-debug-apk** from the workflow run.
 
 For Play Store / App Store releases you still need a signing key (Android) and an Apple developer account (iOS, $99/yr) — not free.
 
