@@ -196,3 +196,21 @@
 /* reset global button padding inside the room */
 .iv-root button { padding: 0; }
 .iv-root .iv-primary, .iv-root .iv-secondary { padding: 0 18px; }
+
+/* Practice mode — badge + result card */
+.iv-rec.iv-practice { color: #99f6e4; background: rgba(45, 212, 191, 0.16); }
+.iv-result { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 20px; }
+.iv-score { width: 132px; height: 132px; border-radius: 50%; display: flex; align-items: baseline; justify-content: center; padding-top: 42px; box-sizing: border-box;
+  background: radial-gradient(closest-side, var(--iv-card) 78%, transparent 80% 100%), conic-gradient(var(--iv-teal) calc(var(--p) * 1%), rgba(255, 255, 255, 0.1) 0); }
+.iv-score b { font-size: 38px; color: #fff; line-height: 1; }
+.iv-score small { color: var(--iv-dim); font-size: 14px; margin-left: 2px; }
+.iv-dims { width: 100%; display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.iv-dim { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(80px, 1.4fr) 44px; gap: 10px; align-items: center; font-size: 13.5px; color: var(--iv-dim); text-align: left; }
+.iv-dim b { color: var(--iv-ink); text-align: right; }
+.iv-fb { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; text-align: left; }
+.iv-fb > div { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--iv-line); border-radius: 14px; padding: 12px 14px; }
+.iv-fb h3 { margin: 0 0 6px; font-size: 14.5px; color: #fff; }
+.iv-fb ul { margin: 0; padding-left: 18px; color: var(--iv-dim); font-size: 13.5px; line-height: 1.5; }
+.iv-actions { display: flex; gap: 10px; width: 100%; max-width: 440px; margin-top: 8px; }
+.iv-actions > * { flex: 1; }
+@media (max-width: 520px) { .iv-actions { flex-direction: column; } }

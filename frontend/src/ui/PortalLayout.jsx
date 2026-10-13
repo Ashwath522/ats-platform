@@ -39,7 +39,7 @@ export default function PortalLayout({
   const NavItem = ({ item }) => {
     const Icon = item.icon
     return (
-      <NavLink to={item.to} end={item.end} className={({ isActive }) => cx('cl-nav-item', (isActive || item.match?.(location)) && 'active')}>
+      <NavLink to={item.to} end={item.end} className={({ isActive }) => cx('cl-nav-item', (item.match ? item.match(location) : isActive) && 'active')}>
         <Icon size={20} strokeWidth={1.9} />
         <span>{item.label}</span>
       </NavLink>

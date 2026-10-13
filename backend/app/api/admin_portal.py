@@ -1394,7 +1394,8 @@ async def company_detail(cid: str, admin: str = Depends(get_current_admin)):
 
 @router.get(f"{P}/jobs")
 async def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branch: Optional[str] = None,
-                    company: Optional[str] = None, page: int = 1, page_size: int = 10, admin: str = Depends(get_current_admin)):
+                    company: Optional[str] = None, page: int = 1, page_size: int = 10, export: bool = False,
+                    admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         ix = _Index(s)
         jobs = s.exec(select(Job).order_by(Job.created_at.desc())).all()
@@ -1422,6 +1423,8 @@ async def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branc
     if q:
         n = q.lower().strip()
         rows = [r for r in rows if n in r["title"].lower() or n in r["company"].lower() or n in (r["location"] or "").lower()]
+    if export:
+        return {"items": rows[:MAX_EXPORT], "total": len(rows), "kpis": kpis}
     items, total = _page(rows, page, page_size)
     return {"items": items, "total": total, "kpis": kpis, "facets": {"companies": companies}}
 
@@ -1913,3 +1916,158 @@ async def audit_log_detail(log_id: int, admin: str = Depends(get_current_admin))
         jobs = {r.job_id: s.get(Job, r.job_id).title} if r.job_id and s.get(Job, r.job_id) else {}
         people = _people(s, [r.candidate_id] if r.candidate_id else [])
         return _audit_public(r, jobs, people, full=True)
+
+
+# ── recruiter requests: approve / reject with an audit trail ─────────────────
+# The decision logic (account creation, credential email) lives in
+# app/api/auth.py; these wrappers add the admin audit event the portal shows.
+
+
+class RequestDecision(BaseModel):
+    reason: Optional[str] = PField(default=None, max_length=500)
+
+
+@router.post(f"{P}/recruiter-requests/{{request_id}}/approve")
+async def approve_request(request_id: int, admin: str = Depends(get_current_admin)):
+    from .auth import approve_recruiter_request
+    res = await approve_recruiter_request(request_id, admin=admin)
+    with Session(engine) as s:
+        _audit(s, admin, "approve_recruiter_request", f"r-{request_id}",
+               details={"email": (res.get("user") or {}).get("email"), "email_sent": res.get("email_sent")})
+    return res
+
+
+@router.post(f"{P}/recruiter-requests/{{request_id}}/reject")
+async def reject_request(request_id: int, body: RequestDecision, admin: str = Depends(get_current_admin)):
+    from .auth import reject_recruiter_request
+    reason = (body.reason or "").strip() or None
+    res = await reject_recruiter_request(request_id, reason=reason, admin=admin)
+    with Session(engine) as s:
+        _audit(s, admin, "reject_recruiter_request", f"r-{request_id}", details={"reason": reason})
+    return res
+
+
+# ── platform settings (System Settings page) ──────────────────────────────────
+# Stored as JSON next to the database (no schema change). Values are read by
+# the public landing / login pages through /api/public/stats.
+
+SETTINGS_DEFAULTS: Dict[str, Any] = {
+    "support_email": None,
+    "announcement_enabled": False,
+    "announcement_text": "",
+    "announcement_tone": "info",
+    "public_stats": True,
+    "retention_days": 30,
+}
+
+
+def _settings_path() -> str:
+    import os
+    from ..db import DATA_DIR
+    return os.path.join(DATA_DIR, "platform_settings.json")
+
+
+def load_platform_settings() -> Dict[str, Any]:
+    out = dict(SETTINGS_DEFAULTS)
+    try:
+        with open(_settings_path(), "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if isinstance(raw, dict):
+            out.update({k: raw[k] for k in SETTINGS_DEFAULTS if k in raw})
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+class SettingsBody(BaseModel):
+    support_email: Optional[str] = PField(default=None, max_length=254)
+    announcement_enabled: Optional[bool] = None
+    announcement_text: Optional[str] = PField(default=None, max_length=300)
+    announcement_tone: Optional[str] = None
+    public_stats: Optional[bool] = None
+    retention_days: Optional[int] = None
+
+
+@router.get(f"{P}/settings")
+async def get_settings(admin: str = Depends(get_current_admin)):
+    import os
+    st = load_platform_settings()
+    try:
+        mtime = os.path.getmtime(_settings_path())
+        updated = _iso(datetime.utcfromtimestamp(mtime))
+    except OSError:
+        updated = None
+    with Session(engine) as s:
+        health = _health(s)
+    return {"settings": st, "updated_at": updated, "health": health, "dev_mode": _dev_mode()}
+
+
+@router.put(f"{P}/settings")
+async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admin)):
+    import os
+    st = load_platform_settings()
+    changes = body.model_dump(exclude_unset=True)
+    if "support_email" in changes:
+        v = (changes["support_email"] or "").strip().lower() or None
+        if v and not EMAIL_RE.match(v):
+            raise HTTPException(status_code=422, detail="Support email must be a valid email address")
+        changes["support_email"] = v
+    if "announcement_text" in changes:
+        changes["announcement_text"] = (changes["announcement_text"] or "").strip()
+    if "announcement_tone" in changes and changes["announcement_tone"] not in {"info", "warning", "success"}:
+        raise HTTPException(status_code=422, detail="announcement_tone must be info, warning or success")
+    if "retention_days" in changes:
+        d = changes["retention_days"]
+        if d is None or not (7 <= int(d) <= 365):
+            raise HTTPException(status_code=422, detail="Retention must be between 7 and 365 days")
+    for k in ("announcement_enabled", "public_stats"):
+        if k in changes and changes[k] is None:
+            changes.pop(k)
+    st.update(changes)
+    if st["announcement_enabled"] and len(st["announcement_text"]) < 3:
+        raise HTTPException(status_code=422, detail="Write the announcement text before turning it on")
+    path = _settings_path()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(st, fh, indent=2)
+    os.replace(tmp, path)
+    _PUBLIC_CACHE.clear()
+    with Session(engine) as s:
+        _audit(s, admin, "update_settings", "platform", details=changes)
+    return {"settings": st}
+
+
+# ── public stats (landing page, no auth) ──────────────────────────────────────
+
+_PUBLIC_CACHE: Dict[str, Any] = {}
+PUBLIC_TTL = 60
+
+
+@router.get("/api/public/stats")
+async def public_stats():
+    """Live, non-personal platform counts for the public landing page.
+    Cached for a minute; company names are only those of approved companies."""
+    now = time.time()
+    hit = _PUBLIC_CACHE.get("stats")
+    if hit and now - hit[0] < PUBLIC_TTL:
+        return hit[1]
+    st = load_platform_settings()
+    with Session(engine) as s:
+        ix = _Index(s)
+        companies = [c for c in _companies(s, ix) if c["status"] in {"verified", "approved"}]
+        students = s.exec(select(func.count()).select_from(CandidateUser).where(or_(CandidateUser.status == None, CandidateUser.status != "suspended"))).one()  # noqa: E711
+        open_jobs = s.exec(select(func.count()).select_from(Job).where(Job.status == "open")).one()
+        branches = {branch_id(b) for b in s.exec(select(Job.branch).where(Job.status == "open")).all() if b}
+        verified_projects = s.exec(select(func.count()).select_from(StudentProject).where(StudentProject.status == "verified")).one()
+    top = sorted(companies, key=lambda c: (-c["jobs"], c["name"]))[:6]
+    out = {
+        "students": students, "companies": len(companies), "open_jobs": open_jobs,
+        "branches_hiring": len([b for b in branches if b in dict(CORE_BRANCHES)]),
+        "verified_projects": verified_projects,
+        "company_names": [c["name"] for c in top],
+        "show_stats": bool(st.get("public_stats", True)),
+        "announcement": {"text": st["announcement_text"], "tone": st["announcement_tone"]} if st.get("announcement_enabled") and st.get("announcement_text") else None,
+        "support_email": st.get("support_email"),
+    }
+    _PUBLIC_CACHE["stats"] = (now, out)
+    return out

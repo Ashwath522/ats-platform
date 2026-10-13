@@ -221,7 +221,7 @@
 .rp-compact .cl-table td { padding: 10px 8px; white-space: nowrap; }
 .rp-compact .cl-table td .rp-wrap-cell, .rp-compact .cl-table td.rp-wrap { white-space: normal; }
 .rp-compact .rp-job-title strong { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-compact .rp-person strong { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.rp-compact .rp-person strong { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
 .rp-filterbar.five { grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr)); }
 @media (max-width: 1280px) { .rp-filterbar.five { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rp-filterbar.five > :first-child { grid-column: 1 / -1; } }
 @media (max-width: 760px) { .rp-compact .cl-table td { white-space: normal; } .rp-compact .rp-job-title strong, .rp-compact .rp-person strong { max-width: none; white-space: normal; } }
@@ -235,3 +235,51 @@
 .rp-page .cl-input, .rp-page .cl-select, .rp-page .cl-textarea { border: 1px solid var(--cl-line); border-radius: 10px; color: var(--cl-ink); font-family: inherit; }
 .rp-page .cl-input:focus, .rp-page .cl-select:focus, .rp-page .cl-textarea:focus { border-color: var(--cl-blue); box-shadow: 0 0 0 3px rgba(11, 92, 255, 0.14); }
 .rp-page .cl-select { padding-right: 34px; }
+
+/* Candidates list (page 15) */
+.rp-filter-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.rp-cand-head { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 4px; padding: 0 8px; color: var(--cl-muted); }
+.rp-cand-rows { display: flex; flex-direction: column; }
+.rp-cand-row { grid-template-columns: 20px minmax(0, 1fr); }
+.rp-cand-row button.rp-rowbtn { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto 18px; gap: 10px; align-items: center; min-width: 0; cursor: pointer; border-radius: 8px; }
+.rp-cand-row button.rp-rowbtn > span { min-width: 0; }
+.rp-cand-row button.rp-rowbtn > svg { color: var(--cl-muted); }
+.rp-cand-row button.rp-rowbtn:focus-visible { outline: 3px solid rgba(11, 92, 255, .3); outline-offset: 3px; }
+.rp-cand-pager .cl-pagination { flex-direction: column; align-items: center; gap: 8px; margin-top: 12px; }
+.rp-sort-sel { width: auto; min-width: 190px; }
+.rp-cand-list .cl-seg { width: 100%; display: flex; }
+.rp-cand-list .cl-seg button { flex: 1; justify-content: center; }
+.rp-cand-filters .cl-select, .rp-sort-sel { font-size: 13px; padding-left: 10px; padding-right: 28px; min-height: 38px; background-position: right 8px center; }
+.rp-cand-row strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Applications / Shortlisted (pages 16–17) */
+.rp-linkish { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-width: 0; border-radius: 8px; }
+.rp-linkish:hover strong { color: var(--cl-blue); }
+.rp-linkish:focus-visible, .rp-list-btn:focus-visible { outline: 3px solid rgba(11, 92, 255, .3); outline-offset: 2px; }
+.rp-list-btn { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--cl-line-2); font: inherit; text-align: left; cursor: pointer; }
+.rp-list-btn:last-child { border-bottom: 0; }
+.rp-list-btn:hover strong { color: var(--cl-blue); }
+.rp-job-ov h4 { line-height: 1.3; }
+.rp-insight-card .rp-insight + .rp-insight { border-top: 1px solid var(--cl-line-2); }
+.rp-next { line-height: 1.3; font-size: 12.5px; white-space: normal; min-width: 92px; }
+.rp-next small { display: block; color: var(--cl-muted); }
+.rp-iv-pill .cl-badge { white-space: normal; line-height: 1.2; height: auto; min-height: 24px; padding: 4px 8px; max-width: 108px; }
+.rp-iv-pill .cl-badge.dot::before { flex: 0 0 auto; }
+.rp-page .cl-page-head > div:first-child { flex: 1 1 420px; min-width: 0; }
+.rp-compact .cl-btn.sm, .rp-compact .cl-btn-sm { padding: 0 10px; }
+.rp-filterbar .cl-select, .rp-filterbar .rp-daterange-btn, .rp-filterbar-2 .cl-select { font-size: 13px; padding-left: 10px; padding-right: 28px; background-position: right 8px center; }
+.rp-filterbar .rp-daterange-btn { padding-right: 10px; white-space: nowrap; }
+.rp-compact .cl-table th:first-child, .rp-compact .cl-table td:first-child { padding-left: 4px; padding-right: 4px; }
+.rp-compact .cl-table td { padding: 10px 6px; }
+.rp-compact .cl-table th { padding: 10px 6px; }
+.rp-compact .rp-wrap-cell { min-width: 84px; max-width: 135px; }
+.rp-compact .cl-pill { font-size: 12px; }
+.rp-btn-grid .cl-btn { font-size: 12.5px; gap: 6px; white-space: normal; line-height: 1.2; text-align: left; min-height: 42px; padding: 6px 10px; }
+.rp-actcell { display: flex; align-items: center; gap: 2px; }
+.rp-compact .rp-next { min-width: 84px; max-width: 110px; }
+.rp-actcell .cl-btn { padding: 0 8px; font-size: 12.5px; }
+.rp-compact .rp-person { gap: 8px; }
+.rp-compact .cl-table th { white-space: normal; line-height: 1.25; }
+.rp-compact .rp-iv-pill .cl-badge { max-width: 100px; font-size: 11.5px; }
+.rp-compact .rp-next { min-width: 78px; max-width: 98px; }
+@media (max-width: 600px) { .rp-filterbar, .rp-filterbar.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rp-filterbar.five > :first-child { grid-column: 1 / -1; } }

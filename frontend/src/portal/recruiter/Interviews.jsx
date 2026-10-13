@@ -4,14 +4,14 @@ import {
   Bot, CalendarCheck, CalendarDays, CalendarPlus, CheckCircle2, ClipboardCheck, Clock, Download, LayoutTemplate, MessageSquare, Search, UserCheck,
 } from 'lucide-react'
 import {
-  Alert, Avatar, Badge, Button, Card, DataTable, Donut, EmptyState, Input, Legend, Menu, PageHeader, Pagination, Select, Skeleton, StatTile,
+  Alert, Avatar, Badge, Button, Card, DataTable, Donut, EmptyState, Input, Menu, PageHeader, Pagination, Select, Skeleton, StatTile,
   StatusPill, Tabs, ViewAll, useToast, usePagination,
 } from '../../ui/index.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { useRecruiter } from './RecruiterShell.jsx'
 import ScheduleInterviewModal from './components/ScheduleInterviewModal.jsx'
 import {
-  DateRangePicker, H, ModeBadge, Stars, dayKey, downloadResponse, fmtD, fmtDT, fmtT, roundColor, todayKey,
+  DateRangePicker, H, HLegend, ModeBadge, Stars, dayKey, downloadResponse, fmtD, fmtDT, fmtT, roundColor, todayKey,
 } from './components/HiringCommon.jsx'
 import InterviewsCalendar, { JoinOrView, interviewActions } from './components/InterviewsCalendar.jsx'
 import {
@@ -38,7 +38,7 @@ const STATUS_OPTS = [
 const KIND_OPTS = [{ value: 'human', label: 'Panel interviews' }, { value: 'ai', label: 'AI interviews' }]
 
 function statusOf(iv) {
-  if (iv.pending_feedback) return <StatusPill status="pending" label="Pending Feedback" />
+  if (iv.pending_feedback) return <StatusPill status="pending" label="Feedback Due" />
   if (iv.kind === 'ai') return <StatusPill status="completed" label="AI Completed" />
   return <StatusPill status={iv.status} label={iv.status === 'no_show' ? 'No Show' : undefined} />
 }
@@ -73,18 +73,18 @@ function InterviewsTable({ items, rounds, act, title = 'All Scheduled Interviews
   const cols = [
     { key: 'starts_at', header: 'Date & Time', sortable: true, render: (i) => <span style={{ whiteSpace: 'nowrap' }}>{fmtDT(i.starts_at)}</span> },
     { key: 'candidate_name', header: 'Candidate', sortable: true, render: (i) => <span className="hr-cand"><Avatar name={i.candidate_name} src={i.candidate_avatar} size={30} /><strong>{i.candidate_name}</strong></span> },
-    { key: 'job_title', header: 'Job Role', sortable: true, render: (i) => <span className="hr-wrap2 cl-muted">{i.job_title}</span> },
+    { key: 'job_title', header: 'Job Role', sortable: true, render: (i) => <span className="hr-wrap2 cl-muted" style={{ maxWidth: 96 }} title={i.job_title}>{i.job_title}</span> },
     { key: 'round_name', header: 'Round', sortable: true, render: (i) => (i.kind === 'ai'
       ? <span className="cl-row" style={{ gap: 6 }}><Bot size={15} color="#be185d" /> AI <span className="hr-score">{i.eval_score ?? '—'}</span></span>
       : <span className="cl-row" style={{ gap: 6, whiteSpace: 'nowrap' }}><i style={{ width: 8, height: 8, borderRadius: 9, background: roundColor(i.round_name, rounds), flex: '0 0 auto' }} />{i.round_name}</span>) },
-    { key: 'interviewers', header: 'Interviewers', render: (i) => <span className="hr-wrap2 cl-muted">{i.interviewers || '—'}</span>, hideOnMobile: true },
+    { key: 'interviewers', header: 'Interviewers', render: (i) => <span className="hr-wrap2 cl-muted" style={{ maxWidth: 88 }} title={i.interviewers}>{i.interviewers || '—'}</span>, hideOnMobile: true },
     { key: 'mode', header: 'Mode', render: (i) => <ModeBadge mode={i.mode} /> },
     { key: 'status', header: 'Status', sortable: true, render: statusOf },
-    { key: 'actions', header: 'Actions', align: 'right', render: (i) => <span className="cl-row" style={{ justifyContent: 'flex-end', gap: 4 }}><JoinOrView iv={i} act={act} /><Menu items={interviewActions(i, act)} label={`Actions for ${i.candidate_name}`} /></span> },
+    { key: 'actions', header: 'Actions', align: 'right', render: (i) => <span className="cl-row" style={{ justifyContent: 'flex-end', gap: 4 }}><JoinOrView iv={i} act={act} compact /><Menu items={interviewActions(i, act)} label={`Actions for ${i.candidate_name}`} /></span> },
   ]
   return (
     <Card title={title} action={<span className="hr-small">{rows.length} of {items.length}</span>}>
-      <div className="cl-filters" style={{ marginBottom: 12 }}>
+      <div className={`hr-ivfilters${withRange ? ' wide' : ''}`}>
         <div style={{ flex: '2 1 240px' }}><Input icon={Search} type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by candidate name, job, or interviewer…" aria-label="Search interviews" /></div>
         <Select value={job} onChange={(e) => setJob(e.target.value)} options={jobs} placeholder="All Jobs" aria-label="Filter by job" />
         <Select value={round} onChange={(e) => setRound(e.target.value)} options={roundNames} placeholder="All Rounds" aria-label="Filter by round" />
@@ -97,8 +97,8 @@ function InterviewsTable({ items, rounds, act, title = 'All Scheduled Interviews
           { label: 'Last 30 days', range: () => ({ start: dayKey(Date.now() - 29 * 864e5), end: todayKey() }) },
         ]} />}
       </div>
-      <DataTable columns={cols} rows={pg.slice} rowKey={(r) => r.id} initialSort={{ key: 'starts_at', dir: 'asc' }}
-        empty={<EmptyState icon={CalendarDays} title="No interviews match" text="Try clearing a filter." />} />
+      <div className="hr-tbl hr-offers-tbl"><DataTable columns={cols} rows={pg.slice} rowKey={(r) => r.id} initialSort={{ key: 'starts_at', dir: 'asc' }}
+        empty={<EmptyState icon={CalendarDays} title="No interviews match" text="Try clearing a filter." />} /></div>
       <Pagination {...pg} noun="interviews" />
     </Card>
   )
@@ -163,13 +163,13 @@ export default function Interviews() {
   const donutTotal = donut.reduce((a, s) => a + s.value, 0)
 
   return (
-    <>
+    <div className="hr-page">
       <PageHeader
         title="Interviews"
         subtitle="Schedule, manage and track interviews across all job roles. Conduct technical, HR and project interviews."
         actions={<>
           <Button variant="outline" icon={LayoutTemplate} onClick={() => setDlg({ templates: true })}>Interview Templates</Button>
-          <Button variant="outline" icon={Download} loading={exporting} onClick={exportIcs} title="Download an .ics file of all upcoming interviews">Export to calendar (.ics)</Button>
+          <Button variant="outline" icon={Download} loading={exporting} onClick={exportIcs} title="Download an .ics file of all upcoming interviews for Google Calendar / Outlook">Export Calendar</Button>
           <Button icon={CalendarPlus} onClick={() => setDlg({ pick: true })}>Schedule Interview</Button>
         </>}
       />
@@ -233,8 +233,8 @@ export default function Interviews() {
           <Card title="Interview Analytics" action={<ViewAll onClick={() => setTab('feedback')} />}>
             {!an ? <Skeleton h={150} /> : (
               <div className="hr-donut-row">
-                <Donut segments={donut} size={136} stroke={18} center={an.total} sub="Total Interviews" />
-                <Legend items={donut.map((s) => ({ ...s, value: s.value }))} showPct total={donutTotal} />
+                <Donut segments={donut} size={124} stroke={16} center={an.total} sub="Total" />
+                <HLegend items={donut} total={donutTotal} />
               </div>
             )}
             {an?.ai_completed > 0 && <p className="hr-small" style={{ marginTop: 10 }}>Includes {an.ai_completed} completed AI interview{an.ai_completed > 1 ? 's' : ''}.</p>}
@@ -249,7 +249,7 @@ export default function Interviews() {
       <InterviewsFeedbackModal iv={dlg.feedback} onClose={() => setDlg({})} onSaved={reload} />
       <InterviewsCancelModal iv={dlg.cancel} onClose={() => setDlg({})} onDone={reload} />
       <InterviewsDetailsModal iv={dlg.details} rounds={rounds} onClose={() => setDlg({})} onAction={(kind, iv) => act(kind, iv)} />
-    </>
+    </div>
   )
 }
 

@@ -1379,25 +1379,28 @@ def create_offer(body: OfferCreate, recruiter: str = Depends(get_current_recruit
 
 
 def _timeline(s: Session, o: Offer) -> List[dict]:
+    """Offer history from the audit log. Sorted on the full-precision timestamps
+    (the serialised "at" only has second resolution, so sorting on it would
+    misorder events that happen within the same second)."""
     events = s.exec(select(DecisionAuditLog).where(DecisionAuditLog.application_id == o.application_id)
-                    .order_by(DecisionAuditLog.created_at)).all()
+                    .order_by(DecisionAuditLog.created_at, DecisionAuditLog.id)).all()
     tag = f"Offer #{o.id}:"
     labels = {"offer_created": "Draft created", "offer_sent": "Offer sent", "offer_updated": "Offer updated",
               "offer_withdrawn": "Offer withdrawn", "offer_joined": "Marked as joined", "offer_negotiation": "Negotiation started",
               "offer_reminder": "Reminder sent"}
-    out = []
+    raw = []  # (datetime, seq, row)
     for e in events:
         if e.event_type in labels and (e.final_recommendation or "").startswith(tag):
-            out.append({"at": _iso(e.created_at), "label": labels[e.event_type], "detail": (e.final_recommendation or "")[len(tag):].strip(),
-                        "by": e.human_reviewer})
+            raw.append((e.created_at, len(raw), {"label": labels[e.event_type], "detail": (e.final_recommendation or "")[len(tag):].strip(),
+                                                 "by": e.human_reviewer}))
         elif e.event_type in ("offer_accepted", "offer_declined", "offer_response"):
-            out.append({"at": _iso(e.created_at), "label": e.event_type.replace("_", " ").capitalize(), "detail": e.final_recommendation or "", "by": "candidate"})
-    if o.responded_at and o.status in ("accepted", "declined", "joined") and not any(x["by"] == "candidate" for x in out):
+            raw.append((e.created_at, len(raw), {"label": e.event_type.replace("_", " ").capitalize(), "detail": e.final_recommendation or "",
+                                                 "by": "candidate"}))
+    if o.responded_at and o.status in ("accepted", "declined", "joined") and not any(r[2]["by"] == "candidate" for r in raw):
         verdict = "Offer accepted" if o.status in ("accepted", "joined") else "Offer declined"
-        # same-second ties: the candidate's response precedes the recruiter's follow-up (e.g. "joined")
-        out.insert(0, {"at": _iso(o.responded_at), "label": verdict, "detail": "Response from the candidate", "by": "candidate"})
-    out.sort(key=lambda x: x["at"] or "")
-    return out
+        raw.append((o.responded_at, len(raw), {"label": verdict, "detail": "Response from the candidate", "by": "candidate"}))
+    raw.sort(key=lambda r: (r[0] or datetime.min, r[1]))
+    return [{"at": _iso(t), **row} for t, _, row in raw]
 
 
 @router.get("/offers/{offer_id}")

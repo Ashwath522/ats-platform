@@ -158,3 +158,49 @@ export function fillTemplate(body = '', vars = {}) {
 }
 
 export const pctOf = (a, b) => (b ? Math.round((a * 100) / b) : 0)
+
+/** Compact donut legend: rows [{label, value, color}] → "label … value (pct%)". */
+export function HLegend({ items = [], total, pctFirst }) {
+  const t = total ?? items.reduce((a, s) => a + (Number(s.value) || 0), 0)
+  return (
+    <div className="hr-legend">
+      {items.map((s, i) => {
+        const p = t ? Math.round(((s.value || 0) * 100) / t) : 0
+        return (
+          <div className="hr-legend-row" key={s.label}>
+            <i style={{ background: s.color || PALETTE[i % PALETTE.length] }} />
+            <span title={s.label}>{s.label}</span>
+            <b>{pctFirst ? <>{p}%<small>({s.value})</small></> : <>{s.value}<small>({p}%)</small></>}</b>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Funnel-style bar rows: [{label, value, color}] scaled to the first row (or max). */
+export function PipeBars({ rows = [], withPct, base }) {
+  const max = base ?? Math.max(1, ...rows.map((r) => r.value || 0))
+  return (
+    <div className="hr-pipe">
+      {rows.map((r, i) => (
+        <div className={`hr-pipe-row${withPct ? ' wide' : ''}`} key={r.label}>
+          <span className="cl-ellipsis" title={r.label}>{r.label}</span>
+          <div className="hr-pipe-track" role="img" aria-label={`${r.label}: ${r.value}`}><div style={{ width: `${Math.max(r.value ? 2 : 0, ((r.value || 0) * 100) / max)}%`, background: r.color || PALETTE[i % PALETTE.length] }} /></div>
+          <b>{r.value}{withPct ? <small> ({max ? Math.round(((r.value || 0) * 100) / max) : 0}%)</small> : null}</b>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Hidden file input + trigger helper. */
+export function FilePick({ accept = 'image/png,image/jpeg,image/webp', onFile, children }) {
+  const ref = useRef(null)
+  return (
+    <>
+      <input ref={ref} type="file" accept={accept} hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
+      {children(() => ref.current?.click())}
+    </>
+  )
+}

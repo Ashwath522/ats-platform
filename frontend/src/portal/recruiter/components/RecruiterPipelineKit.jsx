@@ -32,10 +32,11 @@ export function branchMeta(value) {
 
 export const BRANCH_OPTIONS = BRANCHES.map((b) => ({ value: b.id, label: b.label }))
 
+const SHORT_BRANCH = { ece: 'ECE', eee: 'Electrical', metallurgy: 'Metallurgy', software: 'CS / IT' }
 export function BranchBadge({ branch, long }) {
   const b = branchMeta(branch)
   if (!b.id && !branch) return <span className="cl-muted">—</span>
-  return <span className="rp-branch" style={{ color: b.color, background: b.soft }}>{long ? b.long : b.label}</span>
+  return <span className="rp-branch" title={b.long} style={{ color: b.color, background: b.soft }}>{long ? b.long : (SHORT_BRANCH[b.id] || b.label)}</span>
 }
 
 /* ── Scores / stages ─────────────────────────────────────────────────── */

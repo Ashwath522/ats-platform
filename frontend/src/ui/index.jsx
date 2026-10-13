@@ -275,9 +275,23 @@ export function Legend({ items = [], showPct, total }) {
   )
 }
 
+/** Measured width so SVG charts draw 1:1 (no squashed labels). */
+function useWidth(fallback = 600) {
+  const ref = useRef(null)
+  const [w, setW] = useState(fallback)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([e]) => { const cw = Math.round(e.contentRect.width); if (cw > 40) setW(cw) })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, w]
+}
+
 /** Vertical bar chart. data: [{label, value, color}] */
 export function BarChart({ data = [], height = 190, color = '#3b82f6', showValues, yTicks = 4, labelEvery = 1 }) {
-  const w = 600
+  const [ref, w] = useWidth()
   const pad = { l: 34, r: 8, t: 16, b: 26 }
   const max = Math.max(1, ...data.map((d) => Number(d.value) || 0))
   const nice = niceMax(max)
@@ -285,7 +299,7 @@ export function BarChart({ data = [], height = 190, color = '#3b82f6', showValue
   const iw = w - pad.l - pad.r
   const bw = Math.min(42, (iw / Math.max(1, data.length)) * 0.62)
   return (
-    <svg className="cl-chart" viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" style={{ height }} role="img" aria-label={data.map((d) => `${d.label}: ${d.value}`).join(', ')}>
+    <div ref={ref} style={{ width: '100%' }}><svg className="cl-chart" viewBox={`0 0 ${w} ${height}`} width="100%" style={{ height }} role="img" aria-label={data.map((d) => `${d.label}: ${d.value}`).join(', ')}>
       {Array.from({ length: yTicks + 1 }, (_, i) => {
         const y = pad.t + ih - (ih * i) / yTicks
         return (
@@ -306,13 +320,13 @@ export function BarChart({ data = [], height = 190, color = '#3b82f6', showValue
           </g>
         )
       })}
-    </svg>
+    </svg></div>
   )
 }
 
 /** Line / area chart. series: [{name, color, values:[n]}], labels: [] */
 export function LineChart({ series = [], labels = [], height = 190, area = true, showValues }) {
-  const w = 600
+  const [ref, w] = useWidth()
   const pad = { l: 34, r: 14, t: 18, b: 26 }
   const all = series.flatMap((s) => s.values.map(Number))
   const nice = niceMax(Math.max(1, ...all))
@@ -321,7 +335,7 @@ export function LineChart({ series = [], labels = [], height = 190, area = true,
   const n = Math.max(1, labels.length - 1)
   const pt = (v, i) => [pad.l + (iw * i) / n, pad.t + ih - (ih * (Number(v) || 0)) / nice]
   return (
-    <svg className="cl-chart" viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" style={{ height }} role="img" aria-label={series.map((s) => `${s.name}: ${s.values.join(', ')}`).join('; ')}>
+    <div ref={ref} style={{ width: '100%' }}><svg className="cl-chart" viewBox={`0 0 ${w} ${height}`} width="100%" style={{ height }} role="img" aria-label={series.map((s) => `${s.name}: ${s.values.join(', ')}`).join('; ')}>
       {Array.from({ length: 5 }, (_, i) => {
         const y = pad.t + ih - (ih * i) / 4
         return <g key={i}><line x1={pad.l} x2={w - pad.r} y1={y} y2={y} stroke="#eef2f8" /><text x={pad.l - 6} y={y + 4} textAnchor="end">{fmtTick((nice * i) / 4)}</text></g>
@@ -344,7 +358,7 @@ export function LineChart({ series = [], labels = [], height = 190, area = true,
           </g>
         )
       })}
-    </svg>
+    </svg></div>
   )
 }
 

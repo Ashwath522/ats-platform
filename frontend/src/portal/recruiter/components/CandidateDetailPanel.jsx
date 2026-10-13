@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight, Award, Bookmark, Building2, CalendarDays, Download, ExternalLink, FileText, Github, GraduationCap, Linkedin, Lock, Mail,
+  ArrowRight, Award, Bookmark, Building2, CalendarDays, Download, ExternalLink, FileText, Code2, GraduationCap, Link2, Lock, Mail,
   MapPin, Medal, MessageSquarePlus, Phone, Send, ShieldCheck, Star, Trash2, Pencil, Wrench, Globe, Briefcase,
 } from 'lucide-react'
 import {
@@ -221,8 +221,8 @@ export default function CandidateDetailPanel({ api, c, loading, error, onShortli
             </>) : <span title={c.contact_hidden_reason}><Lock size={15} />Contact hidden until they apply</span>}
           </div>
           <div className="rp-contact">
-            {c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer"><Linkedin size={15} color="#0a66c2" />LinkedIn</a>}
-            {c.github_url && <a href={c.github_url} target="_blank" rel="noreferrer"><Github size={15} />GitHub</a>}
+            {c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer"><Link2 size={15} color="#0a66c2" />LinkedIn</a>}
+            {c.github_url && <a href={c.github_url} target="_blank" rel="noreferrer"><Code2 size={15} />GitHub</a>}
             {c.portfolio_url && <a href={c.portfolio_url} target="_blank" rel="noreferrer"><Globe size={15} />Portfolio</a>}
           </div>
         </div>

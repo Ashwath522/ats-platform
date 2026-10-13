@@ -19,12 +19,12 @@ export function interviewActions(iv, act) {
   ]
 }
 
-export function JoinOrView({ iv, act, size = 'sm' }) {
+export function JoinOrView({ iv, act, size = 'sm', compact }) {
   const ended = new Date(iv.ends_at || iv.starts_at).getTime() < Date.now()
   if (iv.kind === 'human' && iv.status === 'scheduled' && iv.mode === 'online' && iv.meeting_link && !ended) {
     return <Button size={size} variant="outline" icon={Video} href={iv.meeting_link} aria-label={`Join interview with ${iv.candidate_name}`}>Join</Button>
   }
-  return <Button size={size} variant="outline" onClick={() => act('details', iv)}>{iv.kind === 'ai' ? 'View' : 'View Details'}</Button>
+  return <Button size={size} variant="outline" onClick={() => act('details', iv)}>{iv.kind === 'ai' || compact ? 'View' : 'View Details'}</Button>
 }
 
 export default function InterviewsCalendar({ items, rounds, view, setView, selDay, setSelDay, cursor, setCursor, act }) {

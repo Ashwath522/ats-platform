@@ -239,3 +239,46 @@ a.st-tip { color: var(--cl-text) !important; }
 .st-page label { text-transform: none; letter-spacing: 0; margin: 0; font-size: inherit; font-weight: inherit; color: inherit; }
 .st-page .cl-field > span { font-size: 13px; font-weight: 600; color: var(--cl-text); }
 .st-page .cl-tab-btn { padding: 12px 11px; }
+
+/* Applications — detail modal timeline + legend buttons */
+.st-legend-btn { width: 100%; border: 0; background: none; font: inherit; cursor: pointer; padding: 3px 4px; border-radius: 6px; text-align: left; color: inherit; }
+.st-legend-btn:hover { background: var(--cl-line-2); }
+.st-timeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; counter-reset: s; }
+.st-timeline li { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12.5px; color: var(--cl-muted); text-align: center; position: relative; }
+.st-timeline li::before { content: ''; position: absolute; top: 14px; left: -50%; width: 100%; height: 2px; background: var(--cl-line); z-index: 0; }
+.st-timeline li:first-child::before { display: none; }
+.st-timeline li span { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #eef2f8; color: var(--cl-muted); font-weight: 700; font-size: 12px; }
+.st-timeline li.done span { background: var(--cl-green); color: #fff; }
+.st-timeline li.done::before, .st-timeline li.now::before { background: var(--cl-green); }
+.st-timeline li.now span { background: var(--cl-blue); color: #fff; box-shadow: 0 0 0 4px var(--cl-blue-50); }
+.st-timeline li.now, .st-timeline li.done { color: var(--cl-ink); font-weight: 600; }
+.st-timeline li.bad span { background: var(--cl-red); color: #fff; }
+.st-timeline li.bad { color: var(--cl-red); font-weight: 600; }
+@media (max-width: 600px) { .st-hide-m { display: none; } }
+
+/* Resources */
+.st-fmt { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--cl-red-bg); color: var(--cl-red); }
+.st-fmt.video { background: var(--cl-purple-bg); color: var(--cl-purple); }
+.st-media-card .st-fmt, .cl-media-body .st-fmt { width: 24px; height: 24px; border-radius: 6px; }
+.st-res-title { display: flex; align-items: center; gap: 12px; border: 0; background: none; padding: 0; font: inherit; text-align: left; cursor: pointer; color: inherit; min-width: 0; }
+.st-res-title b { display: block; color: var(--cl-ink); font-size: 14px; font-weight: 600; }
+.st-res-title small { display: block; color: var(--cl-muted); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.st-res-title:hover b { color: var(--cl-blue); }
+.st-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.st-rank-btn { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; border-radius: 10px; padding: 8px 4px; }
+.st-rank-btn:hover { background: #f6f9ff; }
+.st-outline { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--cl-text); }
+
+/* Settings — account overview */
+.st-acct { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 20px; align-items: center; border: 1px solid var(--cl-line); border-radius: 12px; padding: 16px 18px; }
+.st-acct-photo { position: relative; width: 112px; height: 112px; }
+.st-acct-photo .st-avatar-btn { right: 0; bottom: 2px; }
+.st-mini-select { width: auto !important; min-height: 32px !important; padding: 2px 28px 2px 10px !important; font-size: 12.5px !important; max-width: 190px; }
+@media (max-width: 600px) { .st-acct { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; } .st-acct .st-links { align-items: center; } }
+.st-kpi { padding: 12px; gap: 10px; }
+.st-kpi .cl-ico { width: 36px; height: 36px; }
+.st-kpi small { display: block; font-size: 12px; line-height: 1.25; }
+.st-app-tabs .cl-tab-btn { padding: 12px 10px; font-size: 13.5px; }
+.st-res-title > span:last-child { min-width: 0; max-width: 330px; }
+.cl-media-body .cl-row span { white-space: nowrap; }
+@media (max-width: 600px) { .st-res-title > span:last-child { max-width: none; } }
