@@ -91,6 +91,7 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
         )
     
     unique_name = f"{uuid.uuid4().hex}.webp"
+    raw_name = f"{uuid.uuid4().hex}{ext}"
     dest_dir = os.path.join(MEDIA_DIR, target_subfolder)
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, unique_name)
@@ -108,10 +109,26 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
         raise HTTPException(status_code=400, detail="Empty file uploaded")
         
     try:
-        image = Image.open(file.file)
-        image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-        if image.mode not in ("RGB", "RGBA"): image = image.convert("RGBA")
-        image.save(dest_path, "WEBP", quality=82, method=6)
+        # Shrink + re-encode to WebP to keep the free database small. GIFs
+        # (animation) and anything Pillow can't decode are stored as-is and
+        # still go through the content check below.
+        compressed = False
+        if ext != ".gif":
+            try:
+                image = Image.open(file.file)
+                image.load()
+                image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                if image.mode not in ("RGB", "RGBA"):
+                    image = image.convert("RGBA")
+                image.save(dest_path, "WEBP", quality=82, method=6)
+                compressed = True
+            except Exception:
+                compressed = False
+        if not compressed:
+            dest_path = os.path.join(dest_dir, raw_name)
+            file.file.seek(0)
+            with open(dest_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
             
         # Magic validation
         if not is_valid_image_magic(dest_path):
@@ -139,7 +156,7 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
             raise e
         raise HTTPException(status_code=500, detail=f"Failed to save image: {str(e)}")
         
-    rel = f"{target_subfolder}/{unique_name}"
+    rel = f"{target_subfolder}/{os.path.basename(dest_path)}"
     mirror_to_db(rel, dest_path)
     return rel
 
