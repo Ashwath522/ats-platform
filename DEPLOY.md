@@ -69,3 +69,15 @@ For Play Store / App Store releases you still need a signing key (Android) and a
 ## Alternative: one-box Docker
 
 `docker compose up --build` (fill `.env` from `.env.example`) runs API + nginx-served web app with SQLite on a volume — good for a ₹0 college server or a free Oracle Cloud VM.
+## Frontend on Vercel (free)
+
+```bash
+npm i -g vercel
+cd frontend
+vercel login
+vercel link                      # create project "corelink", root = frontend
+vercel env add VITE_API_URL production
+vercel --prod
+```
+
+After deployment, set `CORS_ORIGINS=https://corelink.vercel.app` and `APP_PUBLIC_URL=https://corelink.vercel.app` in Render and redeploy. Preview URLs should be added explicitly when needed. To keep the free Render instance warm, create a cron-job.org job for `https://corelink-api.onrender.com/health` with a 10-minute interval and GET method.

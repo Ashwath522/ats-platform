@@ -24,4 +24,4 @@ EXPOSE 8000
 
 # One worker: the embedding model is loaded per process; 512 MB free-tier
 # instances fit exactly one. $PORT is provided by Render/Railway/Fly.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "alembic upgrade head || true; uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]

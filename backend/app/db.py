@@ -344,6 +344,11 @@ class MediaBlob(SQLModel, table=True):
     data: bytes = Field(default=b"")
     created_at: datetime = Field(default_factory=utc_now)
 
+class PlatformSetting(SQLModel, table=True):
+    key: str = Field(primary_key=True)
+    value_json: str
+    updated_at: datetime = Field(default_factory=utc_now)
+
 
 class EmailLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

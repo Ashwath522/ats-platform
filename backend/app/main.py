@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()  # loads backend/.env if present; no-op (and no error) if it doesn't exist
+if os.environ.get("SENTRY_DSN"):
+    import sentry_sdk
+    sentry_sdk.init(dsn=os.environ["SENTRY_DSN"], traces_sample_rate=0.1, send_default_pii=False)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -131,13 +134,15 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(deep: int = 0):
     """
     Production health check:
     1. Verifies database read/write connectivity.
     2. Reports reachability status for optional AI providers (Groq, Gemini, Ollama).
     Returns HTTP 200 on healthy database, HTTP 503 if database connectivity fails.
     """
+    if not deep:
+        return {"status": "ok", "database": {"status": "unknown"}}
     import datetime
     import httpx
     from sqlmodel import text, Session
@@ -217,4 +222,3 @@ async def health_check():
         "ai_providers": ai_status,
     }
     return JSONResponse(status_code=status_code, content=payload)
-

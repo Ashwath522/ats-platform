@@ -1,54 +1,56 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './auth.jsx'
 import { ToastProvider } from './ui/index.jsx'
 
 // Public
-import Landing from './portal/public/Landing.jsx'
-import StudentLogin from './portal/public/StudentLogin.jsx'
-import RecruiterLogin from './portal/public/RecruiterLogin.jsx'
-import AdminLogin from './portal/public/AdminLogin.jsx'
-import CandidatePage from './pages/CandidatePage.jsx' // free ATS check (legacy page, still linked from landing)
+const Landing = lazy(() => import('./portal/public/Landing.jsx'))
+const StudentLogin = lazy(() => import('./portal/public/StudentLogin.jsx'))
+const RecruiterLogin = lazy(() => import('./portal/public/RecruiterLogin.jsx'))
+const AdminLogin = lazy(() => import('./portal/public/AdminLogin.jsx'))
+const CandidatePage = lazy(() => import('./pages/CandidatePage.jsx'))
 
 // Student (pages 04–12)
-import StudentShell from './portal/student/StudentShell.jsx'
-import StudentDashboard from './portal/student/Dashboard.jsx'
-import StudentProfile from './portal/student/Profile.jsx'
-import ResumeSkills from './portal/student/ResumeSkills.jsx'
-import StudentProjects from './portal/student/Projects.jsx'
-import Opportunities from './portal/student/Opportunities.jsx'
-import StudentApplications from './portal/student/Applications.jsx'
-import AIInterviewPrep from './portal/student/AIInterviewPrep.jsx'
-import Resources from './portal/student/Resources.jsx'
-import StudentSettings from './portal/student/Settings.jsx'
-import InterviewRoom from './interview/InterviewRoom.jsx'
+const StudentShell = lazy(() => import('./portal/student/StudentShell.jsx'))
+const StudentDashboard = lazy(() => import('./portal/student/Dashboard.jsx'))
+const StudentProfile = lazy(() => import('./portal/student/Profile.jsx'))
+const ResumeSkills = lazy(() => import('./portal/student/ResumeSkills.jsx'))
+const StudentProjects = lazy(() => import('./portal/student/Projects.jsx'))
+const Opportunities = lazy(() => import('./portal/student/Opportunities.jsx'))
+const StudentApplications = lazy(() => import('./portal/student/Applications.jsx'))
+const AIInterviewPrep = lazy(() => import('./portal/student/AIInterviewPrep.jsx'))
+const Resources = lazy(() => import('./portal/student/Resources.jsx'))
+const StudentSettings = lazy(() => import('./portal/student/Settings.jsx'))
+const InterviewRoom = lazy(() => import('./interview/InterviewRoom.jsx'))
 
 // Recruiter (pages 13–22)
-import RecruiterShell from './portal/recruiter/RecruiterShell.jsx'
-import RecruiterDashboard from './portal/recruiter/Dashboard.jsx'
-import RecruiterJobs from './portal/recruiter/Jobs.jsx'
-import RecruiterCandidates from './portal/recruiter/Candidates.jsx'
-import RecruiterApplications from './portal/recruiter/Applications.jsx'
-import RecruiterShortlisted from './portal/recruiter/Shortlisted.jsx'
-import RecruiterInterviews from './portal/recruiter/Interviews.jsx'
-import RecruiterOffers from './portal/recruiter/Offers.jsx'
-import CompanyProfile from './portal/recruiter/CompanyProfile.jsx'
-import RecruiterAnalytics from './portal/recruiter/Analytics.jsx'
-import RecruiterSettings from './portal/recruiter/Settings.jsx'
+const RecruiterShell = lazy(() => import('./portal/recruiter/RecruiterShell.jsx'))
+const RecruiterDashboard = lazy(() => import('./portal/recruiter/Dashboard.jsx'))
+const RecruiterJobs = lazy(() => import('./portal/recruiter/Jobs.jsx'))
+const RecruiterCandidates = lazy(() => import('./portal/recruiter/Candidates.jsx'))
+const RecruiterApplications = lazy(() => import('./portal/recruiter/Applications.jsx'))
+const RecruiterShortlisted = lazy(() => import('./portal/recruiter/Shortlisted.jsx'))
+const RecruiterInterviews = lazy(() => import('./portal/recruiter/Interviews.jsx'))
+const RecruiterOffers = lazy(() => import('./portal/recruiter/Offers.jsx'))
+const CompanyProfile = lazy(() => import('./portal/recruiter/CompanyProfile.jsx'))
+const RecruiterAnalytics = lazy(() => import('./portal/recruiter/Analytics.jsx'))
+const RecruiterSettings = lazy(() => import('./portal/recruiter/Settings.jsx'))
 
 // Admin (pages 23–24 + supporting admin pages)
-import AdminShell from './portal/admin/AdminShell.jsx'
-import AdminDashboard from './portal/admin/Dashboard.jsx'
-import AdminUsers from './portal/admin/Users.jsx'
-import AdminCompanies from './portal/admin/Companies.jsx'
-import AdminJobPostings from './portal/admin/JobPostings.jsx'
-import AdminApplications from './portal/admin/Applications.jsx'
-import AdminInterviews from './portal/admin/Interviews.jsx'
-import AdminOffers from './portal/admin/Offers.jsx'
-import AdminModeration from './portal/admin/Moderation.jsx'
-import AdminReports from './portal/admin/Reports.jsx'
-import AdminSystemSettings from './portal/admin/SystemSettings.jsx'
-import AdminAuditLogs from './portal/admin/AuditLogs.jsx'
+const AdminShell = lazy(() => import('./portal/admin/AdminShell.jsx'))
+const AdminDashboard = lazy(() => import('./portal/admin/Dashboard.jsx'))
+const AdminUsers = lazy(() => import('./portal/admin/Users.jsx'))
+const AdminCompanies = lazy(() => import('./portal/admin/Companies.jsx'))
+const AdminJobPostings = lazy(() => import('./portal/admin/JobPostings.jsx'))
+const AdminApplications = lazy(() => import('./portal/admin/Applications.jsx'))
+const AdminInterviews = lazy(() => import('./portal/admin/Interviews.jsx'))
+const AdminOffers = lazy(() => import('./portal/admin/Offers.jsx'))
+const AdminModeration = lazy(() => import('./portal/admin/Moderation.jsx'))
+const AdminReports = lazy(() => import('./portal/admin/Reports.jsx'))
+const AdminSystemSettings = lazy(() => import('./portal/admin/SystemSettings.jsx'))
+const AdminAuditLogs = lazy(() => import('./portal/admin/AuditLogs.jsx'))
+
+function PageFallback() { return <div className="page-skeleton" aria-busy="true" /> }
 
 /** Redirect that keeps the query string (old links in emails/bookmarks). */
 function Moved({ to }) {
@@ -60,6 +62,7 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
+        <Suspense fallback={<PageFallback />}>
         <BrowserRouter>
           <Routes>
             {/* 01–03 Public */}
@@ -130,6 +133,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+        </Suspense>
       </ToastProvider>
     </AuthProvider>
   )
