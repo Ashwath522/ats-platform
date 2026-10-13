@@ -524,3 +524,15 @@ def test_live_resources_student_and_admin_crud(client):
     assert client.get("/api/admin/live-resources", headers=stu).status_code in (401, 403)
     q = client.get("/api/student/live-resources?q=welded&branch=all", headers=stu).json()
     assert len(q["items"]) == 1 and "Welded" in q["items"][0]["title"]
+
+
+def test_restart_clears_stuck_running_run():
+    from app.db import SyncRun, engine
+    from app.services import live_sync
+    from sqlmodel import Session
+    with Session(engine) as s:
+        s.add(SyncRun(kind="jobs", source="smartrecruiters", status="running"))
+        s.commit()
+    assert live_sync.is_running()
+    assert live_sync.mark_interrupted_runs() >= 1
+    assert not live_sync.is_running()

@@ -29,6 +29,11 @@ logger = logging.getLogger("ats-platform")
 async def lifespan(app: FastAPI):
     init_db()
     auth.ensure_admin_user()
+    try:
+        from .services.live_sync import mark_interrupted_runs
+        mark_interrupted_runs()
+    except Exception:  # never block startup on bookkeeping
+        logger.exception("[STARTUP] could not reset interrupted live-sync runs")
 
     # Log database configuration
     db_type = "PostgreSQL" if "postgres" in engine.url.drivername else "SQLite"

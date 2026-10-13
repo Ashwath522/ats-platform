@@ -45,7 +45,7 @@ MAX_ACTIVE_JOBS = 2000
 MISSES_TO_EXPIRE = 2
 RESOURCES_PER_SOURCE_BRANCH = 30
 ENRICH_CONCURRENCY = 4
-STALE_RUN = timedelta(minutes=45)
+STALE_RUN = timedelta(minutes=20)
 SETTINGS_KEY = "live_sync"
 
 # Tests inject an httpx.MockTransport here; production uses the network.
@@ -294,6 +294,22 @@ def is_running() -> bool:
         return bool(row and row.started_at > utc_now() - STALE_RUN)
 
 
+def mark_interrupted_runs() -> int:
+    """Called at startup: the API runs as a single process, so any run still
+    marked 'running' was killed by a restart/redeploy. Without this a
+    redeploy would block new syncs until STALE_RUN passed."""
+    n = 0
+    with Session(engine) as s:
+        for row in s.exec(select(SyncRun).where(SyncRun.status == "running")).all():
+            row.status = "error"
+            row.error = row.error or "interrupted (server restarted)"
+            row.finished_at = row.finished_at or utc_now()
+            s.add(row)
+            n += 1
+        s.commit()
+    return n
+
+
 def sources_for(kind: str) -> List[str]:
     if kind == "jobs":
         return list(JOB_SOURCES)
@@ -354,6 +370,12 @@ async def sync_source(client: httpx.AsyncClient, name: str, settings: dict, trig
         try:
             result = await provider.fetch(client, settings)
             stats["fetched"] = len(result.items)
+            with Session(engine) as s2:  # show progress in the admin status while details load
+                live = s2.get(SyncRun, run_id)
+                if live:
+                    live.fetched = stats["fetched"]
+                    s2.add(live)
+                    s2.commit()
             if provider.kind == "jobs":
                 stats.update(await ingest_jobs(client, provider, result))
             else:
