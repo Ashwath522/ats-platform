@@ -26,11 +26,14 @@ def _reply_for(messages):
     words = re.findall(r"[A-Za-z][A-Za-z+#.]{3,}", last_user)
     detail = " ".join(words[-3:]) if words else "that"
     ack = "Got it, thanks for walking me through that."
+    if "ALREADY SAID OUT LOUD" in sys:
+        # A filler was already spoken by the client: react to a detail instead.
+        ack = f"So you brought up {max(words, key=len).strip('.')}." if words else "Let's keep going."
     if "Next question:" in sys:
         q = sys.split("Next question:", 1)[1].strip()
         return f"{ack} Let's move on. {q}"
     if "follow-up" in sys:
-        return f"{ack} What was the measurable impact, roughly how much did things improve?"
+        return f"{ack} Two quick things. First, what did you measure, and second, roughly how much did things improve?"
     if "re-ask" in sys or "Current question:" in sys:
         q = sys.split("Current question:", 1)[1].strip() if "Current question:" in sys else ""
         return f"No worries, take your time and think of one concrete example. {q}"
@@ -87,9 +90,13 @@ async def chat(req: Request):
 
     text = _reply_for(messages)
     tokens = re.findall(r"\S+\s*", text)
+    # Test hook: an answer containing "(slow)" simulates a slow model (2.4 s to
+    # first token) so the client's "thinking aloud" path can be exercised.
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    ttft = max(TTFT, 2.4) if "(slow)" in last_user else TTFT
 
     async def gen():
-        await asyncio.sleep(TTFT)
+        await asyncio.sleep(ttft)
         for tok in tokens:
             chunk = {"choices": [{"delta": {"content": tok}}]}
             yield f"data: {json.dumps(chunk)}\n\n"

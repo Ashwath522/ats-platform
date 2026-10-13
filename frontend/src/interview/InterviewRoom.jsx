@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Mic, MicOff, Keyboard, RotateCcw, PhoneOff, Check, Volume2, ShieldCheck, Camera, ChevronLeft, Send, Loader2 } from 'lucide-react'
+import { Mic, MicOff, Keyboard, RotateCcw, PhoneOff, Check, Volume2, ShieldCheck, Camera, ChevronLeft, Send, Loader2, Sparkles, Captions } from 'lucide-react'
 import { useAuth, createAuthedFetch } from '../auth.jsx'
-import AvatarCharacter, { useLipSync } from './AvatarCharacter.jsx'
-import { SpeechQueue, SentenceSplitter, Listener, createLevelMeter, sttSupported, ttsSupported, pickVoice } from './speech.js'
+import AvatarCharacter from './AvatarCharacter.jsx'
+import { AriaPerformer } from './performer.js'
+import { FillerPicker } from './fillers.js'
+import { SpeechQueue, SentenceSplitter, Listener, createLevelMeter, sttSupported, ttsSupported, pickVoice, unlockWebSpeech } from './speech.js'
 import { Proctor } from './proctor.js'
 import { haptic } from '../lib/platform.js'
 import './InterviewRoom.css'
@@ -33,6 +35,17 @@ async function readNdjson(res, onEvent) {
 }
 
 const SESSION_REQUESTS = new Map()
+
+// If the reply's first sentence hasn't arrived this long after the candidate
+// finished, Aria "thinks aloud" so the silence doesn't feel dead.
+const THINK_ALOUD_AFTER_MS = 1200
+
+function readPref(key, fallback) {
+  try { const v = localStorage.getItem(key); return v == null ? fallback : v === '1' } catch (e) { return fallback }
+}
+function writePref(key, value) {
+  try { localStorage.setItem(key, value ? '1' : '0') } catch (e) { /* private mode */ }
+}
 
 /** Parse the practice options from the query string (?kind=&topic=&company=&q=[...]). */
 function practiceOptions(search) {
@@ -66,7 +79,11 @@ export default function InterviewRoom({ practice = false }) {
   const [mediaError, setMediaError] = useState(null)
   const [level, setLevel] = useState(0)
   const [avatarState, setAvatarState] = useState('idle') // idle | speaking | listening | thinking
-  const [caption, setCaption] = useState('')
+  const [caption, setCaption] = useState('') // what Aria says (the real reply)
+  const [capFillers, setCapFillers] = useState([]) // fillers / thinking-aloud spoken this turn (lighter style)
+  const [expressive, setExpressive] = useState(() => readPref('aria_expressive', true))
+  const [showCaptions, setShowCaptions] = useState(() => readPref('aria_captions', true))
+  const [needTap, setNeedTap] = useState(false)
   const [heard, setHeard] = useState('')
   const [typing, setTyping] = useState(false)
   const [typed, setTyped] = useState('')
@@ -80,10 +97,15 @@ export default function InterviewRoom({ practice = false }) {
   const [speakerTested, setSpeakerTested] = useState(false)
   const [result, setResult] = useState(null) // practice evaluation
 
-  const lip = useLipSync()
+  const meterRef0 = useRef(null)
+  const performer = useMemo(() => new AriaPerformer({ getLevel: () => (meterRef0.current ? meterRef0.current.level() : 0) }), [])
+  if (debug && typeof window !== 'undefined') window.__aria = performer
+  const fillers = useRef(new FillerPicker())
+  const awaitingReply = useRef(false)
+  const expressiveRef = useRef(expressive)
   const videoRef = useRef(null)
   const streamRef = useRef(null)
-  const meterRef = useRef(null)
+  const meterRef = meterRef0
   const listenerRef = useRef(null)
   const queueRef = useRef(null)
   const proctorRef = useRef(null)
@@ -135,7 +157,9 @@ export default function InterviewRoom({ practice = false }) {
 
   // ── Mic level animation loop
   useEffect(() => {
-    // ~15 fps is plenty for the meter/halo and keeps phones cool.
+    // Only the device-check meter needs React updates (the avatar reads the
+    // level itself per frame). ~15 fps is plenty and keeps phones cool.
+    if (phase !== 'check') return undefined
     let last = 0
     const t = setInterval(() => {
       if (!meterRef.current) return
@@ -143,7 +167,7 @@ export default function InterviewRoom({ practice = false }) {
       if (Math.abs(v - last) >= 0.01) { last = v; setLevel(v) }
     }, 66)
     return () => clearInterval(t)
-  }, [])
+  }, [phase])
 
   // ── Timer
   useEffect(() => {
@@ -151,6 +175,14 @@ export default function InterviewRoom({ practice = false }) {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)), 1000)
     return () => clearInterval(t)
   }, [phase])
+
+  // ── Preferences
+  useEffect(() => {
+    expressiveRef.current = expressive
+    performer.setExpressive(expressive)
+    writePref('aria_expressive', expressive)
+  }, [expressive, performer])
+  useEffect(() => { writePref('aria_captions', showCaptions) }, [showCaptions])
 
   // ── Cleanup on unmount (re-arm on mount: StrictMode mounts twice in dev)
   useEffect(() => {
@@ -203,7 +235,13 @@ export default function InterviewRoom({ practice = false }) {
   function testSpeaker() {
     // A user gesture also unlocks speech on iOS / mobile browsers.
     meterRef.current && meterRef.current.resume()
-    const q = new SpeechQueue({ onWord: lip.onWord, onIdle: () => { lip.reset(); setAvatarState('idle') } })
+    unlockWebSpeech() // inside the tap → unlocks speech on iOS
+    const q = new SpeechQueue({
+      onUtterStart: (text, meta, opts) => performer.utterStart(text, meta, performance.now(), opts),
+      onBoundary: (ci) => performer.boundary(ci, performance.now()),
+      onUtterEnd: () => performer.utterEnd(performance.now()),
+      onIdle: () => setAvatarState('idle'),
+    })
     q.begin()
     setAvatarState('speaking')
     q.enqueue("Hi! Can you hear me clearly? Great, let's begin when you're ready.")
@@ -215,20 +253,30 @@ export default function InterviewRoom({ practice = false }) {
   const getQueue = useCallback(() => {
     if (!queueRef.current) {
       queueRef.current = new SpeechQueue({
-        onWord: (w) => lip.onWord(w),
-        onSpeakStart: (text) => setAvatarState('speaking'),
+        onUtterStart: (text, meta, opts) => {
+          performer.utterStart(text, meta, performance.now(), opts)
+          setAvatarState(meta && meta.thinking ? 'thinking' : 'speaking')
+          if (meta && meta.filler) {
+            // fillers appear in the captions as they are spoken (lighter style)
+            setCapFillers((f) => (f.some((x) => x.id === meta.id) ? f : [...f, { id: meta.id, text, thinking: !!meta.thinking }]))
+          }
+        },
+        onBoundary: (ci) => performer.boundary(ci, performance.now()),
+        onUtterEnd: () => performer.utterEnd(performance.now()),
+        onDrain: () => { if (awaitingReply.current) setAvatarState('thinking') },
+        onBlocked: () => setNeedTap(true),
         onFirstAudio: (ms) => { pendingClientMeta.current.tts_first_audio_ms = ms },
         onIdle: () => {},
       })
     }
     return queueRef.current
-  }, [lip])
+  }, [performer])
 
   function speakAll(text) {
     return new Promise((resolve) => {
       const q = getQueue()
       q.begin()
-      q.cb.onIdle = () => { lip.reset(); setAvatarState('idle'); resolve() }
+      q.cb.onIdle = () => { setAvatarState('idle'); resolve() }
       setCaption(text)
       const sp = new SentenceSplitter((s) => q.enqueue(s))
       sp.push(text + ' ')
@@ -241,6 +289,12 @@ export default function InterviewRoom({ practice = false }) {
   // ── Listening ─────────────────────────────────────────────────────────────
   function listen() {
     if (doneRef.current) return
+    // Never open the mic while Aria is still talking (no self-hearing).
+    if (queueRef.current && queueRef.current.busy()) {
+      setTimeout(listen, 150)
+      return
+    }
+    performer.heard('')
     setHeard('')
     setNudge(false)
     setAvatarState('listening')
@@ -251,7 +305,7 @@ export default function InterviewRoom({ practice = false }) {
     const l = new Listener({
       lang: 'en-US',
       getLevel: () => (meterRef.current ? meterRef.current.level() : 0),
-      onInterim: (t) => setHeard(t),
+      onInterim: (t) => { setHeard(t); performer.heard(t) },
       onLongSilence: () => setNudge(true),
       onError: (code) => {
         setVoiceOk(false)
@@ -269,6 +323,13 @@ export default function InterviewRoom({ practice = false }) {
   }
 
   // ── One conversational turn ───────────────────────────────────────────────
+  //  1. candidate finishes → Aria immediately says a short varied filler
+  //     ("Hmm, okay.") — the mic is already closed, so she can't hear herself;
+  //  2. the reply streams from the server (which is told the filler, so the
+  //     reply doesn't repeat it); if its first sentence is slow (>1.2 s) she
+  //     thinks aloud with the hand-to-chin pose;
+  //  3. reply sentences are spoken as they complete; then we listen again.
+  //  Fillers are captioned in a lighter style and never sent as answer text.
   async function submitAnswer(answer, endedAt = performance.now()) {
     if (busyRef.current || doneRef.current) return
     busyRef.current = true
@@ -278,30 +339,72 @@ export default function InterviewRoom({ practice = false }) {
     setTyped('')
     setHeard(answer)
     setLog((l) => [...l, { role: 'candidate', text: answer }])
-    setAvatarState('thinking')
     setCaption('')
+    setCapFillers([])
+    performer.newTurn()
 
     const t0 = performance.now()
     const sample = { endpoint_to_request_ms: Math.round(t0 - endedAt) }
     const q = getQueue()
     q.begin()
+    awaitingReply.current = true
+    const canSpeak = ttsSupported() && !needTap
+    const useFillers = expressiveRef.current && canSpeak
+    const ack = useFillers ? fillers.current.ack(answer) : null
+    if (ack) {
+      q.enqueue(ack.text, { filler: true, id: `ack-${t0}` })
+      sample.filler = ack.category
+    } else {
+      setAvatarState('thinking')
+    }
     let firstDelta = null
+    let firstSentence = false
     let full = ''
     let endEvt = null
-    const split = new SentenceSplitter((s) => q.enqueue(s))
-    const spoken = new Promise((resolve) => { q.cb.onIdle = () => { lip.reset(); resolve() } })
+    const thinkTimer = useFillers
+      ? setTimeout(() => {
+        if (firstSentence || doneRef.current || !awaitingReply.current) return
+        const th = fillers.current.thinking(answer)
+        q.enqueue(th.text, { filler: true, thinking: true, id: `think-${t0}` })
+        sample.thinking_aloud = true
+      }, THINK_ALOUD_AFTER_MS)
+      : null
+    const split = new SentenceSplitter((sent) => {
+      if (!firstSentence) {
+        firstSentence = true
+        awaitingReply.current = false
+        clearTimeout(thinkTimer)
+      }
+      q.enqueue(sent, { reply: true })
+    })
+    const spoken = new Promise((resolve) => { q.cb.onIdle = () => resolve() })
     const prevFirstAudio = pendingClientMeta.current.tts_first_audio_ms
     q.cb.onFirstAudio = (ms) => {
-      sample.answer_to_voice_ms = Math.round(performance.now() - endedAt)
+      // first audio of the turn: the filler (if any), else the reply.
+      // The reply's own latency is tracked in onUtterStart below.
+      if (sample.tts_start_ms != null) return
+      if (ack) sample.filler_ms = Math.round(performance.now() - endedAt)
       sample.tts_start_ms = ms
       setLat({ ...sample })
+    }
+    const prevStart = q.cb.onUtterStart
+    q.cb.onUtterStart = (text, meta, opts) => {
+      prevStart(text, meta, opts)
+      if (meta && meta.reply && sample.answer_to_voice_ms == null) {
+        sample.answer_to_voice_ms = Math.round(performance.now() - endedAt)
+        setLat({ ...sample })
+      }
     }
 
     try {
       const res = await api(`/api/interview/sessions/${sessionRef.current.session_id}/turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer, client: { ...pendingClientMeta.current, prev_tts_first_audio_ms: prevFirstAudio } }),
+        body: JSON.stringify({
+          answer,
+          filler_spoken: ack ? ack.text : null,
+          client: { ...pendingClientMeta.current, prev_tts_first_audio_ms: prevFirstAudio },
+        }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -324,6 +427,8 @@ export default function InterviewRoom({ practice = false }) {
         }
       })
       split.flush()
+      clearTimeout(thinkTimer)
+      awaitingReply.current = false
       q.end()
       sample.endpoint_reason = pendingClientMeta.current.endpoint_reason
       sample.server_ms = endEvt && endEvt.server_ms
@@ -335,13 +440,18 @@ export default function InterviewRoom({ practice = false }) {
       if (endEvt && typeof endEvt.q_index === 'number') setQIndex(endEvt.q_index)
       if (!ttsSupported()) setAvatarState('idle')
       await spoken
+      q.cb.onUtterStart = prevStart
       busyRef.current = false
       if (endEvt && endEvt.done) return finish(endEvt.action === 'complete' ? 'completed' : endEvt.action)
       listen()
     } catch (e) {
+      clearTimeout(thinkTimer)
+      awaitingReply.current = false
+      q.cb.onUtterStart = prevStart
       busyRef.current = false
       q.cancel()
       setAvatarState('idle')
+      setCapFillers([])
       setCaption("Sorry, I lost the connection for a moment. Could you say that once more?")
       setMediaError(`Network issue: ${e.message}. Your answer was not lost — try again.`)
       setTimeout(listen, 600)
@@ -350,6 +460,7 @@ export default function InterviewRoom({ practice = false }) {
 
   async function begin() {
     meterRef.current && meterRef.current.resume()
+    unlockWebSpeech() // synchronously inside the tap (iOS autoplay rule)
     try {
       const s = session || (await sessionPromise.current)
       if (!s) return
@@ -410,11 +521,13 @@ export default function InterviewRoom({ practice = false }) {
     // Tap the avatar while she talks → stop talking and listen now.
     if (avatarState === 'speaking' && queueRef.current) {
       queueRef.current.cancel()
-      lip.reset()
+      performer.stopSpeaking()
       if (!busyRef.current) listen()
     }
   }
 
+  // phones: leave room for the camera self-view in the top-right corner
+  const avatarSize = typeof window !== 'undefined' ? (window.innerWidth > 700 ? 290 : Math.min(250, Math.round(window.innerWidth * 0.55))) : 250
   const progress = Math.min(100, Math.round(((qIndex + (phase === 'done' ? 1 : 0)) / Math.max(total, 1)) * 100))
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0')
   const ss = String(elapsed % 60).padStart(2, '0')
@@ -515,13 +628,32 @@ export default function InterviewRoom({ practice = false }) {
       {phase === 'live' && (
         <section className="iv-stage">
           <div className="iv-avatar-wrap">
-            <AvatarCharacter state={avatarState} mouth={lip.mouth} level={level} onTap={skipSpeech} size={Math.min(240, Math.round(window.innerWidth * 0.58))} />
+            <AvatarCharacter state={avatarState} performer={performer} onTap={skipSpeech} size={avatarSize} />
             <div className="iv-name">Aria <small>AI Interviewer</small></div>
             <div className={`iv-status iv-status-${avatarState}`}>{statusText}</div>
+            <div className="iv-prefs" role="group" aria-label="Interviewer settings">
+              <button type="button" className={`iv-pref ${expressive ? 'on' : ''}`} aria-pressed={expressive} onClick={() => setExpressive((v) => !v)} title="Gestures, nods and spoken acknowledgements">
+                <Sparkles size={14} /> Expressive {expressive ? 'on' : 'off'}
+              </button>
+              <button type="button" className={`iv-pref ${showCaptions ? 'on' : ''}`} aria-pressed={showCaptions} onClick={() => setShowCaptions((v) => !v)}>
+                <Captions size={14} /> Captions {showCaptions ? 'on' : 'off'}
+              </button>
+            </div>
           </div>
 
-          <div className="iv-caption" aria-live="polite">
-            {caption ? <p>{caption}</p> : avatarState === 'thinking' ? <p className="iv-dots"><i /><i /><i /></p> : null}
+          {needTap && (
+            <button type="button" className="iv-tap" onClick={() => { setNeedTap(false); meterRef.current && meterRef.current.resume(); queueRef.current && queueRef.current.unblock() }}>
+              <Volume2 size={20} /> Tap to hear Aria
+            </button>
+          )}
+
+          <div className={`iv-caption ${showCaptions ? '' : 'iv-sr-only'}`} aria-live="polite">
+            {(capFillers.length > 0 || caption) ? (
+              <p>
+                {capFillers.map((f) => <span key={f.id} className={`iv-cap-filler ${f.thinking ? 'iv-cap-thinking' : ''}`}>{f.text} </span>)}
+                {caption && <span className="iv-cap-reply">{caption}</span>}
+              </p>
+            ) : avatarState === 'thinking' ? <p className="iv-dots"><i /><i /><i /></p> : null}
           </div>
 
           {(avatarState === 'listening' || heard) && voiceOk && !typing && (
@@ -542,7 +674,7 @@ export default function InterviewRoom({ practice = false }) {
             <form className="iv-type" onSubmit={(e) => { e.preventDefault(); if (typed.trim()) submitAnswer(typed.trim()) }}>
               <textarea
                 value={typed}
-                onChange={(e) => setTyped(e.target.value)}
+                onChange={(e) => { setTyped(e.target.value); performer.heard(e.target.value) }}
                 placeholder="Type your answer…"
                 rows={3}
                 autoFocus

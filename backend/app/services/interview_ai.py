@@ -233,8 +233,34 @@ def _persona(job_title: str, company: str) -> str:
         f"You are {INTERVIEWER_NAME}, a warm, sharp senior interviewer{(' at ' + company) if company else ''} "
         f"running a live spoken interview for a {job_title} position. Your words are converted to speech, so: "
         "plain conversational English, no markdown, no lists, no emojis, no stage directions, no quotes around questions. "
+        "Talk the way a friendly human interviewer talks on a call: short sentences, contractions, a natural spoken rhythm. "
+        "React to what the candidate ACTUALLY said by referring to one concrete detail from their answer (a tool, a number, "
+        "a decision they mentioned) instead of generic remarks. Ask exactly one question per turn and end your turn with it. "
         "Never reveal scores, never evaluate the answer out loud ('great answer', 'perfect'), never give hints or the answer. "
-        "Keep it under 45 words. Use contractions. Sound human and curious, not robotic."
+        "Keep it under 40 words in total, ideally two or three short sentences. Sound human and curious, not robotic."
+    )
+
+
+def sanitize_filler(filler: Optional[str]) -> str:
+    """Client-reported acknowledgement that was already spoken (e.g. "Hmm, okay.").
+    Only short, plain phrases are accepted; anything else is ignored."""
+    f = re.sub(r"\s+", " ", str(filler or "")).strip()
+    if not f or len(f) > 80 or word_count(f) > 10:
+        return ""
+    if re.search(r"[<>{}\[\]`]", f):
+        return ""
+    return f
+
+
+def filler_instruction(filler: Optional[str]) -> str:
+    f = sanitize_filler(filler)
+    if not f:
+        return ""
+    return (
+        f" IMPORTANT: you have ALREADY SAID OUT LOUD the short acknowledgement \"{f}\" a moment ago. "
+        "Do NOT repeat it and do NOT open with another generic acknowledgement such as 'Got it', 'Okay', 'I see', "
+        "'Right', 'Mm-hmm', 'Thanks for sharing' or 'Interesting'. Continue naturally as if you were mid-conversation: "
+        "you may briefly react to a specific detail they mentioned, then ask your question."
     )
 
 
@@ -249,10 +275,14 @@ def turn_messages(
     next_question: Optional[str],
     focus: Optional[str] = None,
     practice: bool = False,
+    filler_spoken: Optional[str] = None,
 ) -> List[Dict[str, str]]:
+    filler = sanitize_filler(filler_spoken)
     ack = (
-        "Start with ONE short, specific acknowledgement (max 10 words) that references a concrete detail "
+        "Start with ONE short, specific reaction (max 10 words) that references a concrete detail "
         "they just mentioned — not generic praise. "
+        if not filler else
+        "You may open with a brief reaction to one concrete detail they just mentioned (max 10 words, not generic). "
     )
     if action == "follow_up":
         task = ack + (
@@ -306,7 +336,7 @@ def turn_messages(
     if not convo or convo[-1]["role"] != "user":
         convo.append({"role": "user", "content": answer[:1500]})
     persona = _persona(job_title, company) + (practice_persona_note() if practice else "")
-    return [{"role": "system", "content": persona + " TASK FOR THIS TURN: " + task}] + convo
+    return [{"role": "system", "content": persona + filler_instruction(filler) + " TASK FOR THIS TURN: " + task}] + convo
 
 
 _ACKS = [
@@ -318,9 +348,10 @@ _ACKS = [
 ]
 
 
-def scripted_reply(action: str, *, current_question: str, next_question: Optional[str], focus: Optional[str]) -> str:
-    """Offline fallback that still sounds natural."""
-    ack = random.choice(_ACKS)
+def scripted_reply(action: str, *, current_question: str, next_question: Optional[str], focus: Optional[str], filler_spoken: Optional[str] = None) -> str:
+    """Offline fallback that still sounds natural. When the client already
+    spoke a filler ("Hmm, okay."), no second acknowledgement is added."""
+    ack = "" if sanitize_filler(filler_spoken) else random.choice(_ACKS)
     if action == "follow_up":
         prompts = {
             "metrics": "Could you put some numbers on that? What changed, before and after?",
@@ -330,9 +361,9 @@ def scripted_reply(action: str, *, current_question: str, next_question: Optiona
             "context": "What was the bigger goal, and why did it matter?",
             "learning": "Looking back, what would you do differently?",
         }
-        return f"{ack} {prompts.get(focus or 'metrics')}"
+        return f"{ack} {prompts.get(focus or 'metrics')}".strip()
     if action == "next":
-        return f"{ack} Let's move on. {next_question}"
+        return f"{ack} Let's move on. {next_question}".strip()
     if action == "reprompt":
         return f"No worries, take your time. Maybe think of one specific example. {current_question}"
     if action == "repeat":
@@ -344,6 +375,37 @@ def scripted_reply(action: str, *, current_question: str, next_question: Optiona
     if action == "end_conduct":
         return "I'm going to end the interview here. Thank you for your time; the hiring team will follow up."
     return "That's all my questions. Thank you so much for your time today. The hiring team will review the interview and get back to you soon."
+
+
+_GENERIC_OPENERS = re.compile(
+    r"^\s*(?:(?:hmm+|mm+-?hmm+|mhm|okay|ok|alright|all right|right|got it|i see|oh,? i see|interesting|sure|great|cool|"
+    r"thanks(?: for sharing(?: that)?)?|thank you(?: for sharing(?: that)?)?|understood|makes sense|that makes sense)"
+    r"\s*[,.!…]*\s*)+",
+    re.I,
+)
+
+
+def strip_repeated_filler(text: str, filler_spoken: Optional[str]) -> str:
+    """Remove a reply opening that just repeats the already-spoken filler or a
+    generic acknowledgement ("Okay. Got it, ..."). Only used when a filler was spoken."""
+    if not sanitize_filler(filler_spoken) or not text:
+        return text
+    f = re.sub(r"[^a-z ]", "", sanitize_filler(filler_spoken).lower()).strip()
+    t = text.lstrip()
+    if f and re.sub(r"[^a-z ]", "", t.lower()).startswith(f):
+        # drop as many characters as the filler covers (letters/spaces/punctuation)
+        n, seen = 0, 0
+        while n < len(t) and seen < len(f):
+            if re.match(r"[a-z ]", t[n].lower()):
+                seen += 1
+            n += 1
+        t = t[n:].lstrip(" ,.;:!-—…")
+    t2 = _GENERIC_OPENERS.sub("", t, count=1)
+    # Only accept the stripped version when something meaningful is left.
+    if len(t2.strip()) >= 12:
+        t = t2
+    t = t.lstrip(" ,.;:-—…")
+    return (t[:1].upper() + t[1:]) if t else text
 
 
 def clean_spoken(text: str) -> str:

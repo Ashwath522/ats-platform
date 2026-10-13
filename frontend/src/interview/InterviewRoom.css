@@ -113,7 +113,7 @@
   max-width: 760px;
   margin: 0 auto;
 }
-.iv-avatar-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 4vh; }
+.iv-avatar-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 2vh; }
 .iv-name { font-weight: 700; font-size: 17px; margin-top: 4px; }
 .iv-name small { font-weight: 500; color: var(--iv-dim); font-size: 12px; margin-left: 6px; }
 .iv-status { font-size: 13px; color: var(--iv-dim); min-height: 18px; text-align: center; }
@@ -136,6 +136,7 @@
 .iv-nudge { margin-top: 10px; font-size: 13.5px; color: var(--iv-dim); text-align: center; }
 
 .iv-pip { position: absolute; top: 8px; right: 12px; width: 92px; aspect-ratio: 3 / 4; border-radius: 14px; overflow: hidden; border: 2px solid rgba(255, 255, 255, 0.25); background: #000; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4); }
+@media (max-width: 520px) { .iv-pip { width: 72px; right: 10px; } }
 @media (min-width: 700px) { .iv-pip { width: 140px; aspect-ratio: 4 / 3; } }
 
 .iv-type { width: 100%; margin-top: 12px; display: flex; gap: 8px; align-items: flex-end; }
@@ -177,22 +178,36 @@
 .iv-controls .iv-mic:disabled { opacity: 1; }
 .iv-controls .iv-end { background: rgba(239, 68, 68, 0.9); color: #fff; }
 
-/* Avatar */
-.aria-avatar { position: relative; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 50%; -webkit-tap-highlight-color: transparent; flex: 0 0 auto; }
+/* Avatar — a "video tile" with Aria at her desk; all motion is driven per frame from JS */
+.aria-avatar { position: relative; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 26px; -webkit-tap-highlight-color: transparent; flex: 0 0 auto; }
 .aria-svg { position: relative; z-index: 1; width: 100%; height: 100%; display: block; filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.45)); }
-.aria-head { transform-origin: 100px 150px; animation: aria-sway 6s ease-in-out infinite; }
-.aria-speaking .aria-head { animation: aria-talk 2.4s ease-in-out infinite; }
-@keyframes aria-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg) translateY(1px); } }
-@keyframes aria-talk { 0%, 100% { transform: rotate(-1.5deg) translateY(0); } 25% { transform: rotate(1deg) translateY(-1px); } 60% { transform: rotate(-0.4deg) translateY(1px); } }
-.aria-halo { position: absolute; inset: -10px; border-radius: 50%; z-index: 0; transition: transform 0.08s linear, box-shadow 0.3s, background 0.3s; }
-.aria-listening .aria-halo { background: radial-gradient(circle, rgba(45, 212, 191, 0.32) 55%, transparent 72%); box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.55); }
-.aria-speaking .aria-halo { background: radial-gradient(circle, rgba(245, 165, 36, 0.28) 55%, transparent 72%); animation: aria-pulse 1.4s ease-in-out infinite; }
-.aria-thinking .aria-halo { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15); }
-@keyframes aria-pulse { 50% { transform: scale(1.04); } }
-.aria-orbit { position: absolute; inset: -14px; border-radius: 50%; border: 3px solid transparent; border-top-color: var(--iv-accent, #f5a524); border-right-color: rgba(245, 165, 36, 0.4); animation: iv-rot 0.9s linear infinite; z-index: 2; }
+.aria-svg g { will-change: auto; }
+.aria-halo { position: absolute; inset: -7px; border-radius: 32px; z-index: 0; transition: box-shadow 0.3s, background 0.3s; }
+.aria-listening .aria-halo { box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.6), 0 0 28px rgba(45, 212, 191, 0.25); }
+.aria-speaking .aria-halo { box-shadow: 0 0 0 3px rgba(245, 165, 36, 0.55), 0 0 30px rgba(245, 165, 36, 0.22); animation: aria-pulse 1.6s ease-in-out infinite; }
+.aria-thinking .aria-halo { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18); }
+@keyframes aria-pulse { 50% { box-shadow: 0 0 0 4px rgba(245, 165, 36, 0.35), 0 0 36px rgba(245, 165, 36, 0.3); } }
+/* thought bubble while she thinks */
+.aria-think { position: absolute; z-index: 2; top: 9%; right: 7%; display: inline-flex; gap: 4px; padding: 7px 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3); }
+.aria-think::after { content: ''; position: absolute; left: 4px; bottom: -7px; width: 9px; height: 9px; border-radius: 50%; background: rgba(255, 255, 255, 0.92); }
+.aria-think i { width: 6px; height: 6px; border-radius: 50%; background: #0d2a44; animation: iv-bounce 1s infinite ease-in-out; }
+.aria-think i:nth-child(2) { animation-delay: 0.15s; }
+.aria-think i:nth-child(3) { animation-delay: 0.3s; }
 @media (prefers-reduced-motion: reduce) {
-  .aria-head, .aria-speaking .aria-head, .aria-speaking .aria-halo, .aria-orbit { animation: none; }
+  .aria-speaking .aria-halo, .aria-think i { animation: none; }
 }
+
+/* Expressive / captions toggles */
+.iv-prefs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+.iv-root .iv-pref { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--iv-line); background: rgba(255, 255, 255, 0.05); color: var(--iv-dim); font-size: 12px; font-weight: 600; cursor: pointer; }
+.iv-pref.on { color: var(--iv-ink); border-color: rgba(45, 212, 191, 0.45); background: rgba(45, 212, 191, 0.12); }
+.iv-pref:focus-visible, .iv-tap:focus-visible { outline: 2px solid var(--iv-accent); outline-offset: 2px; }
+.iv-root .iv-tap { margin-top: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 999px; border: 0; background: var(--iv-accent); color: #1b1300; font-weight: 700; font-size: 15px; cursor: pointer; box-shadow: 0 8px 22px rgba(245, 165, 36, 0.35); animation: aria-pulse 1.6s ease-in-out infinite; }
+
+/* Captions: fillers / thinking-aloud lighter than the real reply */
+.iv-cap-filler { color: var(--iv-dim); font-weight: 400; font-style: italic; }
+.iv-cap-thinking { opacity: 0.85; }
+.iv-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; min-height: 0 !important; }
 /* reset global button padding inside the room */
 .iv-root button { padding: 0; }
 .iv-root .iv-primary, .iv-root .iv-secondary { padding: 0 18px; }
