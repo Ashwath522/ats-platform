@@ -81,3 +81,9 @@ vercel --prod
 ```
 
 After deployment, set `CORS_ORIGINS=https://corelink.vercel.app` and `APP_PUBLIC_URL=https://corelink.vercel.app` in Render and redeploy. Preview URLs should be added explicitly when needed. To keep the free Render instance warm, create a cron-job.org job for `https://corelink-api.onrender.com/health` with a 10-minute interval and GET method.
+
+## Supabase instead of Neon
+
+1. Supabase → your project → **Connect** (top bar) → **Connection string** → **Session pooler** (works on Render's IPv4 network). Copy the `postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-…pooler.supabase.com:5432/postgres` value.
+2. Replace `[YOUR-PASSWORD]` (brackets included) with your database password. URL-encode special characters: `@`→`%40`, `#`→`%23`, `:`→`%3A`, `/`→`%2F`, `%`→`%25`, `?`→`%3F`, `&`→`%26`.
+3. Render → `corelink-api` → **Environment** → `DATABASE_URL` = that single line (no quotes, no `DATABASE_URL=`, no `psql`). The app adds `sslmode=require` and keeps a small connection pool for the pooler automatically.
