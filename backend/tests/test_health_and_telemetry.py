@@ -11,8 +11,15 @@ def client():
     return TestClient(app)
 
 
-def test_health_endpoint(client):
+def test_health_endpoint_is_cheap(client):
+    # Plain /health is the keep-awake ping: no database or AI calls.
     res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+
+def test_health_endpoint(client):
+    res = client.get("/health?deep=1")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
