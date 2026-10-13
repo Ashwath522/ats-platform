@@ -6,8 +6,10 @@ import { initNativeShell } from './lib/platform.js'
 
 installApiBase()
 initNativeShell()
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
 import './tailwind.css'
 import './styles.css'
+
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -44,7 +44,7 @@ from ..auth import get_current_admin, hash_password
 from ..db import (
     Application, CandidateProfile, CandidateUser, Company, CompanyProfile, ContentFlag, DecisionAuditLog,
     EmailLog, EmailToken, InterviewSession, Job, Offer, Post, RecruiterNote, RecruiterPost, RecruiterProfile,
-    RecruiterRequest, RecruiterUser, Resume, SavedJob, ScheduledInterview, StudentProject, TeamMember, User,
+    RecruiterRequest, RecruiterUser, Resume, SavedJob, ScheduledInterview, StudentProject, TeamMember, User, PlatformSetting,
     engine, utc_now,
 )
 from ..services.audit import record_audit_event
@@ -1969,6 +1969,14 @@ def _settings_path() -> str:
 
 def load_platform_settings() -> Dict[str, Any]:
     out = dict(SETTINGS_DEFAULTS)
+    with Session(engine) as s:
+        rows = s.exec(select(PlatformSetting)).all()
+        if rows:
+            for row in rows:
+                if row.key in SETTINGS_DEFAULTS:
+                    try: out[row.key] = json.loads(row.value_json)
+                    except (TypeError, ValueError): pass
+            return out
     try:
         with open(_settings_path(), "r", encoding="utf-8") as fh:
             raw = json.load(fh)
@@ -2026,11 +2034,15 @@ async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admi
     st.update(changes)
     if st["announcement_enabled"] and len(st["announcement_text"]) < 3:
         raise HTTPException(status_code=422, detail="Write the announcement text before turning it on")
-    path = _settings_path()
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(st, fh, indent=2)
-    os.replace(tmp, path)
+    with Session(engine) as s:
+        for key, value in st.items():
+            row = s.get(PlatformSetting, key)
+            if row:
+                row.value_json = json.dumps(value)
+                row.updated_at = utc_now()
+            else:
+                s.add(PlatformSetting(key=key, value_json=json.dumps(value)))
+        s.commit()
     _PUBLIC_CACHE.clear()
     with Session(engine) as s:
         _audit(s, admin, "update_settings", "platform", details=changes)

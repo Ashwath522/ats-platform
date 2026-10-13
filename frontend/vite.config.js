@@ -19,5 +19,15 @@ export default defineConfig({
       '/api': 'http://localhost:8000',
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          router: ['react-router-dom'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
 })
-

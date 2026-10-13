@@ -2,6 +2,7 @@
 import os
 import uuid
 import shutil
+from PIL import Image
 from fastapi import UploadFile, HTTPException
 
 try:
@@ -89,7 +90,7 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
             detail=f"Invalid image format '{ext}'. Allowed: PNG, JPG, JPEG, WEBP, GIF"
         )
     
-    unique_name = f"{uuid.uuid4().hex}{ext}"
+    unique_name = f"{uuid.uuid4().hex}.webp"
     dest_dir = os.path.join(MEDIA_DIR, target_subfolder)
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, unique_name)
@@ -107,8 +108,10 @@ def validate_and_save_image(file: UploadFile, target_subfolder: str) -> str:
         raise HTTPException(status_code=400, detail="Empty file uploaded")
         
     try:
-        with open(dest_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        image = Image.open(file.file)
+        image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+        if image.mode not in ("RGB", "RGBA"): image = image.convert("RGBA")
+        image.save(dest_path, "WEBP", quality=82, method=6)
             
         # Magic validation
         if not is_valid_image_magic(dest_path):
