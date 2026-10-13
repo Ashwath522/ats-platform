@@ -235,8 +235,14 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
                 session.refresh(user)
         if not user or not verify_password(password, user.password_hash):
             raise HTTPException(status_code=401, detail="Incorrect email or password")
+        if (user.status or "active") == "suspended":
+            raise HTTPException(status_code=403, detail="This account is suspended")
         if user.role == "candidate" and not user.email_verified:
             raise HTTPException(status_code=403, detail="Email verification required")
+        user.last_login_at = utc_now()
+        session.add(user)
+        session.commit()
+        session.refresh(user)
         return _token_response(user)
 
 

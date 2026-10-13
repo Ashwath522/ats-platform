@@ -8,6 +8,7 @@ const AuthContext = createContext(null)
 const STORAGE_KEYS = {
   candidate: { token: 'ats_candidate_token', username: 'ats_candidate_username' },
   recruiter: { token: 'ats_recruiter_token', username: 'ats_recruiter_username' },
+  admin: { token: 'ats_admin_token', username: 'ats_admin_email' },
 }
 
 export function AuthProvider({ children }) {
@@ -58,9 +59,25 @@ export function AuthProvider({ children }) {
     setRecruiterUsername(null)
   }, [])
 
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem(STORAGE_KEYS.admin.token))
+  const [adminUsername, setAdminUsername] = useState(() => localStorage.getItem(STORAGE_KEYS.admin.username))
+  const loginAdmin = useCallback((token, username) => {
+    localStorage.setItem(STORAGE_KEYS.admin.token, token)
+    localStorage.setItem(STORAGE_KEYS.admin.username, username)
+    setAdminToken(token)
+    setAdminUsername(username)
+  }, [])
+  const logoutAdmin = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEYS.admin.token)
+    localStorage.removeItem(STORAGE_KEYS.admin.username)
+    setAdminToken(null)
+    setAdminUsername(null)
+  }, [])
+
   const value = {
     candidateToken, candidateUsername, loginCandidate, logoutCandidate,
     recruiterToken, recruiterUsername, loginRecruiter, logoutRecruiter,
+    adminToken, adminUsername, loginAdmin, logoutAdmin,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

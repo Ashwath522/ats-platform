@@ -109,6 +109,21 @@ CHEMICAL_SKILLS = [
     "Process Safety Management (PSM)", "Environmental Compliance", "SOPs"
 ]
 
+AUTOMOBILE_SKILLS = [
+    "Vehicle Dynamics", "Powertrain", "IC Engines", "Electric Vehicles", "EV Powertrain",
+    "Battery Management System", "CAN Bus", "AUTOSAR", "Chassis Design", "Suspension Design",
+    "NVH", "Crash Analysis", "DFMEA", "PFMEA", "APQP", "PPAP", "GT-Power", "AVL",
+    "MATLAB/Simulink", "Homologation", "Automotive Testing", "Transmission",
+]
+
+METALLURGY_SKILLS = [
+    "Physical Metallurgy", "Heat Treatment", "Metallography", "Phase Diagrams",
+    "Mechanical Testing", "Tensile Testing", "Hardness Testing", "Fatigue Analysis",
+    "Corrosion", "Welding", "Casting", "Forging", "Powder Metallurgy", "NDT",
+    "SEM", "XRD", "Thermo-Calc", "Failure Analysis", "Steel Making", "Composites",
+    "Materials Characterization", "Surface Engineering",
+]
+
 KNOWN_SKILLS = list(dict.fromkeys(
     SOFTWARE_SKILLS
     + BUSINESS_SKILLS
@@ -118,6 +133,8 @@ KNOWN_SKILLS = list(dict.fromkeys(
     + EEE_SKILLS
     + AEROSPACE_SKILLS
     + CHEMICAL_SKILLS
+    + AUTOMOBILE_SKILLS
+    + METALLURGY_SKILLS
 ))
 
 BRANCH_SKILLS = {
@@ -128,6 +145,8 @@ BRANCH_SKILLS = {
     "eee": EEE_SKILLS + BUSINESS_SKILLS,
     "aerospace": AEROSPACE_SKILLS + BUSINESS_SKILLS,
     "chemical": CHEMICAL_SKILLS + BUSINESS_SKILLS,
+    "automobile": AUTOMOBILE_SKILLS + MECHANICAL_SKILLS + BUSINESS_SKILLS,
+    "metallurgy": METALLURGY_SKILLS + BUSINESS_SKILLS,
 }
 
 SKILL_ALIASES = {

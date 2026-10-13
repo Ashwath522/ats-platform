@@ -480,7 +480,7 @@ img { max-width: 100%; }
 /* Base button look lives in a cascade layer so Tailwind utility classes
    used by some components (layer 'utilities') can override it. */
 @layer legacy {
-button, .btn {
+button:not(.cl-app *), .btn {
   font-family: var(--font);
   font-size: 14px;
   font-weight: 500;
@@ -499,18 +499,18 @@ button, .btn {
   white-space: nowrap;
 }
 
-button:hover, .btn:hover {
+button:not(.cl-app *):hover, .btn:hover {
   border-color: var(--border-strong);
   background: var(--bg-subtle);
   text-decoration: none;
 }
 
-button:focus-visible, .btn:focus-visible {
+button:not(.cl-app *):focus-visible, .btn:focus-visible {
   outline: 3px solid rgba(10,102,194,0.4);
   outline-offset: 2px;
 }
 
-button:disabled, .btn:disabled {
+button:not(.cl-app *):disabled, .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
@@ -605,7 +605,7 @@ button:disabled, .btn:disabled {
    Forms
    ===================================================================== */
 
-label {
+label:not(.cl-app *) {
   display: block;
   font-size: 12px;
   font-weight: 600;
@@ -618,13 +618,13 @@ label {
 
 label:first-of-type { margin-top: 0; }
 
-input[type="text"],
-input[type="email"],
-input[type="number"],
-input[type="password"],
-input[type="tel"],
-textarea,
-select {
+input[type="text"]:not(.cl-app *),
+input[type="email"]:not(.cl-app *),
+input[type="number"]:not(.cl-app *),
+input[type="password"]:not(.cl-app *),
+input[type="tel"]:not(.cl-app *),
+textarea:not(.cl-app *),
+select:not(.cl-app *) {
   width: 100%;
   background: var(--bg-card);
   border: 1.5px solid var(--border);
@@ -637,13 +637,13 @@ select {
   resize: vertical;
 }
 
-textarea:focus,
-input[type="text"]:focus,
-input[type="email"]:focus,
-input[type="number"]:focus,
-input[type="password"]:focus,
-input[type="tel"]:focus,
-select:focus {
+textarea:not(.cl-app *):focus,
+input[type="text"]:not(.cl-app *):focus,
+input[type="email"]:not(.cl-app *):focus,
+input[type="number"]:not(.cl-app *):focus,
+input[type="password"]:not(.cl-app *):focus,
+input[type="tel"]:not(.cl-app *):focus,
+select:not(.cl-app *):focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(10,102,194,0.12);
@@ -934,14 +934,14 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
    Tables
    ===================================================================== */
 
-table {
+table:not(.cl-app *) {
   width: 100%;
   border-collapse: collapse;
   margin-top: 16px;
   font-size: 13px;
 }
 
-th {
+th:not(.cl-app *) {
   text-align: left;
   color: var(--text-secondary);
   font-size: 11px;
@@ -952,7 +952,7 @@ th {
   border-bottom: 2px solid var(--border);
 }
 
-td {
+td:not(.cl-app *) {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;

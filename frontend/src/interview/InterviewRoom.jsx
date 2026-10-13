@@ -34,11 +34,28 @@ async function readNdjson(res, onEvent) {
 
 const SESSION_REQUESTS = new Map()
 
-export default function InterviewRoom() {
+/** Parse the practice options from the query string (?kind=&topic=&company=&q=[...]). */
+function practiceOptions(search) {
+  const p = new URLSearchParams(search)
+  const kind = ['technical', 'domain', 'hr', 'mock'].includes(p.get('kind')) ? p.get('kind') : 'technical'
+  let questions = []
+  try { const q = JSON.parse(p.get('q') || '[]'); if (Array.isArray(q)) questions = q.filter((x) => typeof x === 'string').slice(0, 12) } catch (e) { /* ignore */ }
+  return { kind, topic: (p.get('topic') || '').slice(0, 120), company: (p.get('company') || '').slice(0, 80), questions }
+}
+
+/**
+ * Live spoken AI interview.
+ *  - default: the application interview (/candidate/interview/:appId) — scored for the recruiter, score never shown.
+ *  - `practice`: a private practice session (/candidate/practice?kind=technical&topic=…) — no application,
+ *    no proctoring, and the student sees their own score + feedback at the end.
+ */
+export default function InterviewRoom({ practice = false }) {
   const { appId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
   const debug = new URLSearchParams(location.search).has('debug')
+  const practiceOpts = useMemo(() => (practice ? practiceOptions(location.search) : null), [practice, location.search])
+  const exitTo = practice ? '/candidate/ai-interview' : '/candidate/applications'
   const { candidateToken, logoutCandidate } = useAuth()
   const api = createAuthedFetch(candidateToken, logoutCandidate)
 
@@ -61,6 +78,7 @@ export default function InterviewRoom() {
   const [voiceOk, setVoiceOk] = useState(sttSupported())
   const [nudge, setNudge] = useState(false)
   const [speakerTested, setSpeakerTested] = useState(false)
+  const [result, setResult] = useState(null) // practice evaluation
 
   const lip = useLipSync()
   const videoRef = useRef(null)
@@ -83,9 +101,17 @@ export default function InterviewRoom() {
   useEffect(() => {
     if (!candidateToken) return
     // De-duplicate: React StrictMode / quick remounts must not open two sessions.
-    const key = `${appId}:${candidateToken.slice(-12)}`
+    const key = practice
+      ? `practice:${location.search}:${candidateToken.slice(-12)}`
+      : `${appId}:${candidateToken.slice(-12)}`
     if (!SESSION_REQUESTS.has(key)) {
-      SESSION_REQUESTS.set(key, api(`/api/interview/applications/${appId}/session`, { method: 'POST' }))
+      SESSION_REQUESTS.set(key, practice
+        ? api('/api/interview/practice/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(practiceOpts),
+        })
+        : api(`/api/interview/applications/${appId}/session`, { method: 'POST' }))
       setTimeout(() => SESSION_REQUESTS.delete(key), 10000)
     }
     sessionPromise.current = SESSION_REQUESTS.get(key).then((r) => r.clone())
@@ -105,7 +131,7 @@ export default function InterviewRoom() {
     sessionPromise.current.catch(() => {})
     pickVoice() // warm the voice list
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, candidateToken])
+  }, [appId, candidateToken, practice, location.search])
 
   // ── Mic level animation loop
   useEffect(() => {
@@ -164,10 +190,10 @@ export default function InterviewRoom() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
         streamRef.current = stream
         meterRef.current = createLevelMeter(stream)
-        setMediaError('Camera not available — continuing with audio only. The recruiter will see that proctoring was limited.')
+        setMediaError(practice ? 'Camera not available — continuing with audio only.' : 'Camera not available — continuing with audio only. The recruiter will see that proctoring was limited.')
         setPhase('check')
       } catch (e2) {
-        setMediaError('We need microphone access to run the interview. Allow it in your browser/app settings, or continue by typing your answers.')
+        setMediaError(`We need microphone access to run the ${practice ? 'practice session' : 'interview'}. Allow it in your browser/app settings, or continue by typing your answers.`)
         setVoiceOk(false)
         setPhase('check')
       }
@@ -330,7 +356,7 @@ export default function InterviewRoom() {
       setPhase('live')
       startedAt.current = Date.now()
       try { wakeLock.current = await navigator.wakeLock?.request('screen') } catch (e) { /* optional */ }
-      if (videoRef.current && streamRef.current) {
+      if (!practice && videoRef.current && streamRef.current) {
         proctorRef.current = new Proctor(videoRef.current)
         proctorRef.current.start()
       }
@@ -351,18 +377,25 @@ export default function InterviewRoom() {
     const proctoring = proctorRef.current ? proctorRef.current.summary() : { risk_score: 0, risk_level: 'low', proctoring_status: 'off' }
     proctorRef.current && proctorRef.current.stop()
     try {
-      await api(`/api/interview/sessions/${sessionRef.current.session_id}/finish`, {
+      const res = await api(`/api/interview/sessions/${sessionRef.current.session_id}/finish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ended_reason: reason, proctoring, latency: latencies.current }),
       })
-    } catch (e) { /* the server keeps the transcript; recruiter can still review */ }
+      if (practice) {
+        const data = await res.json().catch(() => ({}))
+        setResult(res.ok ? (data.evaluation || {}) : { error: data.detail || 'Could not score this session.' })
+      }
+    } catch (e) {
+      /* the server keeps the transcript; recruiter can still review */
+      if (practice) setResult({ error: 'Could not reach the server to score this session.' })
+    }
     streamRef.current && streamRef.current.getTracks().forEach((t) => t.stop())
     setPhase('done')
   }
 
   function endEarly() {
-    if (!window.confirm('End the interview now? Your answers so far will be submitted.')) return
+    if (!window.confirm(practice ? 'End this practice session now? You will get feedback on the answers so far.' : 'End the interview now? Your answers so far will be submitted.')) return
     queueRef.current && queueRef.current.cancel()
     finish('ended_by_candidate')
   }
@@ -401,15 +434,15 @@ export default function InterviewRoom() {
   return (
     <div className={`iv-root iv-phase-${phase}`}>
       <header className="iv-top">
-        <button className="iv-back" onClick={() => (phase === 'live' ? endEarly() : navigate('/candidate/repo'))} aria-label="Back">
+        <button className="iv-back" onClick={() => (phase === 'live' ? endEarly() : navigate(exitTo))} aria-label="Back">
           <ChevronLeft size={22} />
         </button>
         <div className="iv-title">
-          <strong>AI Interview</strong>
+          <strong>{practice ? 'AI Practice Interview' : 'AI Interview'}</strong>
           {phase === 'live' && <span>Question {Math.min(qIndex + 1, total)} of {total} · {mm}:{ss}</span>}
         </div>
         <div className="iv-top-right">
-          {phase === 'live' && <span className="iv-rec"><i /> REC</span>}
+          {phase === 'live' && (practice ? <span className="iv-rec iv-practice">PRACTICE</span> : <span className="iv-rec"><i /> REC</span>)}
         </div>
         {phase === 'live' && <div className="iv-progress"><div style={{ width: `${progress}%` }} /></div>}
       </header>
@@ -419,18 +452,27 @@ export default function InterviewRoom() {
           <div className="iv-hero">
             <AvatarCharacter state="idle" mouth="smile" size={132} />
             <div>
-              <h1>Meet Aria, your interviewer</h1>
-              <p>A short spoken interview — about {session?.total_questions || 5} questions, ~10 minutes. Speak naturally; she listens, follows up and moves on, just like a person.</p>
+              <h1>{practice ? 'Practice with Aria' : 'Meet Aria, your interviewer'}</h1>
+              {practice && practiceOpts && <p className="iv-hint" style={{ margin: '0 0 4px' }}><b>{{ technical: 'Technical', domain: 'Domain', hr: 'HR', mock: 'Mock interview' }[practiceOpts.kind]}</b>{practiceOpts.topic ? ` · ${practiceOpts.topic}` : ''}{practiceOpts.company ? ` · ${practiceOpts.company} style` : ''}</p>}
+              <p>A short spoken {practice ? 'practice session' : 'interview'} — about {session?.total_questions || 5} questions, ~10 minutes. Speak naturally; she listens, follows up and moves on, just like a person.</p>
             </div>
           </div>
+          {practice ? (
+          <ul className="iv-points">
+            <li><Mic size={18} /> <span><b>Voice conversation.</b> Your answers are transcribed on the fly. You can switch to typing any time.</span></li>
+            <li><ShieldCheck size={18} /> <span><b>Private practice.</b> This session is only for you — it is never shared with recruiters or linked to an application.</span></li>
+            <li><Check size={18} /> <span><b>Instant feedback.</b> You get a score, strengths and areas to improve at the end. Your history is in AI Interview → Performance.</span></li>
+          </ul>
+          ) : (
           <ul className="iv-points">
             <li><Mic size={18} /> <span><b>Voice conversation.</b> Your answers are transcribed on the fly. You can switch to typing any time.</span></li>
             <li><Camera size={18} /> <span><b>Camera on.</b> On-device checks only look for face presence, extra people and tab switching.</span></li>
             <li><ShieldCheck size={18} /> <span><b>Human review.</b> A recruiter reviews every AI evaluation. Raw transcripts are purged after 30 days; you can request deletion any time.</span></li>
           </ul>
+          )}
           <label className="iv-consent">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            <span>I understand what is recorded and analysed, and I agree to continue.</span>
+            <span>{practice ? 'I understand my answers are transcribed and scored for my own feedback.' : 'I understand what is recorded and analysed, and I agree to continue.'}</span>
           </label>
           {sessionError && <div className="iv-alert">{sessionError}</div>}
           <button className="iv-primary" disabled={!consent || !!sessionError} onClick={setupMedia}>
@@ -465,7 +507,7 @@ export default function InterviewRoom() {
           </div>
           {mediaError && <div className="iv-alert">{mediaError}</div>}
           <button className="iv-primary" onClick={begin} disabled={!session && !sessionError}>
-            {session ? 'Start interview' : <><Loader2 className="iv-spin" size={18} /> Preparing questions…</>}
+            {session ? (practice ? 'Start practice' : 'Start interview') : <><Loader2 className="iv-spin" size={18} /> Preparing questions…</>}
           </button>
         </section>
       )}
@@ -549,22 +591,75 @@ export default function InterviewRoom() {
         </section>
       )}
 
-      {phase === 'done' && (
+      {phase === 'done' && practice && (
+        <PracticeResult result={result} onAgain={() => window.location.reload()} onBack={() => navigate(exitTo)} />
+      )}
+
+      {phase === 'done' && !practice && (
         <section className="iv-card iv-center">
           <div className="iv-done-badge"><Check size={34} /></div>
           <h2>Thank you — you're all set!</h2>
           <p>Your interview has been submitted. A recruiter will review it and you'll hear back by email. You can track progress in Applications.</p>
-          <button className="iv-primary" onClick={() => navigate('/candidate/repo')}>Back to applications</button>
+          <button className="iv-primary" onClick={() => navigate(exitTo)}>Back to applications</button>
         </section>
       )}
 
       {phase === 'error' && (
         <section className="iv-card iv-center">
-          <h2>We couldn't start the interview</h2>
+          <h2>We couldn't start the {practice ? 'practice session' : 'interview'}</h2>
           <p>{sessionError || 'Please check your connection and try again.'}</p>
-          <button className="iv-primary" onClick={() => navigate('/candidate/repo')}>Back</button>
+          <button className="iv-primary" onClick={() => navigate(exitTo)}>Back</button>
         </section>
       )}
     </div>
+  )
+}
+
+const DIM_LABELS = { technical_depth: 'Technical knowledge', problem_solving: 'Problem solving', communication: 'Communication', ownership_impact: 'Confidence & impact', role_fit: 'Role fit' }
+
+/** Score + coaching shown at the end of a practice session (never shown for real interviews). */
+function PracticeResult({ result, onAgain, onBack }) {
+  if (!result) {
+    return (
+      <section className="iv-card iv-center">
+        <Loader2 className="iv-spin" size={36} />
+        <h2>Scoring your answers…</h2>
+      </section>
+    )
+  }
+  if (result.error) {
+    return (
+      <section className="iv-card iv-center">
+        <h2>Practice saved</h2>
+        <p>{result.error} You can find the session later in AI Interview → Performance.</p>
+        <button className="iv-primary" onClick={onBack}>Back to AI Interview</button>
+      </section>
+    )
+  }
+  const score = Math.round(result.overall_score || 0)
+  const dims = Object.entries(result.dimension_scores || {}).filter(([, v]) => typeof v === 'number')
+  return (
+    <section className="iv-card iv-result">
+      <div className="iv-score" style={{ '--p': score }} aria-label={`Score ${score} out of 100`}>
+        <b>{score}</b><small>/100</small>
+      </div>
+      <h2>{score >= 75 ? 'Great session!' : score >= 50 ? 'Good effort — keep going' : 'Keep practicing'}</h2>
+      {result.summary && <p>{result.summary}</p>}
+      {dims.length > 0 && (
+        <div className="iv-dims">
+          {dims.map(([k, v]) => (
+            <div key={k} className="iv-dim"><span>{DIM_LABELS[k] || k}</span><div className="iv-meter"><div style={{ width: `${Math.round(v * 10)}%` }} /></div><b>{Math.round(v * 10)}%</b></div>
+          ))}
+        </div>
+      )}
+      <div className="iv-fb">
+        {result.strengths?.length > 0 && <div><h3>Strengths</h3><ul>{result.strengths.map((x) => <li key={x}>{x}</li>)}</ul></div>}
+        {result.concerns?.length > 0 && <div><h3>To improve</h3><ul>{result.concerns.map((x) => <li key={x}>{x}</li>)}</ul></div>}
+      </div>
+      <div className="iv-actions">
+        <button className="iv-secondary" onClick={onAgain}><RotateCcw size={18} /> Practice again</button>
+        <button className="iv-primary" onClick={onBack}>Back to AI Interview</button>
+      </div>
+    </section>
   )
 }
