@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import inspect, text
+from sqlalchemy import UniqueConstraint, inspect, text
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -549,6 +549,93 @@ class ContentFlag(SQLModel, table=True):
     reported_by: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     resolved_at: Optional[datetime] = None
+
+
+
+# ─── Live external data (official job APIs + learning resources) ─────────────
+
+class ExternalJob(SQLModel, table=True):
+    """A job listing pulled from an official, ToS-compliant API (SmartRecruiters,
+    Adzuna, Jooble, Greenhouse, Lever). Students apply on the company site."""
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_externaljob_source_extid"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source: str = Field(index=True)            # smartrecruiters | adzuna | jooble | greenhouse | lever
+    external_id: str = Field(index=True)
+    company_name: str = ""
+    company_slug: Optional[str] = Field(default=None, index=True)
+    title: str = ""
+    description_text: str = ""                 # cleaned from HTML, max 8000 chars
+    location_text: str = ""
+    city: Optional[str] = None
+    country: Optional[str] = None
+    remote_type: Optional[str] = None          # onsite | remote | hybrid
+    job_type: Optional[str] = None             # internship | full-time | part-time | apprenticeship
+    experience_level: Optional[str] = None     # fresher | 0-2 | 2-5 | 5+
+    branch: Optional[str] = Field(default=None, index=True)
+    skills_json: str = "[]"
+    apply_url: str = ""
+    posting_url: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    posted_at: Optional[datetime] = Field(default=None, index=True)
+    first_seen_at: datetime = Field(default_factory=utc_now)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+    last_checked_at: datetime = Field(default_factory=utc_now)
+    status: str = Field(default="active", index=True)   # active | expired | hidden
+    miss_count: int = 0
+    source_version: Optional[str] = None       # provider's change marker (e.g. releasedDate)
+    dedupe_key: Optional[str] = Field(default=None, index=True)
+
+
+class LiveResource(SQLModel, table=True):
+    """Fresh learning material per branch: arXiv papers, YouTube lectures and
+    admin-uploaded notes (PDF stored via media/MediaBlob)."""
+    __table_args__ = (UniqueConstraint("source", "url", name="uq_liveresource_source_url"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    branch: str = Field(index=True)            # one of the 8 core branches, or "all"
+    kind: str = Field(default="article", index=True)   # paper | video | article | notes | course
+    title: str
+    url: Optional[str] = None
+    media_path: Optional[str] = None
+    source: str = Field(default="admin", index=True)   # arxiv | youtube | admin
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    published_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    created_by: Optional[str] = None
+    status: str = Field(default="active", index=True)  # active | hidden
+
+
+class SyncRun(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)              # jobs | resources
+    source: str = Field(index=True)
+    started_at: datetime = Field(default_factory=utc_now, index=True)
+    finished_at: Optional[datetime] = None
+    status: str = "running"                    # running | ok | error | skipped
+    fetched: int = 0
+    added: int = 0
+    updated: int = 0
+    expired: int = 0
+    error: Optional[str] = None
+    triggered_by: Optional[str] = None
+
+
+class ExternalApplicationLog(SQLModel, table=True):
+    """A student's click-out / self-reported application on a company site."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(index=True)
+    external_job_id: int = Field(index=True)
+    action: str = Field(index=True)            # clicked | applied
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SavedExternalJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(index=True)
+    external_job_id: int = Field(index=True)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 def init_db():

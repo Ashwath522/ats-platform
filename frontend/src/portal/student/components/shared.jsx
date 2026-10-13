@@ -8,6 +8,7 @@ import {
 import { Alert, Badge, Button, LogoTile, Modal, Skeleton, Progress, StatusPill, useToast, fmtDate } from '../../../ui/index.jsx'
 import { useApi } from '../../../ui/useApi.js'
 import { branchThumb, getBranch } from '../../../branding/branches.js'
+import { ExternalJobModal, isExternalKey } from './liveJobs.jsx'
 import './student.css'
 
 export const BRANCH_ICONS = { Cog, Building2, Zap, Cpu, FlaskConical, Plane, Car, Layers }
@@ -94,8 +95,14 @@ export function JobMediaCard({ job, index = 0, saved, onToggleSave, onOpen }) {
   )
 }
 
-/** Full job details + apply (used by Dashboard and Opportunities). */
-export function JobDetailsModal({ jobId, onClose, saved, onToggleSave, onApplied }) {
+/** Full job details + apply (used by Dashboard and Opportunities).
+ *  Live listings (ids like "ext-12") open the external detail view instead. */
+export function JobDetailsModal(props) {
+  if (isExternalKey(props.jobId)) return <ExternalJobModal {...props} onChanged={props.onApplied} />
+  return <InternalJobDetailsModal {...props} />
+}
+
+function InternalJobDetailsModal({ jobId, onClose, saved, onToggleSave, onApplied }) {
   const api = useApi('candidate')
   const toast = useToast()
   const [job, setJob] = useState(null)

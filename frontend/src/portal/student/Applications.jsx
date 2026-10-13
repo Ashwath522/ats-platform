@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   FileText, CheckCircle2, Users, Hourglass, XCircle, ClipboardCheck, Search, Filter, Eye, BarChart3, Bot, Upload, CalendarDays,
-  Clock, Lightbulb, FileEdit, Cpu, CalendarCheck, ChevronRight, ArrowRight, MapPin, Video, Send, BadgeIndianRupee, X,
+  Clock, Lightbulb, FileEdit, Cpu, CalendarCheck, ChevronRight, ArrowRight, MapPin, Video, Send, BadgeIndianRupee, X, ExternalLink, Globe,
 } from 'lucide-react'
 import {
   Alert, Button, Card, DataTable, Donut, EmptyState, Field, Hero, Input, LogoTile, Menu, Modal, Pagination, Select, Skeleton,
@@ -10,7 +10,8 @@ import {
 } from '../../ui/index.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { useStudent } from './StudentShell.jsx'
-import { ExplainabilityModal, JOB_TYPE_LABEL } from './components/shared.jsx'
+import { ExplainabilityModal, JOB_TYPE_LABEL, JobDetailsModal } from './components/shared.jsx'
+import { LiveBadge, openExternal } from './components/liveJobs.jsx'
 import './components/student.css'
 
 const KPI = [
@@ -69,7 +70,7 @@ export default function Applications() {
   const { branch } = useStudent()
   const [params, setParams] = useSearchParams()
   const q = useQuery(() => api.get('/api/student/applications/overview'), [api])
-  const [tab, setTab] = useState(params.get('tab') || 'all')
+  const [tab, setTab] = useState(TAB_MATCH[params.get('tab')] ? params.get('tab') : 'all')
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [type, setType] = useState('')
@@ -184,6 +185,8 @@ export default function Applications() {
               <Pagination page={pg.page} pages={pg.pages} total={pg.total} pageSize={pg.pageSize} setPage={pg.setPage} setPageSize={pg.setPageSize} noun="applications" />
             </div>
           </Card>
+
+          <ExternalApplications rows={d?.external || []} loading={q.loading} focus={params.get('tab') === 'external'} onChanged={q.reload} />
         </div>
 
         <div className="st-right">
@@ -363,5 +366,52 @@ function ProjectUploadModal({ app, onClose, onDone }) {
         </Field>
       </div>
     </Modal>
+  )
+}
+
+/** "Applied on company sites": live listings the student marked as applied. */
+function ExternalApplications({ rows, loading, focus, onChanged }) {
+  const api = useApi('candidate')
+  const toast = useToast()
+  const [open, setOpen] = useState(null)
+  const ref = React.useRef(null)
+  const pg = usePagination(rows, 5)
+  useEffect(() => { if (focus && !loading) ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [focus, loading])
+  const unmark = async (r) => {
+    if (!window.confirm(`Remove “${r.role}” from your applied list?`)) return
+    try {
+      await api.post(`/api/student/external-jobs/${r.external_job_id}/track`, { action: 'not_applied' })
+      toast('Removed from your applied list', 'success')
+      onChanged()
+    } catch (e) { toast(e.message, 'error') }
+  }
+  const columns = [
+    { key: 'company', header: 'Company', sortable: true, render: (r) => <div className="cl-row" style={{ gap: 10 }}><LogoTile name={r.company} size={34} /><span className="cl-ellipsis" style={{ maxWidth: 130, fontWeight: 600, color: 'var(--cl-ink)', fontSize: 13.5 }}>{r.company}</span></div> },
+    { key: 'role', header: 'Role', sortable: true, render: (r) => <div className="cl-col" style={{ gap: 4, alignItems: 'flex-start' }}><button type="button" className="cl-link" style={{ textAlign: 'left', color: 'var(--cl-ink)' }} onClick={() => setOpen(r.job_key)}>{r.role}</button><LiveBadge job={r} /></div> },
+    { key: 'applied_at', header: 'Applied on', sortable: true, render: (r) => fmtDate(r.applied_at) },
+    { key: 'listing_status', header: 'Listing', render: (r) => <StatusPill status={r.listing_status === 'open' ? 'open' : 'closed'} dot={false} /> },
+    {
+      key: 'act', header: 'Actions', render: (r) => (
+        <div className="cl-row" style={{ gap: 6 }}>
+          {r.listing_status === 'open' && r.posting_url && <Button size="sm" variant="outline" iconRight={ExternalLink} onClick={() => openExternal(r.posting_url)} aria-label={`Open the ${r.role} listing on the company site`}>Listing</Button>}
+          <Menu label={`More actions for ${r.role}`} items={[
+            { label: 'View details', icon: Eye, onClick: () => setOpen(r.job_key) },
+            { label: 'Remove from applied', icon: X, onClick: () => unmark(r) },
+          ]} />
+        </div>
+      ),
+    },
+  ]
+  return (
+    <div ref={ref} style={{ scrollMarginTop: 80 }}>
+      <Card title={<><Globe size={20} style={{ color: 'var(--cl-blue)' }} />Applied on company sites</>}
+        subtitle="Live listings you applied to on official career sites. The company handles these applications — CoreLink only keeps your record."
+        action={<Button size="sm" variant="outline" to="/candidate/opportunities?origin=live">Browse live jobs</Button>}>
+        <DataTable columns={columns} rows={pg.slice} loading={loading} rowKey={(r) => r.id}
+          empty={<EmptyState icon={Globe} title="Nothing tracked yet" text="When you apply to a live listing, tap “Mark as applied” and it shows up here." />} />
+        {rows.length > 5 && <Pagination page={pg.page} pages={pg.pages} total={pg.total} pageSize={pg.pageSize} setPage={pg.setPage} noun="applications" />}
+      </Card>
+      <JobDetailsModal jobId={open} onClose={() => setOpen(null)} onApplied={onChanged} />
+    </div>
   )
 }

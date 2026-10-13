@@ -913,11 +913,13 @@ async def opportunities(
     near: Optional[int] = Query(None),
     saved_only: bool = Query(False),
     sort: str = Query("relevance", pattern="^(relevance|newest|salary)$"),
+    origin: str = Query("all", pattern="^(all|corelink|live)$", description="all | corelink (in-app jobs) | live (official company listings)"),
     page: int = Query(1, ge=1, le=500),
     page_size: int = Query(10, ge=1, le=50),
     candidate: str = Depends(get_current_candidate),
 ):
     from ..services.distance import distance_or_none
+    from .live_data import best_per_key, external_card, student_state, visible_jobs_stmt
 
     with Session(engine) as session:
         user, profile, apps, saved = _candidate_context(session, candidate)
@@ -967,13 +969,45 @@ async def opportunities(
             if saved_only and job.id not in saved:
                 continue
             rows.append((job, jskills))
+        if origin == "live":
+            rows = []
 
-        counts = {"all": len(rows), "internship": 0, "full-time": 0, "part-time": 0, "onsite": 0, "remote": 0, "hybrid": 0}
-        for job, _ in rows:
-            t = _norm_type(job.job_type)
+        # Live listings from official company boards / job APIs (apply on the company site).
+        ext_saved, ext_applied, _clicked = student_state(session, user.id)
+        ext_all = best_per_key(session.exec(visible_jobs_stmt()).all()) if origin != "corelink" else []
+        ext_rows = []
+        for e in ext_all:
+            if ql:
+                hay = " ".join([e.title, e.company_name, e.description_text or "", e.location_text or "",
+                                BRANCH_LABELS.get(e.branch or "", "")]).lower()
+                if not all(tok in hay for tok in ql.split()):
+                    continue
+            if location and location.strip().lower() not in {"", "all"}:
+                if not _same_city(_city(location), _city(e.city or e.location_text)) and location.strip().lower() not in (e.location_text or "").lower():
+                    continue
+            if jt and _norm_type(e.job_type) != jt:
+                continue
+            if remote_v in {"remote", "onsite", "hybrid"} and (e.remote_type or "onsite") != remote_v:
+                continue
+            if experience and experience != "all" and (e.experience_level or "") != experience:
+                continue
+            if bfilter and e.branch != bfilter:
+                continue
+            if salary_min is not None and (e.salary_max or e.salary_min or 0) < salary_min:
+                continue
+            if near and not _same_city(pcity, _city(e.city or e.location_text)) and (e.remote_type or "") != "remote":
+                continue
+            if saved_only and e.id not in ext_saved:
+                continue
+            ext_rows.append(e)
+
+        kinds = [(job.job_type, job.remote_type) for job, _ in rows] + [(e.job_type, e.remote_type) for e in ext_rows]
+        counts = {"all": len(kinds), "internship": 0, "full-time": 0, "part-time": 0, "onsite": 0, "remote": 0, "hybrid": 0}
+        for jt_raw, rt_raw in kinds:
+            t = _norm_type(jt_raw)
             if t in counts:
                 counts[t] += 1
-            rt = job.remote_type or "onsite"
+            rt = rt_raw or "onsite"
             if rt in counts:
                 counts[rt] += 1
 
@@ -981,14 +1015,20 @@ async def opportunities(
         if tab and tab != "all":
             if tab in {"onsite", "remote", "hybrid"}:
                 rows = [r for r in rows if (r[0].remote_type or "onsite") == tab]
+                ext_rows = [e for e in ext_rows if (e.remote_type or "onsite") == tab]
             else:
                 t = _norm_type(tab)
                 rows = [r for r in rows if _norm_type(r[0].job_type) == t]
+                ext_rows = [e for e in ext_rows if _norm_type(e.job_type) == t]
 
         cards = [
             _job_card(job, companies, match=match_score(job, js, pskills, pbranch), saved=job.id in saved, application=apps.get(job.id))
             for job, js in rows
         ]
+        for c in cards:
+            c["external"] = False
+        cards += [external_card(e, pskills=pskills, pbranch=pbranch, saved=e.id in ext_saved, applied_at=ext_applied.get(e.id))
+                  for e in ext_rows]
         if sort == "newest":
             cards.sort(key=lambda c: c["posted_at"] or "", reverse=True)
         elif sort == "salary":
@@ -999,7 +1039,8 @@ async def opportunities(
         total = len(cards)
         pages = max(1, -(-total // page_size))
         start = (page - 1) * page_size
-        locs = sorted({(j.location_text or "").split(",")[0].strip() for j in jobs if j.location_text})
+        locs = sorted({(j.location_text or "").split(",")[0].strip() for j in jobs if j.location_text}
+                      | {(e.city or (e.location_text or "").split(",")[0]).strip() for e in ext_all if (e.city or e.location_text)})
         return {
             "items": cards[start:start + page_size],
             "total": total,
@@ -1009,9 +1050,10 @@ async def opportunities(
             "counts": counts,
             "facets": {
                 "locations": locs[:50],
-                "branches": sorted({branch_id(j.branch) for j in jobs if branch_id(j.branch)}),
-                "experience_levels": sorted({j.experience_level for j in jobs if j.experience_level}),
+                "branches": sorted({branch_id(j.branch) for j in jobs if branch_id(j.branch)} | {e.branch for e in ext_all if e.branch}),
+                "experience_levels": sorted({j.experience_level for j in jobs if j.experience_level} | {e.experience_level for e in ext_all if e.experience_level}),
             },
+            "origin_counts": {"corelink": sum(1 for c in cards if not c["external"]), "live": sum(1 for c in cards if c["external"])},
             "profile": {"branch": pbranch, "skills": len(pskills), "visibility": privacy["visibility"], "share_profile": privacy["share_profile"]},
         }
 
@@ -1057,9 +1099,31 @@ def _saved_list(session: Session, cid: int) -> List[dict]:
         out.append({
             "job_id": job.id, "title": job.title, "company": name, "company_logo": logo,
             "location": job.location_text, "branch": branch_id(job.branch), "job_type": job.job_type,
-            "remote_type": job.remote_type, "status": job.status, "saved_at": _iso(s.created_at),
+            "remote_type": job.remote_type, "status": job.status, "saved_at": _iso(s.created_at), "external": False,
         })
+    from ..db import ExternalJob, SavedExternalJob
+    from ..services.live_sources import PROVIDERS
+
+    for s in session.exec(select(SavedExternalJob).where(SavedExternalJob.candidate_id == cid).order_by(SavedExternalJob.created_at.desc())).all()[:MAX_SAVED]:
+        e = session.get(ExternalJob, s.external_job_id)
+        if not e:
+            continue
+        out.append({
+            "job_id": f"ext-{e.id}", "external_job_id": e.id, "external": True, "title": e.title, "company": e.company_name,
+            "company_logo": None, "location": e.location_text, "branch": e.branch, "job_type": e.job_type,
+            "remote_type": e.remote_type, "status": "open" if e.status == "active" else "closed", "saved_at": _iso(s.created_at),
+            "apply_url": e.apply_url if e.status == "active" else None,
+            "source_label": PROVIDERS[e.source].source_label(e.company_name) if e.source in PROVIDERS else e.source,
+        })
+    out.sort(key=lambda r: r["saved_at"] or "", reverse=True)
     return out
+
+
+def _ext_id(value) -> Optional[int]:
+    """'ext-12' → 12 (external job key used by the opportunities list)."""
+    if isinstance(value, str) and value.startswith("ext-") and value[4:].isdigit():
+        return int(value[4:])
+    return None
 
 
 @router.get("/api/student/saved-jobs")
@@ -1071,11 +1135,18 @@ async def saved_jobs(candidate: str = Depends(get_current_candidate)):
 
 
 class SaveJobIn(BaseModel):
-    job_id: int
+    job_id: Optional[int | str] = None
+    external_job_id: Optional[int] = None
 
 
 @router.post("/api/student/saved-jobs", status_code=201)
 async def save_job(body: SaveJobIn, candidate: str = Depends(get_current_candidate)):
+    ext = body.external_job_id or _ext_id(body.job_id)
+    if ext is not None:
+        return _save_external(candidate, ext)
+    if not isinstance(body.job_id, int) and not (isinstance(body.job_id, str) and body.job_id.isdigit()):
+        raise HTTPException(status_code=422, detail="job_id is required")
+    body.job_id = int(body.job_id)
     with Session(engine) as session:
         user = _user(session, candidate)
         job = session.get(Job, body.job_id)
@@ -1091,8 +1162,39 @@ async def save_job(body: SaveJobIn, candidate: str = Depends(get_current_candida
         return {"saved": True, "job_id": body.job_id}
 
 
+def _save_external(candidate: str, ext: int) -> dict:
+    from ..db import ExternalJob, SavedExternalJob
+
+    with Session(engine) as session:
+        user = _user(session, candidate)
+        e = session.get(ExternalJob, ext)
+        if not e or e.status != "active":
+            raise HTTPException(status_code=404, detail="This listing has expired or was removed")
+        existing = session.exec(select(SavedExternalJob).where(SavedExternalJob.candidate_id == user.id, SavedExternalJob.external_job_id == ext)).first()
+        if not existing:
+            n = len(session.exec(select(SavedExternalJob.id).where(SavedExternalJob.candidate_id == user.id)).all())
+            if n >= MAX_SAVED:
+                raise HTTPException(status_code=400, detail=f"You can save up to {MAX_SAVED} live jobs")
+            session.add(SavedExternalJob(candidate_id=user.id, external_job_id=ext))
+            session.commit()
+        return {"saved": True, "job_id": f"ext-{ext}", "external_job_id": ext}
+
+
 @router.delete("/api/student/saved-jobs/{job_id}")
-async def unsave_job(job_id: int, candidate: str = Depends(get_current_candidate)):
+async def unsave_job(job_id: str, candidate: str = Depends(get_current_candidate)):
+    ext = _ext_id(job_id)
+    if ext is not None:
+        from ..db import SavedExternalJob
+
+        with Session(engine) as session:
+            user = _user(session, candidate)
+            for r in session.exec(select(SavedExternalJob).where(SavedExternalJob.candidate_id == user.id, SavedExternalJob.external_job_id == ext)).all():
+                session.delete(r)
+            session.commit()
+            return {"saved": False, "job_id": job_id, "external_job_id": ext}
+    if not job_id.isdigit():
+        raise HTTPException(status_code=422, detail="Invalid job id")
+    job_id = int(job_id)
     with Session(engine) as session:
         user = _user(session, candidate)
         rows = session.exec(select(SavedJob).where(SavedJob.candidate_id == user.id, SavedJob.job_id == job_id)).all()
@@ -1275,8 +1377,10 @@ async def applications_overview(candidate: str = Depends(get_current_candidate))
             })
         kpis = Counter(r["status"] for r in rows)
         offer_count = sum(1 for o in offers.values() if o.status in {"sent", "negotiation", "accepted", "joined"})
+        external = _external_applications(session, user.id)
         return {
             "applications": rows,
+            "external": external,
             "kpis": {
                 "total": len(rows),
                 "shortlisted": kpis.get("shortlisted", 0),
@@ -1288,6 +1392,36 @@ async def applications_overview(candidate: str = Depends(get_current_candidate))
             "upcoming_interviews": upcoming,
             "offers": [r["offer"] | {"application_id": r["id"], "role": r["role"], "company": r["company"]} for r in rows if r["offer"]],
         }
+
+
+def _external_applications(session: Session, cid: int) -> List[dict]:
+    """Jobs the student marked as applied on a company site (live listings)."""
+    from ..db import ExternalApplicationLog, ExternalJob
+    from ..services.live_sources import PROVIDERS
+
+    logs = session.exec(select(ExternalApplicationLog).where(ExternalApplicationLog.candidate_id == cid)
+                        .order_by(ExternalApplicationLog.created_at.desc())).all()[:1000]
+    applied, clicks = {}, Counter()
+    for l in logs:
+        if l.action == "applied":
+            applied.setdefault(l.external_job_id, l)
+        else:
+            clicks[l.external_job_id] += 1
+    out = []
+    for ext_id, l in list(applied.items())[:300]:
+        e = session.get(ExternalJob, ext_id)
+        if not e:
+            continue
+        active = e.status == "active"
+        out.append({
+            "id": l.id, "external_job_id": e.id, "job_key": f"ext-{e.id}", "role": e.title, "company": e.company_name,
+            "branch": e.branch, "location": e.location_text, "job_type": e.job_type,
+            "applied_at": l.created_at.replace(microsecond=0).isoformat() + "Z", "clicks": clicks.get(ext_id, 0),
+            "source": e.source, "source_label": PROVIDERS[e.source].source_label(e.company_name) if e.source in PROVIDERS else e.source,
+            "listing_status": "open" if active else "closed", "apply_url": e.apply_url if active else None,
+            "posting_url": e.posting_url if active else None,
+        })
+    return out
 
 
 class OfferResponse(BaseModel):
