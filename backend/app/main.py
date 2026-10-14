@@ -56,7 +56,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[STARTUP] LLM Mode: Deterministic-only scoring active — no cloud API keys or local Ollama detected")
 
+    try:
+        from .services import live_scheduler
+        live_scheduler.start()
+    except Exception:
+        logger.exception("[STARTUP] live-sync scheduler not started")
     yield
+    try:
+        from .services import live_scheduler
+        await live_scheduler.stop()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="ATS Platform API", lifespan=lifespan)

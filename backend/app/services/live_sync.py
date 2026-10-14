@@ -45,6 +45,7 @@ MAX_ACTIVE_JOBS = 2000
 MISSES_TO_EXPIRE = 2
 RESOURCES_PER_SOURCE_BRANCH = 30
 ENRICH_CONCURRENCY = 4
+WRITE_BATCH = 20          # jobs are published every N detail fetches
 STALE_RUN = timedelta(minutes=20)
 SETTINGS_KEY = "live_sync"
 
@@ -368,20 +369,45 @@ async def sync_source(client: httpx.AsyncClient, name: str, settings: dict, trig
         status, error = "skipped", reason
     else:
         try:
-            result = await provider.fetch(client, settings)
-            stats["fetched"] = len(result.items)
-            with Session(engine) as s2:  # show progress in the admin status while details load
-                live = s2.get(SyncRun, run_id)
-                if live:
-                    live.fetched = stats["fetched"]
-                    s2.add(live)
-                    s2.commit()
-            if provider.kind == "jobs":
-                stats.update(await ingest_jobs(client, provider, result))
+            def progress():
+                with Session(engine) as s2:  # live counters in the admin status while the sync runs
+                    live = s2.get(SyncRun, run_id)
+                    if live:
+                        for k, v in stats.items():
+                            setattr(live, k, int(v))
+                        s2.add(live)
+                        s2.commit()
+
+            errors: List[str] = []
+            if provider.kind == "jobs" and hasattr(provider, "scopes"):
+                # One company at a time: fetch it, publish its jobs, then move on.
+                scopes = provider.scopes(settings)
+                for scope in scopes:
+                    try:
+                        result = await provider.fetch_scope(client, settings, scope)
+                    except Exception as exc:
+                        errors.append(f"{scope}: {safe_error(exc)}")
+                        continue
+                    stats["fetched"] += len(result.items)
+                    progress()
+                    part = await ingest_jobs(client, provider, result)
+                    for k in ("added", "updated", "expired"):
+                        stats[k] += part.get(k, 0)
+                    errors.extend(result.errors)
+                    progress()
+                if errors and len(errors) >= len(scopes) and not stats["fetched"]:
+                    raise RuntimeError("; ".join(errors)[:500])
             else:
-                stats.update(ingest_resources(provider, result))
-            if result.errors:
-                status, error = "partial", "; ".join(result.errors)[:1000]
+                result = await provider.fetch(client, settings)
+                stats["fetched"] = len(result.items)
+                progress()
+                if provider.kind == "jobs":
+                    stats.update(await ingest_jobs(client, provider, result))
+                else:
+                    stats.update(ingest_resources(provider, result))
+                errors.extend(result.errors)
+            if errors:
+                status, error = "partial", "; ".join(errors)[:1000]
         except Exception as exc:
             status, error = "error", safe_error(exc)[:1000]
             log.warning("[live-sync] %s failed: %s", name, error)
@@ -479,81 +505,26 @@ async def ingest_jobs(client: httpx.AsyncClient, provider, result: FetchResult) 
                 if len(result.errors) < 10:
                     result.errors.append(f"detail {raw.external_id}: {safe_error(exc)}")
 
-    if to_enrich:
-        await asyncio.gather(*(enrich(r) for r in to_enrich))
+    def write(items: Dict[str, RawJob]) -> None:
+        """Publish a slice of the batch right away (students see jobs while the sync runs)."""
+        nonlocal added, updated, expired
+        with Session(engine) as s:
+            rows = {e.external_id: e for e in s.exec(select(ExternalJob).where(ExternalJob.source == name, ExternalJob.external_id.in_(list(items)))).all()} if items else {}
+            a, u, x = _write_jobs(s, provider, items, rows, dropped, failed, new_rejected, now)
+            s.commit()
+        added += a
+        updated += u
+        expired += x
+
+    ready = {k: v for k, v in batch.items() if k not in {r.external_id for r in to_enrich}}
+    write(ready)                                   # cached / dropped ones need no network
+    for i in range(0, len(to_enrich), WRITE_BATCH):
+        chunk = to_enrich[i:i + WRITE_BATCH]
+        await asyncio.gather(*(enrich(r) for r in chunk))
+        write({r.external_id: r for r in chunk})
 
     with Session(engine) as s:
         rows = {e.external_id: e for e in s.exec(select(ExternalJob).where(ExternalJob.source == name)).all()}
-        active_by_key: Dict[str, ExternalJob] = {}
-        for e in s.exec(select(ExternalJob).where(ExternalJob.status == "active")).all():
-            if e.dedupe_key:
-                cur = active_by_key.get(e.dedupe_key)
-                if cur is None or (_prio(e.source), e.id) < (_prio(cur.source), cur.id):
-                    active_by_key[e.dedupe_key] = e
-
-        def expire(row: Optional[ExternalJob]):
-            nonlocal expired
-            if row is not None and row.status == "active":
-                row.status = "expired"
-                row.last_checked_at = now
-                s.add(row)
-                expired += 1
-
-        for ext_id, raw in batch.items():
-            row = rows.get(ext_id)
-            if ext_id in dropped:
-                expire(row)
-                continue
-            if ext_id in failed:
-                if row is not None:  # keep what we know, don't publish anything new we couldn't verify
-                    row.last_seen_at = now
-                    row.miss_count = 0
-                    s.add(row)
-                continue
-            if not raw.active:
-                expire(row)
-                continue
-            apply_url = https_on_domain(raw.apply_url, provider.domains)
-            posting_url = https_on_domain(raw.posting_url, provider.domains)
-            if not apply_url:
-                expire(row)
-                continue
-            branch, skills, _why = classify(raw.title, raw.description_text, raw.branch_hint)
-            if not branch:
-                if raw.version:
-                    new_rejected[ext_id] = raw.version
-                expire(row)
-                continue
-            key = dedupe_key(raw.company_name, raw.title, raw.city)
-            winner = active_by_key.get(key)
-            is_dup = bool(winner and (winner.source, winner.external_id) != (name, ext_id)
-                          and (_prio(winner.source), winner.id) < (_prio(name), row.id if row and row.id else 10 ** 12))
-            if row is None:
-                if is_dup:
-                    continue
-                row = ExternalJob(source=name, external_id=ext_id, first_seen_at=now)
-                _apply_raw(row, raw, branch, skills, apply_url, posting_url)
-                row.last_seen_at = row.last_checked_at = now
-                s.add(row)
-                s.flush()
-                active_by_key[key] = row
-                added += 1
-                continue
-            changed = _apply_raw(row, raw, branch, skills, apply_url, posting_url)
-            row.last_seen_at = row.last_checked_at = now
-            row.miss_count = 0
-            if row.status == "expired":
-                row.status = "active"
-                changed = True
-            if is_dup and row.status == "active":
-                row.status = "expired"
-                expired += 1
-            elif row.status == "active":
-                active_by_key.setdefault(key, row)
-            s.add(row)
-            if changed:
-                updated += 1
-
         # Misses → expiry, only after a complete, successful listing.
         if result.complete:
             for ext_id, row in rows.items():
@@ -570,7 +541,9 @@ async def ingest_jobs(client: httpx.AsyncClient, provider, result: FetchResult) 
                     expired += 1
                 s.add(row)
         rrow = s.get(PlatformSetting, rejected_key)
-        payload = json.dumps(dict(list(new_rejected.items())[:5000]))
+        merged = {k: v for k, v in rejected.items() if k not in seen}   # keep other companies' entries
+        merged.update(new_rejected)
+        payload = json.dumps(dict(list(merged.items())[-5000:]))
         if rrow:
             rrow.value_json = payload
             rrow.updated_at = now
@@ -579,6 +552,85 @@ async def ingest_jobs(client: httpx.AsyncClient, provider, result: FetchResult) 
             s.add(PlatformSetting(key=rejected_key, value_json=payload))
         s.commit()
     return {"added": added, "updated": updated, "expired": expired}
+
+
+def _write_jobs(s: Session, provider, items: Dict[str, "RawJob"], rows: Dict[str, ExternalJob], dropped: Dict[str, str],
+                failed: set, new_rejected: Dict[str, str], now) -> tuple:
+    """Insert/update/expire ExternalJob rows for `items`. Returns (added, updated, expired)."""
+    name = provider.name
+    added = updated = expired = 0
+    active_by_key: Dict[str, ExternalJob] = {}
+    for e in s.exec(select(ExternalJob).where(ExternalJob.status == "active")).all():
+        if e.dedupe_key:
+            cur = active_by_key.get(e.dedupe_key)
+            if cur is None or (_prio(e.source), e.id) < (_prio(cur.source), cur.id):
+                active_by_key[e.dedupe_key] = e
+
+    def expire(row: Optional[ExternalJob]):
+        nonlocal expired
+        if row is not None and row.status == "active":
+            row.status = "expired"
+            row.last_checked_at = now
+            s.add(row)
+            expired += 1
+
+    for ext_id, raw in items.items():
+        row = rows.get(ext_id)
+        if ext_id in dropped:
+            expire(row)
+            continue
+        if ext_id in failed:
+            if row is not None:  # keep what we know, don't publish anything new we couldn't verify
+                row.last_seen_at = now
+                row.miss_count = 0
+                s.add(row)
+            continue
+        if not raw.active:
+            expire(row)
+            continue
+        apply_url = https_on_domain(raw.apply_url, provider.domains)
+        posting_url = https_on_domain(raw.posting_url, provider.domains)
+        if not apply_url:
+            expire(row)
+            continue
+        branch, skills, _why = classify(raw.title, raw.description_text, raw.branch_hint)
+        if not branch:
+            if raw.version:
+                new_rejected[ext_id] = raw.version
+            expire(row)
+            continue
+        key = dedupe_key(raw.company_name, raw.title, raw.city)
+        winner = active_by_key.get(key)
+        is_dup = bool(winner and (winner.source, winner.external_id) != (name, ext_id)
+                      and (_prio(winner.source), winner.id) < (_prio(name), row.id if row and row.id else 10 ** 12))
+        if row is None:
+            if is_dup:
+                continue
+            row = ExternalJob(source=name, external_id=ext_id, first_seen_at=now)
+            _apply_raw(row, raw, branch, skills, apply_url, posting_url)
+            row.last_seen_at = row.last_checked_at = now
+            s.add(row)
+            s.flush()
+            active_by_key[key] = row
+            added += 1
+            continue
+        changed = _apply_raw(row, raw, branch, skills, apply_url, posting_url)
+        row.last_seen_at = row.last_checked_at = now
+        row.miss_count = 0
+        if row.status == "expired":
+            row.status = "active"
+            changed = True
+        if is_dup and row.status == "active":
+            row.status = "expired"
+            expired += 1
+        elif row.status == "active":
+            active_by_key.setdefault(key, row)
+        s.add(row)
+        if changed:
+            updated += 1
+
+    s.flush()
+    return added, updated, expired
 
 
 def cleanup_jobs() -> dict:
@@ -713,7 +765,9 @@ def status_snapshot(history: int = 30) -> dict:
         }
     keys = {k: bool((os.environ.get(k) or "").strip()) for k in
             ("ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JOOBLE_API_KEY", "YOUTUBE_API_KEY", "LIVE_SYNC_TOKEN")}
+    from .live_scheduler import status as schedule_status
     return {"running": is_running(), "sources": out, "runs": runs, "totals": totals, "keys": keys, "settings": settings,
+            "schedule": schedule_status(),
             "limits": {"max_age_days": MAX_AGE_DAYS, "prune_after_days": PRUNE_AFTER_DAYS, "max_active_jobs": MAX_ACTIVE_JOBS,
                        "misses_to_expire": MISSES_TO_EXPIRE}}
 

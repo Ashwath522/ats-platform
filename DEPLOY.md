@@ -105,7 +105,11 @@ Sources whose key is missing are skipped and shown as "not configured" in **Admi
 
 Hygiene rules (backend/app/services/live_sync.py): non-core roles (HR, finance, sales, marketing, legal, pure IT/software) are dropped and every job is classified into one of the 8 core branches; duplicates are collapsed (same source id, or same company + title + city — official boards win over aggregators); a job missing from 2 consecutive successful syncs of its source, or reported inactive, is expired; postings older than 45 days are hidden; expired rows are pruned after 30 days; at most 2,000 active external jobs.
 
-### Scheduling (Render free sleeps — use cron-job.org)
+### Scheduling
+
+**Built in (default, nothing to set up):** the API syncs by itself — right after startup when the last successful sync is older than `LIVE_SYNC_INTERVAL_HOURS` (default `6`), then every `LIVE_SYNC_INTERVAL_HOURS`. Jobs are published company by company while the sync runs. On Render the API also pings its own `RENDER_EXTERNAL_URL/health` every 10 minutes so the free instance stays awake between syncs (`KEEP_AWAKE=false` turns that off; then the server sleeps when idle and syncs again as soon as the first visitor wakes it). `LIVE_SYNC_AUTO=false` disables the built-in schedule. Status is shown at the top of **Admin → Live Data**.
+
+**Optional external trigger** (extra safety if the service is asleep for long periods):
 
 1. Set `LIVE_SYNC_TOKEN` on the API service to a long random string (e.g. `openssl rand -hex 32`).
 2. Create a free job at https://cron-job.org:

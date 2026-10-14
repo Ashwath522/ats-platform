@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 TEST_DATA_DIR = os.environ.get("ATS_TEST_DATA_DIR") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data_test"))
 os.environ["ATS_DATA_DIR"] = TEST_DATA_DIR
 os.environ["TESTING"] = "1"
+os.environ.setdefault("LIVE_SYNC_AUTO", "false")   # no background syncs during tests
 
 # Clean up any leftover test data directory from previous runs *before* engine starts
 shutil.rmtree(TEST_DATA_DIR, ignore_errors=True)

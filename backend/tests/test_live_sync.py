@@ -559,3 +559,60 @@ def test_arxiv_retries_after_rate_limit(monkeypatch):
             return await p.fetch(c, {})
     res = asyncio.run(go())
     assert res.items and not res.errors and calls["n"] == 2
+
+
+def test_jobs_are_published_while_the_sync_is_still_running(net, monkeypatch):
+    """Jobs from the first detail batch must be visible before later details are fetched."""
+    from app.db import ExternalJob
+    from sqlmodel import select
+    monkeypatch.setattr(live_sync, "WRITE_BATCH", 1)
+    seen_active = []
+    orig = net.detail_for
+
+    def detail_for(pid):
+        with Session(engine) as s:
+            seen_active.append(len(s.exec(select(ExternalJob).where(ExternalJob.status == "active")).all()))
+        return orig(pid)
+
+    net.detail_for = detail_for
+    _sync("smartrecruiters")
+    assert len(seen_active) >= 2
+    assert seen_active[0] == 0 and max(seen_active[1:]) >= 1   # earlier jobs already live mid-sync
+
+
+def test_scheduler_runs_when_stale_and_skips_when_fresh(net, monkeypatch):
+    import asyncio
+    from app.db import SyncRun
+    from app.services import live_scheduler
+    started = []
+    monkeypatch.setattr(live_sync, "run_sync_blocking", lambda kind, by, only=None: started.append((kind, by)) or {"started": True})
+    with Session(engine) as s:
+        for r in s.exec(select(SyncRun)).all():
+            s.delete(r)
+        s.commit()
+    assert asyncio.run(live_scheduler._maybe_sync()) is True            # never synced → due now
+    assert started == [("all", "schedule")]
+    with Session(engine) as s:
+        s.add(SyncRun(kind="jobs", source="smartrecruiters", status="ok", finished_at=utc_now()))
+        s.commit()
+    assert asyncio.run(live_scheduler._maybe_sync()) is False           # just synced → wait
+    monkeypatch.setenv("LIVE_SYNC_INTERVAL_HOURS", "1")
+    with Session(engine) as s:
+        s.add(SyncRun(kind="jobs", source="smartrecruiters", status="ok", finished_at=utc_now() - timedelta(hours=2)))
+        for r in s.exec(select(SyncRun).where(SyncRun.finished_at > utc_now() - timedelta(minutes=5))).all():
+            s.delete(r)
+        s.commit()
+    assert asyncio.run(live_scheduler._maybe_sync()) is True            # older than the interval → run
+    st = live_scheduler.status()
+    assert st["interval_hours"] == 1 and st["auto"] is False            # tests run with LIVE_SYNC_AUTO=false
+
+
+def test_scheduler_keep_awake_only_with_public_https_url(monkeypatch):
+    from app.services import live_scheduler
+    monkeypatch.delenv("PUBLIC_API_URL", raising=False)
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert live_scheduler.keep_awake() is False
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://corelink-api.onrender.com")
+    assert live_scheduler.keep_awake() is True
+    monkeypatch.setenv("KEEP_AWAKE", "false")
+    assert live_scheduler.keep_awake() is False

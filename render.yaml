@@ -53,7 +53,11 @@ services:
       - key: DEV_MODE
         value: "false"
       # --- Live jobs & resources (all optional; see DEPLOY.md "Live jobs & resources") ---
-      - key: LIVE_SYNC_TOKEN    # shared secret for the cron-job.org POST /api/internal/live-sync
+      - key: LIVE_SYNC_INTERVAL_HOURS   # built-in automatic sync interval (the API schedules itself)
+        value: "6"
+      - key: KEEP_AWAKE         # API pings its own RENDER_EXTERNAL_URL every 10 min so the free instance stays up
+        value: "true"
+      - key: LIVE_SYNC_TOKEN    # optional: shared secret for an external POST /api/internal/live-sync
         sync: false
       - key: ADZUNA_APP_ID
         sync: false

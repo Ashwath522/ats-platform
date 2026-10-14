@@ -134,6 +134,15 @@ class SmartRecruiters(Provider):
             result.complete_scopes.add(company_id)
         return total or 0
 
+    def scopes(self, settings: dict) -> List[str]:
+        return self.companies(settings)
+
+    async def fetch_scope(self, client: httpx.AsyncClient, settings: dict, scope: str) -> FetchResult:
+        """One company's postings (the sync publishes them before fetching the next company)."""
+        result = FetchResult(complete_scopes=set())
+        await self.fetch_company(client, scope, result)
+        return result
+
     async def fetch(self, client: httpx.AsyncClient, settings: dict) -> FetchResult:
         result = FetchResult(complete_scopes=set())
         sem = asyncio.Semaphore(2)
