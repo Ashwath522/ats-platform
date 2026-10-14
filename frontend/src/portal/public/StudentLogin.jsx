@@ -131,7 +131,7 @@ export default function StudentLogin() {
             </p>
           )}
           {mode === 'forgot' && info?.support_email && <p className="pub-note" style={{ textAlign: 'center', marginTop: 12 }}>No email on file? Write to <a href={`mailto:${info.support_email}`}>{info.support_email}</a>.</p>}
-          <p className="pub-roles"><Link to="/recruiter/login">Recruiter sign in</Link><span aria-hidden="true">·</span><Link to="/">Back to home</Link></p>
+          <p className="pub-roles"><Link to="/recruiter/login">Recruiter sign in</Link><span aria-hidden="true">·</span><Link to="/">Back to home</Link><span aria-hidden="true">·</span><Link to="/privacy">Privacy</Link></p>
         </>
       )}
     </AuthLayout>

@@ -241,7 +241,7 @@ export default function Landing() {
             </ul>
           </div>
         </div>
-        <div className="pub-wrap pub-footer-bottom"><span>© {new Date().getFullYear()} CoreLink</span><span>Built for core engineering careers</span></div>
+        <div className="pub-wrap pub-footer-bottom"><span>© {new Date().getFullYear()} CoreLink</span><span><Link to="/privacy">Privacy</Link> · <Link to="/terms">Terms</Link> · Built for core engineering careers</span></div>
       </footer>
     </div>
   )

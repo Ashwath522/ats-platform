@@ -8,6 +8,8 @@ const Landing = lazy(() => import('./portal/public/Landing.jsx'))
 const StudentLogin = lazy(() => import('./portal/public/StudentLogin.jsx'))
 const RecruiterLogin = lazy(() => import('./portal/public/RecruiterLogin.jsx'))
 const AdminLogin = lazy(() => import('./portal/public/AdminLogin.jsx'))
+const Privacy = lazy(() => import('./portal/public/Legal.jsx').then((m) => ({ default: m.Privacy })))
+const Terms = lazy(() => import('./portal/public/Legal.jsx').then((m) => ({ default: m.Terms })))
 const CandidatePage = lazy(() => import('./pages/CandidatePage.jsx'))
 
 // Student (pages 04–12)
@@ -68,6 +70,8 @@ export default function App() {
           <Routes>
             {/* 01–03 Public */}
             <Route path="/" element={<Landing />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
             <Route path="/ats-check" element={<div className="app-shell"><CandidatePage /></div>} />
             <Route path="/candidate/login" element={<StudentLogin />} />
             <Route path="/recruiter/login" element={<RecruiterLogin />} />

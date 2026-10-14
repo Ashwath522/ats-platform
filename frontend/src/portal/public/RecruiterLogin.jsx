@@ -152,7 +152,7 @@ export default function RecruiterLogin() {
               </p>
             </>
           )}
-          <p className="pub-roles"><Link to="/candidate/login">Student sign in</Link><span aria-hidden="true">·</span><Link to="/">Back to home</Link></p>
+          <p className="pub-roles"><Link to="/candidate/login">Student sign in</Link><span aria-hidden="true">·</span><Link to="/">Back to home</Link><span aria-hidden="true">·</span><Link to="/privacy">Privacy</Link></p>
         </>
       )}
     </AuthLayout>

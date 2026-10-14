@@ -256,3 +256,14 @@
 .pub-or::before, .pub-or::after { content: ''; flex: 1; height: 1px; background: var(--cl-line); }
 .pub-google-btn { display: flex; justify-content: center; min-height: 44px; }
 .pub-google[aria-busy="true"] { opacity: 0.6; pointer-events: none; }
+
+/* Privacy / Terms */
+.pub-legal { min-height: 100vh; background: #f6f8fc; }
+.pub-legal-head { padding: 18px 24px; border-bottom: 1px solid var(--cl-line); background: #fff; }
+.pub-legal-body { max-width: 760px; margin: 0 auto; padding: 36px 20px 64px; color: #24324a; line-height: 1.65; font-size: 15.5px; }
+.pub-legal-body h1 { font-size: 30px; letter-spacing: -0.02em; }
+.pub-legal-body h2 { font-size: 19px; margin-top: 28px !important; }
+.pub-legal-body ul { padding-left: 20px; margin: 8px 0 !important; }
+.pub-legal-body li { margin: 6px 0; }
+.pub-legal-date { color: var(--cl-muted); font-size: 13.5px; }
+.pub-legal-links { margin-top: 32px !important; color: var(--cl-muted); }
