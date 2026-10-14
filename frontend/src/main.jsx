@@ -6,7 +6,12 @@ import { initNativeShell } from './lib/platform.js'
 
 installApiBase()
 initNativeShell()
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
+if ('serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) {
+  // When a new service worker takes over (new deploy), reload once so the page uses the new build.
+  let reloaded = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded) { reloaded = true; window.location.reload() } })
+  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {})
+}
 import './tailwind.css'
 import './styles.css'
 
