@@ -108,3 +108,86 @@ export async function postForm(url, fields) {
   }
   return data
 }
+
+/* ── Sign in with Google ─────────────────────────────────────────────── */
+let gisPromise = null
+function loadGis() {
+  if (window.google?.accounts?.id) return Promise.resolve()
+  if (!gisPromise) {
+    gisPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script')
+      s.src = 'https://accounts.google.com/gsi/client'
+      s.async = true
+      s.defer = true
+      s.onload = () => resolve()
+      s.onerror = () => { gisPromise = null; reject(new Error('Could not load Google sign-in')) }
+      document.head.appendChild(s)
+    })
+  }
+  return gisPromise
+}
+
+let gConfig = null
+async function googleConfig() {
+  if (gConfig) return gConfig
+  try {
+    const r = await fetch(apiUrl('/api/auth/google/config'))
+    gConfig = r.ok ? await r.json() : { enabled: false }
+  } catch { gConfig = { enabled: false } }
+  return gConfig
+}
+
+const isNativeApp = () => !!window.Capacitor?.isNativePlatform?.()
+
+/**
+ * Google's official button. Hidden when the server has no GOOGLE_CLIENT_ID or
+ * inside the native app (Google blocks its sign-in inside app webviews).
+ * onSuccess(data) receives the same token payload as the password logins.
+ */
+export function GoogleSignIn({ role = 'candidate', onSuccess, onError, text = 'continue_with' }) {
+  const box = React.useRef(null)
+  const [ready, setReady] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const handlers = React.useRef({ onSuccess, onError })
+  handlers.current = { onSuccess, onError }
+
+  useEffect(() => {
+    if (isNativeApp()) return undefined
+    let alive = true
+    ;(async () => {
+      const cfg = await googleConfig()
+      if (!alive || !cfg.enabled || !cfg.client_id) return
+      try { await loadGis() } catch (e) { return }
+      if (!alive || !box.current) return
+      window.google.accounts.id.initialize({
+        client_id: cfg.client_id,
+        ux_mode: 'popup',
+        auto_select: false,
+        cancel_on_tap_outside: true,
+        callback: async ({ credential }) => {
+          setBusy(true)
+          try {
+            const r = await fetch(apiUrl('/api/auth/google'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential, role }) })
+            const data = await r.json().catch(() => ({}))
+            if (!r.ok) throw new Error(data.detail || 'Google sign-in failed')
+            handlers.current.onSuccess?.(data)
+          } catch (e) {
+            handlers.current.onError?.(e.message || 'Google sign-in failed')
+          } finally { setBusy(false) }
+        },
+      })
+      const width = Math.min(400, Math.max(220, Math.round(box.current.getBoundingClientRect().width || 320)))
+      window.google.accounts.id.renderButton(box.current, { theme: 'outline', size: 'large', text, shape: 'rectangular', logo_alignment: 'center', width })
+      setReady(true)
+    })()
+    return () => { alive = false }
+  }, [role, text])
+
+  if (isNativeApp()) return null
+  return (
+    <div className={cx('pub-google', !ready && 'pending')} aria-busy={busy}>
+      {ready && <div className="pub-or"><span>or</span></div>}
+      <div ref={box} className="pub-google-btn" />
+    </div>
+  )
+}

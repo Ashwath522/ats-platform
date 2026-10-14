@@ -4,7 +4,7 @@ import { ArrowRight, ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
 import RecruiterAccessRequest from '../../components/RecruiterAccessRequest.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, GoogleSignIn, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
 
 const IMG = '/assets/images/crops/login-recruiter.jpg'
 const COPY = {
@@ -132,6 +132,14 @@ export default function RecruiterLogin() {
               {mode === 'login' ? 'Sign In' : mode === 'forgot' ? 'Send Reset Code' : 'Update Password'}
             </Button>
           </form>
+          {mode === 'login' && (
+            <GoogleSignIn role="recruiter"
+              onSuccess={(data) => {
+                if (data.role === 'admin') { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }
+                else { loginRecruiter(data.access_token, data.email || data.username); navigate('/recruiter/dashboard') }
+              }}
+              onError={(msg) => setError(msg)} />
+          )}
           {mode === 'login' && <p className="pub-switch">Don’t have an account?<button type="button" className="pub-linkbtn" onClick={() => go('request')}>Contact Us</button></p>}
           {mode !== 'login' && (
             <>

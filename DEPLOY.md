@@ -121,3 +121,13 @@ Hygiene rules (backend/app/services/live_sync.py): non-core roles (HR, finance, 
 3. Check **Admin → Live Data → Run history** after the first run. "Sync now" there triggers the same sync manually.
 
 Test locally without network: `cd backend && python scripts/load_live_fixtures.py [--with-doc-samples]` loads the saved fixtures through the real pipeline (dev DB only — doc samples are fictional companies).
+
+
+## Sign in with Google (free)
+
+1. https://console.cloud.google.com → Google Auth Platform → **Clients** → **Create client** → *Web application*.
+2. **Authorized JavaScript origins**: your site (e.g. `https://corelink-pi.vercel.app`) and `http://localhost:5173`. No redirect URIs are needed.
+3. Copy the **Client ID** and set `GOOGLE_CLIENT_ID` on the Render API service, then redeploy. No Vercel change is needed — the login pages read it from `GET /api/auth/google/config`.
+4. Google Auth Platform → **Audience** → **Publish app** (only basic email/profile scopes are used, so no verification review). While it is in *Testing*, only the listed test users can sign in.
+
+Rules: students are created on first Google sign-in; recruiters must already be approved; the admin page only accepts existing admins. The button is hidden inside the native Android/iOS app because Google blocks its sign-in in app webviews.

@@ -249,3 +249,10 @@
 .pub-auth-card.wide { max-width: 940px; }
 .pub-auth-card.wide .rar-fieldset legend { text-transform: uppercase; }
 @media (max-width: 860px) { .pub-auth-side.wide { margin-top: 0; padding-top: 16px; } }
+
+/* Sign in with Google */
+.pub-google.pending { display: none; }
+.pub-or { display: flex; align-items: center; gap: 12px; color: var(--cl-faint); font-size: 13px; margin: 18px 0 14px; }
+.pub-or::before, .pub-or::after { content: ''; flex: 1; height: 1px; background: var(--cl-line); }
+.pub-google-btn { display: flex; justify-content: center; min-height: 44px; }
+.pub-google[aria-busy="true"] { opacity: 0.6; pointer-events: none; }

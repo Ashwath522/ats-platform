@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, GoogleSignIn, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
 
 const IMG = '/assets/images/crops/login-student.jpg'
 const COPY = {
@@ -117,6 +117,11 @@ export default function StudentLogin() {
               {mode === 'login' ? 'Sign In' : mode === 'signup' ? 'Create Account' : mode === 'forgot' ? 'Send Reset Code' : 'Update Password'}
             </Button>
           </form>
+          {(mode === 'login' || mode === 'signup') && (
+            <GoogleSignIn role="candidate" text={mode === 'signup' ? 'signup_with' : 'continue_with'}
+              onSuccess={(data) => { loginCandidate(data.access_token, data.username); navigate('/candidate/feed') }}
+              onError={(msg) => setError(msg)} />
+          )}
           {mode === 'login' && <p className="pub-switch">Don’t have an account?<button type="button" className="pub-linkbtn" onClick={() => go('signup')}>Sign Up</button></p>}
           {mode === 'signup' && <p className="pub-switch">Already have an account?<button type="button" className="pub-linkbtn" onClick={() => go('login')}>Sign In</button></p>}
           {(mode === 'forgot' || mode === 'reset') && (
