@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ArrowRight, Mail, ShieldCheck } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, GoogleSignIn, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
 
 /**
  * Admin sign in (no reference image — same split layout as the recruiter
@@ -59,6 +59,7 @@ export default function AdminLogin() {
         <p className="pub-note">Forgot your password? Another admin can send you a reset link from User Management.</p>
         <Button type="submit" block className="pub-submit" loading={loading} iconRight={ArrowRight}>Sign In</Button>
       </form>
+      <GoogleSignIn role="admin" onSuccess={(data) => { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }} onError={(msg) => setError(msg)} />
       <p className="pub-roles"><Link to="/candidate/login">Student sign in</Link><span aria-hidden="true">·</span><Link to="/recruiter/login">Recruiter sign in</Link><span aria-hidden="true">·</span><Link to="/">Home</Link></p>
     </AuthLayout>
   )

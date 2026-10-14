@@ -27,6 +27,8 @@ spacy
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 groq
 google-generativeai
+google-auth>=2.20      # verifies "Sign in with Google" ID tokens
+requests             # transport for google-auth
 
 # --- Hosting / verification ---
 psycopg2-binary      # PostgreSQL driver (Neon / Render Postgres)
