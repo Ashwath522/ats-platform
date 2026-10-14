@@ -536,3 +536,26 @@ def test_restart_clears_stuck_running_run():
     assert live_sync.is_running()
     assert live_sync.mark_interrupted_runs() >= 1
     assert not live_sync.is_running()
+
+
+def test_arxiv_retries_after_rate_limit(monkeypatch):
+    import asyncio
+    import httpx
+    from app.services.live_sources.arxiv import Arxiv
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, text="slow down")
+        return httpx.Response(200, text=_load("live_resources", "arxiv_feed.xml"))
+
+    p = Arxiv()
+    p.delay = 0
+    monkeypatch.setattr("app.services.live_sources.arxiv.TOPICS", {"mechanical": "abs:test"})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            return await p.fetch(c, {})
+    res = asyncio.run(go())
+    assert res.items and not res.errors and calls["n"] == 2

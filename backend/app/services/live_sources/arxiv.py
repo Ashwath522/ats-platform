@@ -59,20 +59,33 @@ class Arxiv(Provider):
     name = "arxiv"
     kind = "resources"
     label = "arXiv"
-    delay = 3.0
+    delay = 5.0                      # arXiv asks for >= 3 s between calls; shared cloud IPs need more
+    timeout = httpx.Timeout(45.0, connect=10.0)   # arXiv search is often slow
 
     async def fetch(self, client: httpx.AsyncClient, settings: dict) -> FetchResult:
         result = FetchResult()
         for i, (branch, query) in enumerate(TOPICS.items()):
             if i and self.delay:
                 await asyncio.sleep(self.delay)
-            try:
-                r = await client.get(API, params={"search_query": query, "sortBy": "submittedDate", "sortOrder": "descending", "max_results": PER_BRANCH})
-                result.requests += 1
-                r.raise_for_status()
-                result.items.extend(parse_feed(r.text, branch))
-            except Exception as exc:
-                result.errors.append(f"{branch}: {safe_error(exc)}")
+            params = {"search_query": query, "sortBy": "submittedDate", "sortOrder": "descending", "max_results": PER_BRANCH}
+            for attempt in range(3):
+                try:
+                    r = await client.get(API, params=params, timeout=self.timeout)
+                    result.requests += 1
+                    if r.status_code in (429, 503) and attempt < 2:
+                        await asyncio.sleep(self.delay * (attempt + 2))   # back off and retry
+                        continue
+                    r.raise_for_status()
+                    result.items.extend(parse_feed(r.text, branch))
+                    break
+                except httpx.TimeoutException as exc:
+                    if attempt < 2:
+                        await asyncio.sleep(self.delay)
+                        continue
+                    result.errors.append(f"{branch}: {safe_error(exc)}")
+                except Exception as exc:
+                    result.errors.append(f"{branch}: {safe_error(exc)}")
+                    break
         if not result.items and result.errors:
             raise RuntimeError("; ".join(result.errors)[:500])
         return result
