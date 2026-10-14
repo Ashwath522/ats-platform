@@ -49,6 +49,7 @@ const AdminModeration = lazy(() => import('./portal/admin/Moderation.jsx'))
 const AdminReports = lazy(() => import('./portal/admin/Reports.jsx'))
 const AdminSystemSettings = lazy(() => import('./portal/admin/SystemSettings.jsx'))
 const AdminAuditLogs = lazy(() => import('./portal/admin/AuditLogs.jsx'))
+const AdminLiveData = lazy(() => import('./portal/admin/LiveData.jsx'))
 
 function PageFallback() { return <div className="page-skeleton" aria-busy="true" /> }
 
@@ -128,6 +129,7 @@ export default function App() {
               <Route path="reports" element={<AdminReports />} />
               <Route path="settings" element={<AdminSystemSettings />} />
               <Route path="audit-logs" element={<AdminAuditLogs />} />
+              <Route path="live-data" element={<AdminLiveData />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

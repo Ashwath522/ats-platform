@@ -52,6 +52,17 @@ services:
         value: fastembed
       - key: DEV_MODE
         value: "false"
+      # --- Live jobs & resources (all optional; see DEPLOY.md "Live jobs & resources") ---
+      - key: LIVE_SYNC_TOKEN    # shared secret for the cron-job.org POST /api/internal/live-sync
+        sync: false
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: JOOBLE_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
 
   - type: web
     name: corelink-web

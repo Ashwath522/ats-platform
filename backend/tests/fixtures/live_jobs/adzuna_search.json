@@ -1,0 +1,48 @@
+{
+  "__CLASS__": "Adzuna::API::Response::JobSearchResults",
+  "count": 3,
+  "mean": 612345.5,
+  "results": [
+    {
+      "__CLASS__": "Adzuna::API::Response::Job",
+      "id": "4891234567",
+      "adref": "eyJhbGciOiJIUzI1NiJ9.eyJpIjoiNDg5MTIzNDU2NyJ9.x",
+      "title": "<strong>Mechanical</strong> Design Engineer - Gearbox",
+      "description": "Design and validate gearbox housings using SolidWorks and ANSYS. GD&amp;T, tolerance analysis and DFM reviews with the plant…",
+      "created": "2026-10-11T09:12:00Z",
+      "redirect_url": "https://www.adzuna.in/land/ad/4891234567?se=abc&utm_medium=api&utm_source=00000000&v=DEADBEEF",
+      "company": {"__CLASS__": "Adzuna::API::Response::Company", "display_name": "Precision Drives Pvt Ltd"},
+      "location": {"__CLASS__": "Adzuna::API::Response::Location", "display_name": "Pune, Maharashtra", "area": ["India", "Maharashtra", "Pune"]},
+      "category": {"__CLASS__": "Adzuna::API::Response::Category", "tag": "engineering-jobs", "label": "Engineering Jobs"},
+      "salary_min": 450000, "salary_max": 650000, "salary_is_predicted": "0",
+      "contract_time": "full_time", "contract_type": "permanent",
+      "latitude": 18.52, "longitude": 73.85
+    },
+    {
+      "__CLASS__": "Adzuna::API::Response::Job",
+      "id": "4891234568",
+      "title": "HR Executive - Plant",
+      "description": "Handle payroll, onboarding and employee relations at our manufacturing plant.",
+      "created": "2026-10-10T06:00:00Z",
+      "redirect_url": "https://www.adzuna.in/land/ad/4891234568?se=abc&v=1",
+      "company": {"display_name": "Precision Drives Pvt Ltd"},
+      "location": {"display_name": "Pune, Maharashtra", "area": ["India", "Maharashtra", "Pune"]},
+      "category": {"tag": "hr-jobs", "label": "HR & Recruitment Jobs"},
+      "salary_min": 300000, "salary_max": 300000, "salary_is_predicted": "1",
+      "contract_time": "full_time"
+    },
+    {
+      "__CLASS__": "Adzuna::API::Response::Job",
+      "id": "4891234569",
+      "title": "Graduate Engineer Trainee - Civil",
+      "description": "Site supervision, quantity surveying and AutoCAD drawings for highway projects. Freshers (B.E. Civil) welcome.",
+      "created": "2026-10-12T10:30:00Z",
+      "redirect_url": "https://www.adzuna.in/land/ad/4891234569?se=abc&v=2",
+      "company": {"display_name": "Highway Infra Builders"},
+      "location": {"display_name": "Hyderabad, Telangana", "area": ["India", "Telangana", "Hyderabad"]},
+      "category": {"tag": "engineering-jobs", "label": "Engineering Jobs"},
+      "salary_min": 360000, "salary_max": 360000, "salary_is_predicted": "1",
+      "contract_time": "full_time", "contract_type": "permanent"
+    }
+  ]
+}

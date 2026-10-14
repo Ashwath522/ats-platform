@@ -1,6 +1,6 @@
 import React from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { Home, Users, Building2, Briefcase, FileText, CalendarDays, Handshake, ShieldCheck, BarChart3, Settings, ScrollText } from 'lucide-react'
+import { Home, Users, Building2, Briefcase, FileText, CalendarDays, Handshake, ShieldCheck, BarChart3, Settings, ScrollText, Radio } from 'lucide-react'
 import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
 
@@ -14,6 +14,7 @@ export const ADMIN_NAV = [
   { to: '/admin/offers', label: 'Offers & Hiring', icon: Handshake },
   { to: '/admin/moderation', label: 'Content Moderation', icon: ShieldCheck },
   { to: '/admin/reports', label: 'Reports & Analytics', icon: BarChart3 },
+  { to: '/admin/live-data', label: 'Live Data', icon: Radio },
   { to: '/admin/settings', label: 'System Settings', icon: Settings },
   { to: '/admin/audit-logs', label: 'Audit Logs', icon: ScrollText },
 ]

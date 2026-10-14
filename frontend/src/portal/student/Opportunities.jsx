@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Briefcase, GraduationCap, Clock, Building, Globe, MapPin, ArrowRight, Filter, Search, List, LayoutGrid, Bookmark, BrainCircuit,
-  BadgeIndianRupee, Gauge, Layers, X,
+  BadgeIndianRupee, Gauge, Layers, X, ExternalLink, Radio,
 } from 'lucide-react'
 import { Alert, Button, Card, EmptyState, Field, Hero, Input, LogoTile, Pagination, Segmented, Select, Skeleton, Tabs, ViewAll, Badge } from '../../ui/index.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { BRANCHES } from '../../branding/branches.js'
 import { useStudent } from './StudentShell.jsx'
 import { BookmarkButton, JobDetailsModal, JobTags, daysAgoLabel, fmtSalary, useSavedJobs } from './components/shared.jsx'
+import { LiveBadge, freshness, useExternalApply } from './components/liveJobs.jsx'
 import './components/student.css'
 
 const TYPE_TABS = [
@@ -19,7 +20,8 @@ const TYPE_TABS = [
   { id: 'onsite', label: 'On-site', icon: MapPin },
   { id: 'remote', label: 'Remote', icon: Globe },
 ]
-const EMPTY = { q: '', location: '', job_type: '', experience: '', branch: '', salary_min: '', remote: '', near: '' }
+const EMPTY = { q: '', location: '', job_type: '', experience: '', branch: '', salary_min: '', remote: '', near: '', origin: '' }
+const ORIGIN = { corelink: 'CoreLink jobs', live: 'Live company listings' }
 const SALARY = [{ value: '300000', label: '₹3 LPA +' }, { value: '500000', label: '₹5 LPA +' }, { value: '800000', label: '₹8 LPA +' }, { value: '1200000', label: '₹12 LPA +' }]
 const EXP = { fresher: 'Fresher', '0-2': '0–2 years', '2-5': '2–5 years', '5+': '5+ years' }
 
@@ -27,7 +29,7 @@ export default function Opportunities() {
   const api = useApi('candidate')
   const { branch, profile } = useStudent()
   const [params, setParams] = useSearchParams()
-  const initial = useMemo(() => ({ ...EMPTY, q: params.get('q') || '', remote: params.get('remote') ? 'remote' : '', near: params.get('near') ? '1' : '' }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => ({ ...EMPTY, q: params.get('q') || '', remote: params.get('remote') ? 'remote' : '', near: params.get('near') ? '1' : '', origin: ['live', 'corelink'].includes(params.get('origin')) ? params.get('origin') : '' }), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [draft, setDraft] = useState(initial)
   const [filters, setFilters] = useState(initial)
   const [tab, setTab] = useState(params.get('type') || 'all')
@@ -37,6 +39,7 @@ export default function Opportunities() {
   const [savedOnly, setSavedOnly] = useState(false)
   const [openJob, setOpenJob] = useState(null)
   const savedJobs = useSavedJobs()
+  const ext = useExternalApply({ onChange: () => q.reload() })
 
   // Header search (?q=) while already on this page
   useEffect(() => {
@@ -78,7 +81,10 @@ export default function Opportunities() {
           </div></Card>
 
           <div className="cl-row cl-wrap" style={{ justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: 20 }}>{countLabel}</h2>
+            <div className="cl-col" style={{ gap: 2 }}>
+              <h2 style={{ fontSize: 20 }}>{countLabel}</h2>
+              {data?.origin_counts?.live > 0 && <span className="st-fresh cl-row" style={{ gap: 5 }}><Radio size={13} color="#0f766e" />{data.origin_counts.live} live listing{data.origin_counts.live === 1 ? '' : 's'} from official company career sites</span>}
+            </div>
             <div className="cl-row cl-wrap">
               <label className="cl-row" style={{ gap: 6, fontSize: 13.5 }}>
                 <span className="cl-muted">Sort by:</span>
@@ -91,7 +97,7 @@ export default function Opportunities() {
 
           {(active.length > 0 || savedOnly) && (
             <div className="cl-chips">
-              {active.map(([k, v]) => <span key={k} className="cl-chip blue">{k === 'salary_min' ? `₹${v / 100000}+ LPA` : k === 'near' ? 'Near me' : k === 'experience' ? EXP[v] || v : k === 'branch' ? BRANCHES.find((b) => b.id === v)?.label || v : v}
+              {active.map(([k, v]) => <span key={k} className="cl-chip blue">{k === 'salary_min' ? `₹${v / 100000}+ LPA` : k === 'near' ? 'Near me' : k === 'experience' ? EXP[v] || v : k === 'branch' ? BRANCHES.find((b) => b.id === v)?.label || v : k === 'origin' ? ORIGIN[v] || v : v}
                 <button type="button" aria-label={`Remove ${k} filter`} onClick={() => { const n = { ...filters, [k]: '' }; setFilters(n); setDraft(n); setPage(1); if (k === 'q') setParams({}, { replace: true }) }}><X size={13} /></button></span>)}
               {savedOnly && <span className="cl-chip blue">Saved jobs<button type="button" aria-label="Show all jobs" onClick={() => setSavedOnly(false)}><X size={13} /></button></span>}
               <button className="cl-link" onClick={clear}>Clear all</button>
@@ -104,7 +110,7 @@ export default function Opportunities() {
               <Card><EmptyState icon={Briefcase} title="No opportunities match" text="Try removing a filter or searching for a different skill." action={<Button variant="outline" onClick={clear}>Clear filters</Button>} /></Card>
             ) : (
               <div className={view === 'grid' ? 'st-job-grid' : 'cl-col'} style={{ gap: 12, opacity: q.loading ? 0.6 : 1 }}>
-                {data?.items.map((j) => <JobRow key={j.id} job={j} grid={view === 'grid'} saved={savedJobs.saved.has(j.id)} onSave={() => savedJobs.toggle(j.id)} onOpen={() => setOpenJob(j.id)} />)}
+                {data?.items.map((j) => <JobRow key={j.id} job={j} grid={view === 'grid'} saved={savedJobs.saved.has(j.id)} onSave={() => savedJobs.toggle(j.id)} onOpen={() => setOpenJob(j.id)} onApplyExternal={() => ext.apply(j)} />)}
               </div>
             )}
           {data && data.total > 0 && <Pagination page={data.page} pages={data.pages} total={data.total} pageSize={data.page_size} setPage={(p) => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }) }} noun="opportunities" />}
@@ -118,6 +124,7 @@ export default function Opportunities() {
               <div className="st-filter-row"><Briefcase size={18} /><Field label="Job Type"><Select value={draft.job_type} onChange={setD('job_type')} placeholder="All Types" options={[{ value: 'internship', label: 'Internship' }, { value: 'full-time', label: 'Full Time' }, { value: 'part-time', label: 'Part Time' }, { value: 'apprenticeship', label: 'Apprenticeship' }]} /></Field></div>
               <div className="st-filter-row"><Gauge size={18} /><Field label="Experience Level"><Select value={draft.experience} onChange={setD('experience')} placeholder="All Levels" options={Object.entries(EXP).map(([value, label]) => ({ value, label }))} /></Field></div>
               <div className="st-filter-row"><Layers size={18} /><Field label="Domain / Role"><Select value={draft.branch} onChange={setD('branch')} placeholder="All Roles" options={BRANCHES.map((b) => ({ value: b.id, label: b.long }))} /></Field></div>
+              <div className="st-filter-row"><Radio size={18} /><Field label="Source"><Select value={draft.origin} onChange={setD('origin')} placeholder="All sources" options={Object.entries(ORIGIN).map(([value, label]) => ({ value, label }))} /></Field></div>
               <div className="st-filter-row"><BadgeIndianRupee size={18} /><Field label="Salary (Optional)"><Select value={draft.salary_min} onChange={setD('salary_min')} placeholder="Any" options={SALARY} /></Field></div>
               <label className="cl-row" style={{ fontSize: 13.5 }}><input type="checkbox" className="cl-check" checked={draft.remote === 'remote'} onChange={(e) => setDraft((d) => ({ ...d, remote: e.target.checked ? 'remote' : '' }))} />Remote only</label>
               <label className="cl-row" style={{ fontSize: 13.5 }}><input type="checkbox" className="cl-check" checked={draft.near === '1'} onChange={(e) => setDraft((d) => ({ ...d, near: e.target.checked ? '1' : '' }))} />Near me {profile?.location_text ? `(${profile.location_text.split(',')[0]})` : ''}</label>
@@ -133,7 +140,7 @@ export default function Opportunities() {
                     <button type="button" className="st-reset-btn" style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0 }} onClick={() => setOpenJob(s.job_id)}>
                       <strong className="cl-ellipsis" style={{ display: 'block', color: 'var(--cl-ink)', fontSize: 14 }}>{s.title}</strong>
                       <small className="cl-muted" style={{ display: 'block' }}>{s.company}</small>
-                      <small className="cl-muted cl-ellipsis" style={{ display: 'block' }}><MapPin size={12} /> {s.location}{s.status !== 'open' ? ' · closed' : ''}</small>
+                      <small className="cl-muted cl-ellipsis" style={{ display: 'block' }}><MapPin size={12} /> {s.location}{s.status !== 'open' ? ' · closed' : s.external ? ' · live listing' : ''}</small>
                     </button>
                     <BookmarkButton on onClick={() => savedJobs.toggle(s.job_id)} />
                   </div>
@@ -155,11 +162,12 @@ export default function Opportunities() {
         </div>
       </div>
       <JobDetailsModal jobId={openJob} onClose={() => setOpenJob(null)} saved={openJob && savedJobs.saved.has(openJob)} onToggleSave={savedJobs.toggle} onApplied={() => q.reload()} />
+      {!openJob && ext.prompt}
     </div>
   )
 }
 
-function JobRow({ job, grid, saved, onSave, onOpen }) {
+function JobRow({ job, grid, saved, onSave, onOpen, onApplyExternal }) {
   const salary = fmtSalary(job)
   return (
     <article className={`cl-card st-job ${grid ? 'st-job-card' : ''}`} style={grid ? { gridTemplateColumns: '56px minmax(0,1fr)' } : undefined}>
@@ -173,14 +181,25 @@ function JobRow({ job, grid, saved, onSave, onOpen }) {
           <span className="cl-meta"><span><MapPin size={14} />{job.location || '—'}</span>{salary && <span>{salary}</span>}</span>
           <JobTags job={job} max={grid ? 3 : 6} />
         </div>
+        {job.external && (
+          <div className="cl-row cl-wrap" style={{ gap: 8 }}>
+            <LiveBadge job={job} />
+            <span className="st-fresh">{freshness(job)}</span>
+          </div>
+        )}
       </div>
       <div className="st-job-side" style={grid ? { gridColumn: '1 / -1' } : undefined}>
         <div className="cl-row" style={{ gap: 6 }}>
-          {job.applied ? <Badge tone="blue">Applied</Badge> : <span className="st-posted">{daysAgoLabel(job.days_ago)}</span>}
+          {job.applied ? <Badge tone="blue">Applied</Badge> : !job.external && <span className="st-posted">{daysAgoLabel(job.days_ago)}</span>}
           <BookmarkButton on={saved} onClick={onSave} />
         </div>
         <span className="st-match" title={job.match_source === 'ats' ? 'Your ATS score for this job' : 'Skill overlap with your profile + branch match'}>{job.match}% match</span>
-        <Button variant="outline" size="sm" iconRight={ArrowRight} onClick={onOpen}>View Details</Button>
+        {job.external ? (
+          <div className="cl-row cl-wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>
+            <Button variant="ghost" size="sm" onClick={onOpen}>Details</Button>
+            <Button size="sm" iconRight={ExternalLink} onClick={onApplyExternal} aria-label={`Apply for ${job.title} on ${job.company}'s site (opens in a new tab)`}>Apply on company site</Button>
+          </div>
+        ) : <Button variant="outline" size="sm" iconRight={ArrowRight} onClick={onOpen}>View Details</Button>}
       </div>
     </article>
   )

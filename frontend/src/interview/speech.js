@@ -64,9 +64,31 @@ export function ttsSupported() {
 }
 
 /**
+ * iOS Safari / WKWebView only allow speech after a user gesture. Call this
+ * synchronously inside a tap/click handler: speaking a silent utterance
+ * "unlocks" speechSynthesis for the rest of the page's life.
+ */
+export function unlockWebSpeech() {
+  if (isNative || typeof window === 'undefined' || !window.speechSynthesis) return
+  try {
+    const u = new SpeechSynthesisUtterance(' ')
+    u.volume = 0
+    window.speechSynthesis.speak(u)
+  } catch (e) { /* ignore */ }
+}
+
+/**
  * Sequential sentence speaker.
- * callbacks: onSpeakStart(), onIdle(), onWord({word, charIndex, text, est}),
- *            onFirstAudio(ms since first enqueue)
+ * callbacks:
+ *   onSpeakStart(text, meta)                 – an utterance started (legacy)
+ *   onUtterStart(text, meta, {native, rate}) – audio starts (drives lip sync)
+ *   onBoundary(charIndex, text)              – Web Speech word boundary (re-sync)
+ *   onUtterEnd(text, meta)                   – utterance finished
+ *   onDrain()                                – queue empty but producer still open
+ *   onIdle()                                 – queue empty and producer closed
+ *   onFirstAudio(ms since first enqueue)
+ *   onBlocked()                              – first speech never started (iOS autoplay) → ask for a tap, then unblock()
+ * Items can carry metadata: enqueue(text, { filler: true }).
  */
 export class SpeechQueue {
   constructor({ rate = 1.04, pitch = 1.0, lang = 'en-US', ...callbacks } = {}) {
@@ -78,6 +100,8 @@ export class SpeechQueue {
     this.speaking = false
     this.closed = true // true when the producer has finished sending text
     this.cancelled = false
+    this.blocked = false
+    this._everStarted = false
     this._firstEnqueueAt = null
     this._keepAlive = null
   }
@@ -90,30 +114,49 @@ export class SpeechQueue {
     this._firstEnqueueAt = null
   }
 
-  enqueue(sentence) {
+  enqueue(sentence, meta = {}) {
     const text = (sentence || '').trim()
     if (!text || this.cancelled) return
     if (this._firstEnqueueAt == null) this._firstEnqueueAt = performance.now()
-    this.queue.push(text)
-    if (!this.speaking) this._next()
+    this.queue.push({ text, meta })
+    if (!this.speaking && !this.blocked) this._next()
   }
 
   /** Producer is done; when the queue drains, onIdle fires. */
   end() {
     this.closed = true
-    if (!this.speaking && this.queue.length === 0) this._idle()
+    if (!this.speaking && this.queue.length === 0 && !this.blocked) this._idle()
+  }
+
+  /** True while something is being spoken or waiting to be spoken. */
+  busy() {
+    return this.speaking || this.queue.length > 0 || this.blocked
   }
 
   cancel() {
     this.cancelled = true
     this.queue = []
     this.speaking = false
+    this.blocked = false
     clearInterval(this._keepAlive)
+    if (this._current) {
+      const cur = this._current
+      this._current = null
+      if (this.cb.onUtterEnd) this.cb.onUtterEnd(cur.text, cur.meta)
+    }
     if (isNative) {
       import('@capacitor-community/text-to-speech').then(({ TextToSpeech }) => TextToSpeech.stop()).catch(() => {})
     } else if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel()
     }
+  }
+
+  /** After the user tapped "Tap to hear Aria": unlock audio and continue. Call from the tap handler. */
+  unblock() {
+    unlockWebSpeech()
+    if (!this.blocked) return
+    this.blocked = false
+    if (!this.speaking) this._next()
   }
 
   _idle() {
@@ -122,35 +165,55 @@ export class SpeechQueue {
   }
 
   async _next() {
-    if (this.cancelled) return
-    const text = this.queue.shift()
-    if (!text) {
+    if (this.cancelled || this.blocked) return
+    const item = this.queue.shift()
+    if (!item) {
       this.speaking = false
       if (this.closed) this._idle()
+      else if (this.cb.onDrain) this.cb.onDrain()
       return
     }
     this.speaking = true
-    const markStart = () => {
+    const { text, meta } = item
+    const markStart = (native) => {
+      this._everStarted = true
+      this._current = item
       if (this._firstEnqueueAt != null && this.cb.onFirstAudio) {
         this.cb.onFirstAudio(Math.round(performance.now() - this._firstEnqueueAt))
         this._firstEnqueueAt = null
       }
-      if (this.cb.onSpeakStart) this.cb.onSpeakStart(text)
+      if (this.cb.onSpeakStart) this.cb.onSpeakStart(text, meta)
+      if (this.cb.onUtterStart) this.cb.onUtterStart(text, meta, { native, rate: this.rate })
     }
+    const markEnd = () => {
+      if (this._current !== item) return
+      this._current = null
+      if (this.cb.onUtterEnd) this.cb.onUtterEnd(text, meta)
+    }
+    let res
     try {
-      if (isNative) await this._speakNative(text, markStart)
-      else await this._speakWeb(text, markStart)
+      if (isNative) res = await this._speakNative(text, markStart)
+      else res = await this._speakWeb(text, markStart)
     } catch (e) {
       // Speech failed (no voices, blocked autoplay…) – keep the flow going.
       if (this.cb.onError) this.cb.onError(e)
+    }
+    markEnd()
+    if (res === 'blocked' && !this.cancelled) {
+      this.queue.unshift(item)
+      this.speaking = false
+      this.blocked = true
+      if (this.cb.onBlocked) this.cb.onBlocked()
+      return
     }
     if (!this.cancelled) this._next()
   }
 
   _speakNative(text, markStart) {
+    // Native TTS has no word-boundary events: lip sync runs on an estimate
+    // from text length + rate, anchored to this start and the end callback.
     return import('@capacitor-community/text-to-speech').then(async ({ TextToSpeech }) => {
-      markStart()
-      this._simulateWords(text)
+      markStart(true)
       await TextToSpeech.speak({
         text,
         lang: this.lang,
@@ -159,25 +222,7 @@ export class SpeechQueue {
         volume: 1.0,
         category: 'playback',
       })
-      clearInterval(this._wordTimer)
     })
-  }
-
-  _simulateWords(text) {
-    // Native TTS has no word-boundary events → estimate timing (~2.6 words/s).
-    clearInterval(this._wordTimer)
-    const words = text.split(/\s+/)
-    let i = 0
-    let charIndex = 0
-    const per = 380 / this.rate
-    const tick = () => {
-      if (i >= words.length || this.cancelled) return clearInterval(this._wordTimer)
-      const w = words[i++]
-      if (this.cb.onWord) this.cb.onWord({ word: w, charIndex, text, est: per })
-      charIndex += w.length + 1
-    }
-    tick()
-    this._wordTimer = setInterval(tick, per)
   }
 
   async _speakWeb(text, markStart) {
@@ -189,30 +234,33 @@ export class SpeechQueue {
       u.lang = (voice && voice.lang) || this.lang
       u.rate = this.rate
       u.pitch = this.pitch
-      let gotBoundary = false
+      let started = false
       let done = false
-      const finish = () => {
+      const finish = (why) => {
         if (done) return
         done = true
-        clearInterval(this._wordTimer)
         clearTimeout(safety)
-        resolve()
+        clearTimeout(startGuard)
+        resolve(why)
       }
       u.onstart = () => {
-        markStart()
-        // Some voices (e.g. Google network voices) never fire boundary events.
-        setTimeout(() => { if (!gotBoundary && !done) this._simulateWords(text) }, 350)
+        started = true
+        markStart(false)
       }
       u.onboundary = (ev) => {
         if (ev.name && ev.name !== 'word') return
-        gotBoundary = true
-        const word = text.slice(ev.charIndex).split(/\s+/)[0] || ''
-        if (this.cb.onWord) this.cb.onWord({ word, charIndex: ev.charIndex, text, est: 300 / this.rate })
+        if (!started) { started = true; markStart(false) }
+        if (this.cb.onBoundary) this.cb.onBoundary(ev.charIndex, text)
       }
-      u.onend = finish
-      u.onerror = finish
+      u.onend = () => finish('end')
+      u.onerror = (ev) => finish(ev && ev.error === 'not-allowed' && !this._everStarted ? 'blocked' : 'error')
       // Safety net: Chrome occasionally never fires onend.
-      const safety = setTimeout(finish, 2500 + text.length * 95)
+      const safety = setTimeout(() => finish('timeout'), 2500 + text.length * 95)
+      // Autoplay guard: if the very first utterance never starts (iOS without a
+      // user gesture), report "blocked" so the UI can ask for a tap.
+      const startGuard = !this._everStarted
+        ? setTimeout(() => { if (!started && !synth.speaking) { synth.cancel(); finish('blocked') } }, 3500)
+        : null
       synth.speak(u)
       // Chrome pauses long speech in background tabs; nudge it.
       clearInterval(this._keepAlive)

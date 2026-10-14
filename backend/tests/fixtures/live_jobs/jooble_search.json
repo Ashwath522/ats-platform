@@ -1,0 +1,41 @@
+{
+  "totalCount": 3,
+  "jobs": [
+    {
+      "title": "Embedded Firmware Engineer (ARM Cortex)",
+      "location": "Bengaluru, Karnataka",
+      "snippet": "&nbsp;...develop <b>embedded</b> C firmware for ARM Cortex microcontrollers, PCB bring-up, CAN and SPI drivers...&nbsp;",
+      "salary": "₹6,00,000 - ₹9,00,000",
+      "source": "company careers page",
+      "type": "Full-time",
+      "link": "https://jooble.org/desc/-5212345678901234567?ckey=embedded+engineer&rgn=-1&pos=1&elckey=1&p=1&sid=1&jobAge=50&relb=100&brelb=100&bscr=1&scr=1&premium=0",
+      "company": "Sensei Electronics",
+      "updated": "2026-10-12T00:00:00.0000000",
+      "id": -5212345678901234567
+    },
+    {
+      "title": "Senior Java Developer",
+      "location": "Bengaluru, Karnataka",
+      "snippet": "Spring Boot microservices, Kafka, AWS.",
+      "salary": "",
+      "source": "company careers page",
+      "type": "Full-time",
+      "link": "https://jooble.org/desc/7212345678901234567?ckey=embedded+engineer",
+      "company": "Cloudy Apps",
+      "updated": "2026-10-12T00:00:00.0000000",
+      "id": 7212345678901234567
+    },
+    {
+      "title": "Electrical Engineer - Substation",
+      "location": "Chennai, Tamil Nadu",
+      "snippet": "Switchgear, relay coordination and transformer testing for 220 kV substations.",
+      "salary": "₹30,000 per month",
+      "source": "company careers page",
+      "type": "Full-time",
+      "link": "http://example-redirector.com/job/123",
+      "company": "Grid Power Ltd",
+      "updated": "2026-10-11T00:00:00.0000000",
+      "id": 1234
+    }
+  ]
+}

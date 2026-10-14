@@ -18,7 +18,7 @@ from .db import init_db, engine
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, recruiter_profile, admin, interview
-from .api import student_portal, recruiter_portal, hiring, admin_portal, notifications
+from .api import student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data
 from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
@@ -29,6 +29,11 @@ logger = logging.getLogger("ats-platform")
 async def lifespan(app: FastAPI):
     init_db()
     auth.ensure_admin_user()
+    try:
+        from .services.live_sync import mark_interrupted_runs
+        mark_interrupted_runs()
+    except Exception:  # never block startup on bookkeeping
+        logger.exception("[STARTUP] could not reset interrupted live-sync runs")
 
     # Log database configuration
     db_type = "PostgreSQL" if "postgres" in engine.url.drivername else "SQLite"
@@ -99,7 +104,7 @@ app.include_router(recruiter_jobs.router)
 app.include_router(recruiter_profile.router)
 app.include_router(admin.router)
 app.include_router(interview.router)
-for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications):
+for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data):
     app.include_router(_r.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix

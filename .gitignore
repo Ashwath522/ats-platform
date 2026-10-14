@@ -28,3 +28,5 @@ backend/media/
 backend/data_test/
 backend/server.log
 frontend/.env.mobile
+.vercel
+.env*

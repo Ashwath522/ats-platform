@@ -11,6 +11,7 @@ import { useApi } from '../../ui/useApi.js'
 import { BRANCHES } from '../../branding/branches.js'
 import { useStudent } from './StudentShell.jsx'
 import { BranchIcon } from './components/shared.jsx'
+import LiveResources from './components/liveResources.jsx'
 import {
   CATALOGUE, CATEGORIES, CATEGORY_LABEL, FORMAT_LABEL, SAMPLE_POPULARITY, branchLabel, fmtCount, outlineMarkdown, searchLinks, thumbFor,
 } from './components/resourceCatalog.js'
@@ -153,6 +154,11 @@ export default function Resources() {
               })}
             </div>
           </Card>
+
+          {tab !== 'saved' && !query && (
+            <LiveResources branchId={activeBranch === 'any' ? 'all' : activeBranch}
+              branchLabel={activeBranch === 'any' ? 'all branches' : branchLabel(activeBranch)} />
+          )}
 
           {tab === 'all' && !query && featured.length > 0 && (
             <Card title={<><Star size={20} style={{ color: '#f5a524' }} />Featured Resources <DemoTag title="Popularity counts are illustrative until a resources API exists" /></>} action={<ViewAll onClick={() => setTab('study')} />}>

@@ -1,0 +1,29 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://boards.greenhouse.io/exampleaero/jobs/4012345",
+      "data_compliance": [],
+      "internal_job_id": 3012345,
+      "location": {"name": "Bengaluru, India"},
+      "metadata": null,
+      "id": 4012345,
+      "updated_at": "2026-10-09T10:15:00-04:00",
+      "first_published": "2026-10-05T08:00:00-04:00",
+      "requisition_id": "AE-221",
+      "title": "Aerospace Structures Engineer",
+      "content": "&lt;p&gt;Analyse &lt;strong&gt;aircraft structures&lt;/strong&gt; with FEA and composite materials.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Airworthiness documentation&lt;/li&gt;&lt;/ul&gt;",
+      "departments": [{"id": 1, "name": "Engineering"}],
+      "offices": [{"id": 2, "name": "Bengaluru", "location": "Bengaluru, India"}]
+    },
+    {
+      "absolute_url": "https://boards.greenhouse.io/exampleaero/jobs/4012346",
+      "location": {"name": "Seattle, WA"},
+      "id": 4012346,
+      "updated_at": "2026-10-09T10:15:00-04:00",
+      "title": "Propulsion Engineer",
+      "content": "&lt;p&gt;Gas turbine engines.&lt;/p&gt;",
+      "departments": [], "offices": []
+    }
+  ],
+  "meta": {"total": 2}
+}

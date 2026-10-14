@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import inspect, text
+from sqlalchemy import UniqueConstraint, inspect, text
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,10 +19,37 @@ def utc_now() -> datetime:
     datetime, which breaks comparisons against the naive ones already stored."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+def _clean_database_url(raw: Optional[str]) -> Optional[str]:
+    """Normalise a DATABASE_URL pasted into a hosting dashboard.
+
+    Tolerates the usual copy/paste mistakes (surrounding quotes or spaces, a
+    leading ``DATABASE_URL=`` or ``psql``, line breaks, ``postgres://``
+    scheme) and adds ``sslmode=require`` for hosted Postgres. Raises a clear
+    error - without echoing the password - when the value still isn't a
+    usable Postgres URL (e.g. the ``[YOUR-PASSWORD]`` placeholder was left in).
+    """
+    if not raw:
+        return None
+    url = "".join(raw.split())  # drop spaces / line breaks anywhere
+    for prefix in ("DATABASE_URL=", "psql"):
+        if url.startswith(prefix):
+            url = url[len(prefix):]
+    url = url.strip("'\"<>\\")
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if not url.startswith(("postgresql://", "postgresql+psycopg2://", "sqlite:")):
+        raise RuntimeError("DATABASE_URL must start with postgresql:// - copy the full connection string from your database provider")
+    if "[YOUR-PASSWORD]" in url or "YOUR-PASSWORD" in url:
+        raise RuntimeError("DATABASE_URL still contains the [YOUR-PASSWORD] placeholder - replace it with the real (URL-encoded) database password")
+    host_part = url.split("@")[-1]
+    if url.startswith("postgresql") and "sslmode=" not in url and not host_part.startswith(("localhost", "127.0.0.1")):
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    return url
+
+
+DATABASE_URL = _clean_database_url(os.environ.get("DATABASE_URL"))
+_IS_POOLER = bool(DATABASE_URL and "pooler.supabase.com" in DATABASE_URL)
 if DATABASE_URL:
-    if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
     # pool_pre_ping/pool_recycle: serverless Postgres (Neon) suspends idle
     # compute and drops connections; without these the first request after
     # idle fails with "SSL connection has been closed unexpectedly".
@@ -31,8 +58,10 @@ if DATABASE_URL:
         echo=False,
         pool_pre_ping=True,
         pool_recycle=280,
-        pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),
-        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "5")),
+        # Supabase's free session pooler allows only a few client
+        # connections, so keep the pool small there.
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "3" if _IS_POOLER else "5")),
+        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "2" if _IS_POOLER else "5")),
     )
 else:
     DB_PATH = os.path.join(DATA_DIR, "ats.db")
@@ -520,6 +549,93 @@ class ContentFlag(SQLModel, table=True):
     reported_by: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     resolved_at: Optional[datetime] = None
+
+
+
+# ─── Live external data (official job APIs + learning resources) ─────────────
+
+class ExternalJob(SQLModel, table=True):
+    """A job listing pulled from an official, ToS-compliant API (SmartRecruiters,
+    Adzuna, Jooble, Greenhouse, Lever). Students apply on the company site."""
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_externaljob_source_extid"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source: str = Field(index=True)            # smartrecruiters | adzuna | jooble | greenhouse | lever
+    external_id: str = Field(index=True)
+    company_name: str = ""
+    company_slug: Optional[str] = Field(default=None, index=True)
+    title: str = ""
+    description_text: str = ""                 # cleaned from HTML, max 8000 chars
+    location_text: str = ""
+    city: Optional[str] = None
+    country: Optional[str] = None
+    remote_type: Optional[str] = None          # onsite | remote | hybrid
+    job_type: Optional[str] = None             # internship | full-time | part-time | apprenticeship
+    experience_level: Optional[str] = None     # fresher | 0-2 | 2-5 | 5+
+    branch: Optional[str] = Field(default=None, index=True)
+    skills_json: str = "[]"
+    apply_url: str = ""
+    posting_url: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    posted_at: Optional[datetime] = Field(default=None, index=True)
+    first_seen_at: datetime = Field(default_factory=utc_now)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+    last_checked_at: datetime = Field(default_factory=utc_now)
+    status: str = Field(default="active", index=True)   # active | expired | hidden
+    miss_count: int = 0
+    source_version: Optional[str] = None       # provider's change marker (e.g. releasedDate)
+    dedupe_key: Optional[str] = Field(default=None, index=True)
+
+
+class LiveResource(SQLModel, table=True):
+    """Fresh learning material per branch: arXiv papers, YouTube lectures and
+    admin-uploaded notes (PDF stored via media/MediaBlob)."""
+    __table_args__ = (UniqueConstraint("source", "url", name="uq_liveresource_source_url"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    branch: str = Field(index=True)            # one of the 8 core branches, or "all"
+    kind: str = Field(default="article", index=True)   # paper | video | article | notes | course
+    title: str
+    url: Optional[str] = None
+    media_path: Optional[str] = None
+    source: str = Field(default="admin", index=True)   # arxiv | youtube | admin
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    published_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    created_by: Optional[str] = None
+    status: str = Field(default="active", index=True)  # active | hidden
+
+
+class SyncRun(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)              # jobs | resources
+    source: str = Field(index=True)
+    started_at: datetime = Field(default_factory=utc_now, index=True)
+    finished_at: Optional[datetime] = None
+    status: str = "running"                    # running | ok | error | skipped
+    fetched: int = 0
+    added: int = 0
+    updated: int = 0
+    expired: int = 0
+    error: Optional[str] = None
+    triggered_by: Optional[str] = None
+
+
+class ExternalApplicationLog(SQLModel, table=True):
+    """A student's click-out / self-reported application on a company site."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(index=True)
+    external_job_id: int = Field(index=True)
+    action: str = Field(index=True)            # clicked | applied
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SavedExternalJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(index=True)
+    external_job_id: int = Field(index=True)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 def init_db():

@@ -1,0 +1,28 @@
+[
+  {
+    "additionalPlain": "",
+    "additional": "",
+    "categories": {"commitment": "Internship", "department": "R&D", "location": "Pune, India", "team": "Battery Systems", "allLocations": ["Pune, India"]},
+    "createdAt": 1791800000000,
+    "descriptionPlain": "Work on battery management system validation for electric vehicles.",
+    "description": "<div>Work on <b>battery management system</b> validation for electric vehicles.</div>",
+    "id": "5b0c8a7e-1234-4cde-9abc-0123456789ab",
+    "lists": [{"text": "Requirements", "content": "<li>MATLAB/Simulink</li><li>CAN Bus basics</li>"}],
+    "text": "EV Battery Systems Intern",
+    "country": "IN",
+    "workplaceType": "onsite",
+    "hostedUrl": "https://jobs.lever.co/examplemotors/5b0c8a7e-1234-4cde-9abc-0123456789ab",
+    "applyUrl": "https://jobs.lever.co/examplemotors/5b0c8a7e-1234-4cde-9abc-0123456789ab/apply"
+  },
+  {
+    "categories": {"commitment": "Full-time", "location": "Berlin, Germany", "team": "Finance"},
+    "createdAt": 1791800000000,
+    "descriptionPlain": "Finance controller.",
+    "id": "aaaa",
+    "text": "Finance Manager",
+    "country": "DE",
+    "workplaceType": "onsite",
+    "hostedUrl": "https://jobs.lever.co/examplemotors/aaaa",
+    "applyUrl": "https://jobs.lever.co/examplemotors/aaaa/apply"
+  }
+]

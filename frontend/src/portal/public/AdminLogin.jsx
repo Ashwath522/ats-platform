@@ -24,7 +24,9 @@ export default function AdminLogin() {
   const submit = async (ev) => {
     ev.preventDefault()
     const e = {}
-    if (!EMAIL_RE.test(email.trim())) e.email = 'Enter a valid email address'
+    // Admins may sign in with an email or a plain admin ID (ADMIN_EMAIL can be e.g. "trilog").
+    const id = email.trim()
+    if (!id || (id.includes('@') && !EMAIL_RE.test(id))) e.email = 'Enter your admin ID or email'
     if (!password) e.password = 'Enter your password'
     setErrors(e)
     if (Object.keys(e).length) return
@@ -39,7 +41,7 @@ export default function AdminLogin() {
       loginAdmin(data.access_token, data.email)
       navigate('/admin/dashboard')
     } catch (x) {
-      setError(x.status === 401 ? 'Incorrect email or password.' : x.message)
+      setError(x.status === 401 ? 'Incorrect admin ID or password.' : x.message)
     } finally {
       setLoading(false)
     }
@@ -52,7 +54,7 @@ export default function AdminLogin() {
       <p className="pub-auth-sub">Platform administration for CoreLink staff.</p>
       <form className="pub-form" onSubmit={submit} noValidate>
         {error && <Alert tone="error">{error}</Alert>}
-        <TextField id="ad-email" label="Admin email" icon={Mail} type="email" autoComplete="username" value={email} onChange={(x) => setEmail(x.target.value)} error={errors.email} autoFocus />
+        <TextField id="ad-email" label="Admin ID or email" icon={Mail} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" value={email} onChange={(x) => setEmail(x.target.value)} error={errors.email} autoFocus />
         <PasswordField id="ad-password" autoComplete="current-password" value={password} onChange={(x) => setPassword(x.target.value)} error={errors.password} />
         <p className="pub-note">Forgot your password? Another admin can send you a reset link from User Management.</p>
         <Button type="submit" block className="pub-submit" loading={loading} iconRight={ArrowRight}>Sign In</Button>

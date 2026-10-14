@@ -255,6 +255,10 @@ async def create_or_resume_session(request: Request, app_id: int, candidate: str
 async def interview_turn(request: Request, sid: int, payload: dict = Body(...), candidate: str = Depends(get_current_candidate)):
     answer = str(payload.get("answer") or "").strip()[:4000]
     client_meta = payload.get("client") or {}
+    # Short acknowledgement the client already spoke ("Hmm, okay.") while the
+    # reply is generated. It is only used to steer the prompt; it is never part
+    # of the scored transcript text.
+    filler = ai.sanitize_filler(payload.get("filler_spoken"))
 
     with Session(engine) as session:
         s = _owned_session(session, sid, candidate)
@@ -299,6 +303,7 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
         next_question=next_q,
         focus=decision.get("focus"),
         practice=is_practice,
+        filler_spoken=filler,
     )
 
     async def gen():
@@ -306,6 +311,9 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
         yield json.dumps({"t": "meta", "action": action, "q_index": next_idx, "total": total, "done": done}) + "\n"
         result = llm_stream.StreamResult()
         text = ""
+        # When a filler was already spoken, hold back the first few words so a
+        # reply that opens by repeating it ("Okay, got it. ...") can be trimmed.
+        held = "" if filler else None
         try:
             if not llm_stream.configured_providers():
                 raise llm_stream.LLMUnavailable("no provider")
@@ -316,12 +324,24 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
                 first_token_timeout=float(__import__("os").environ.get("INTERVIEW_TTFT_BUDGET_S", "3.5")),
                 result=result,
             ):
+                if held is not None:
+                    held += delta
+                    if len(held) < 60:
+                        continue
+                    delta, held = ai.strip_repeated_filler(held, filler), None
                 text += delta
                 yield json.dumps({"t": "d", "v": delta}) + "\n"
+            if held:
+                held = ai.strip_repeated_filler(held, filler)
+                text += held
+                yield json.dumps({"t": "d", "v": held}) + "\n"
         except Exception as exc:
+            if held:
+                text += held
+                yield json.dumps({"t": "d", "v": held}) + "\n"
             if not text:
                 logger.info("[INTERVIEW] scripted reply (%s)", exc)
-                text = ai.scripted_reply(action, current_question=current_q, next_question=next_q, focus=decision.get("focus"))
+                text = ai.scripted_reply(action, current_question=current_q, next_question=next_q, focus=decision.get("focus"), filler_spoken=filler)
                 if is_practice and done:
                     text = ai.practice_scripted_end(action)
                 result.provider = "scripted"
@@ -346,7 +366,10 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
 
         # Persist after streaming so the response isn't delayed by DB writes.
         kind = {"follow_up": "follow_up", "next": "base"}.get(action, action)
-        transcript.append({"role": "interviewer", "text": spoken, "q_index": next_idx, "kind": kind, "ts": time.time()})
+        entry = {"role": "interviewer", "text": spoken, "q_index": next_idx, "kind": kind, "ts": time.time()}
+        if filler:
+            entry["filler"] = filler  # kept apart from the text: never scored
+        transcript.append(entry)
         with Session(engine) as session:
             s2 = session.get(InterviewSession, sid)
             if s2 is None:
@@ -361,7 +384,7 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
                 "provider": result.provider,
                 "ttft_ms": result.ttft_ms,
                 "server_ms": server_ms,
-                "client": {k: client_meta.get(k) for k in ("silence_ms", "prev_tts_first_audio_ms", "prev_ttfa_ms", "endpoint_reason") if k in client_meta},
+                "client": {k: client_meta.get(k) for k in ("silence_ms", "prev_tts_first_audio_ms", "prev_ttfa_ms", "endpoint_reason", "filler_ms", "thinking_aloud") if k in client_meta},
             })
             s2.latency_json = json.dumps(lat[-60:])
             session.add(s2)
