@@ -80,9 +80,17 @@ export default function AdminLiveData() {
         </>} />
       {q.error && <Alert tone="error">{q.error.message} <button className="cl-link" onClick={q.reload}>Retry</button></Alert>}
       {d?.running && <Alert icon={RefreshCw}>A sync is running. This page refreshes automatically.</Alert>}
-      {d && !d.keys.LIVE_SYNC_TOKEN && (
-        <Alert tone="warn" icon={AlertTriangle}>Scheduled sync is not set up: set <code>LIVE_SYNC_TOKEN</code> on the server and add a cron-job.org job that POSTs to <code>/api/internal/live-sync</code> every 6 hours (see DEPLOY.md → “Live jobs &amp; resources”). Until then, use “Sync now”.</Alert>
-      )}
+      {d?.schedule && (d.schedule.auto ? (
+        <Alert tone="success" icon={Clock}>
+          Automatic sync is on: every {d.schedule.interval_hours} h, run by the server itself
+          {d.schedule.last_success_at ? <> · last success {timeAgo(d.schedule.last_success_at)}</> : ' · first run starts shortly'}
+          {d.schedule.next_run_at && d.schedule.last_success_at ? <> · next {fmtDateTime(d.schedule.next_run_at)}</> : null}
+          {d.schedule.keep_awake ? ' · keep-awake ping on' : ' · server may sleep when idle (it syncs again as soon as it wakes)'}.
+          New jobs are published company by company while a sync runs.
+        </Alert>
+      ) : (
+        <Alert tone="warn" icon={AlertTriangle}>Automatic sync is off (<code>LIVE_SYNC_AUTO=false</code>). Use “Sync now”, or call <code>/api/internal/live-sync</code> from a scheduler with <code>LIVE_SYNC_TOKEN</code> (see DEPLOY.md).</Alert>
+      ))}
 
       <div className="adm-mini-grid adm-mini-5">
         <MiniStat icon={Radio} tone="teal" value={fmtNum(t.active_jobs)} label="Live jobs shown" sub={`max ${fmtNum(d?.limits?.max_active_jobs)}`} />
