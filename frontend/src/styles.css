@@ -56,6 +56,10 @@
 
   /* Transitions */
   --transition: 0.18s ease;
+
+  /* Shared premium surface treatment */
+  --gloss-highlight: rgba(255, 255, 255, 0.72);
+  --gloss-shadow: 0 10px 28px rgba(15, 35, 62, 0.12);
 }
 
 /* =====================================================================
@@ -68,12 +72,50 @@ html { font-size: 16px; -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: radial-gradient(circle at 12% -10%, rgba(255,255,255,.92), transparent 34%), var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Global glossy language: shared controls and surfaces across the portal. */
+button:not(.iv-root button),
+[role="button"]:not(.iv-root [role="button"]) {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(145deg, rgba(255,255,255,.34), rgba(255,255,255,0) 55%);
+  box-shadow: inset 0 1px 1px var(--gloss-highlight), var(--gloss-shadow);
+  transition: transform var(--transition), filter var(--transition), box-shadow var(--transition);
+}
+
+button:not(.iv-root button)::after,
+[role="button"]:not(.iv-root [role="button"])::after {
+  content: '';
+  position: absolute;
+  left: 8%; right: 8%; top: 1px; height: 38%;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,.34), transparent);
+  pointer-events: none;
+}
+
+button:not(.iv-root button):hover,
+[role="button"]:not(.iv-root [role="button"]):hover { filter: brightness(1.035) saturate(1.04); }
+button:not(.iv-root button):active,
+[role="button"]:not(.iv-root [role="button"]):active { transform: translateY(1px) scale(.99); }
+
+/* Common card/panel classes used by the candidate and recruiter portals. */
+.card, .panel, .surface, .stat-card, .job-card, .profile-card, .dashboard-card,
+[class*="rounded-xl"], [class*="rounded-2xl"] {
+  box-shadow: var(--gloss-shadow), inset 0 1px 0 rgba(255,255,255,.52);
+}
+
+input, textarea, select {
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+input:focus, textarea:focus, select:focus {
+  box-shadow: 0 0 0 3px rgba(10,102,194,.14), inset 0 1px 1px rgba(255,255,255,.7);
 }
 
 a { color: var(--primary); text-decoration: none; }
