@@ -30,3 +30,6 @@ backend/server.log
 frontend/.env.mobile
 .vercel
 .env*
+
+# The college list lives in frontend/src/data (not runtime data)
+!frontend/src/data/
