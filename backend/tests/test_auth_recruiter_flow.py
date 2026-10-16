@@ -180,7 +180,10 @@ def test_recruiter_request_approve_db_commits_even_if_email_fails(monkeypatch):
     assert resp_json["approved"] is True
     assert resp_json["email_sent"] is False
     assert "warning" in resp_json
-    assert "temporary_password" not in resp_json
+    # Email failed, so the admin gets the one-time password to share manually.
+    assert resp_json.get("shown_once") is True
+    temp_pw = resp_json["temporary_password"]
+    assert temp_pw and len(temp_pw) >= 10
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.email == recruiter_email)).first()

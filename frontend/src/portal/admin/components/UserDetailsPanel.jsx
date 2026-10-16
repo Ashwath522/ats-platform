@@ -131,6 +131,7 @@ export default function UserDetailsPanel({ uid, api, onClose, onAction, onChange
                     ? <Button variant="success" icon={RotateCcw} disabled={d.is_self} onClick={() => onAction('reactivate', d)}>Reactivate</Button>
                     : <Button variant="danger" icon={Ban} disabled={d.is_self} onClick={() => onAction('suspend', d)}>Suspend User</Button>}
                   <Button variant="outline" icon={KeyRound} onClick={() => onAction('reset_password', d)}>Reset Password</Button>
+                  <Button variant="outline" icon={KeyRound} onClick={() => onAction('temp_password', d)}>Temporary Password</Button>
                 </div>
               )}
             </div>

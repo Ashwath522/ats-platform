@@ -58,6 +58,7 @@ export default function AdminUsers() {
   const [version, setVersion] = useState(0)
   const [addType, setAddType] = useState(null)
   const [confirm, setConfirm] = useState(null) // {kind, users, role}
+  const [tempPw, setTempPw] = useState(null) // {name, login, password} — shown once
   const [busy, setBusy] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
   const [roleModal, setRoleModal] = useState(null) // {users}
@@ -130,6 +131,9 @@ export default function AdminUsers() {
           await api.del(`/api/admin/portal/users/${u.id}`)
           toast(`${u.name} deleted`, 'success')
           if (detail === u.id) setDetail(null)
+        } else if (kind === 'temp_password') {
+          const res = await callAction(u, 'temp_password')
+          setTempPw({ name: u.name, login: res.login, password: res.temporary_password })
         } else if (kind === 'reset_password') {
           const res = await callAction(u, 'reset_password')
           if (res.email_sent) toast(`Password reset email sent to ${res.to}`, 'success')
@@ -210,7 +214,8 @@ export default function AdminUsers() {
       u.status === 'suspended'
         ? { label: 'Reactivate', icon: RotateCcw, onClick: () => onAction('reactivate', u) }
         : { label: 'Suspend', icon: Ban, onClick: () => onAction('suspend', u) },
-      { label: 'Reset password', icon: KeyRound, onClick: () => onAction('reset_password', u) },
+      { label: 'Reset password (email)', icon: KeyRound, onClick: () => onAction('reset_password', u) },
+      { label: 'Set temporary password', icon: KeyRound, onClick: () => onAction('temp_password', u) },
       (u.type === 'recruiter' || u.type === 'admin') && { label: u.type === 'admin' ? 'Change role to Recruiter' : 'Change role to Admin', icon: UserCog, onClick: () => onAction('change_role', u) },
       { label: 'Delete', icon: Trash2, danger: true, onClick: () => onAction('delete', u) },
     ]
@@ -249,6 +254,7 @@ export default function AdminUsers() {
     suspend: { title: `Suspend ${confirm.users.length > 1 ? `${confirm.users.length} users` : confirm.users[0].name}?`, text: 'Suspended users are signed out immediately and cannot log in until reactivated. Their data is kept.', label: 'Suspend', danger: true },
     delete: { title: `Delete ${confirm.users.length > 1 ? `${confirm.users.length} users` : confirm.users[0].name}?`, text: 'This permanently deletes the account. For students this removes their profile, applications, projects, interviews and offers (right-to-be-forgotten); the audit trail is kept without personal links. Recruiters who own job postings cannot be deleted — suspend them instead. This cannot be undone.', label: 'Delete permanently', danger: true, require: 'DELETE' },
     reset_password: { title: `Send a password reset to ${confirm.users[0].name}?`, text: `A reset code valid for 15 minutes will be emailed to ${confirm.users[0].email || 'their email address'}. Their current password keeps working until they reset it.`, label: 'Send reset email' },
+    temp_password: { title: `Set a temporary password for ${confirm.users[0].name}?`, text: 'A new random password is created and shown to you once. Their current password and any reset links stop working. Share it with the user securely; recruiters and admins are asked to change it after signing in.', label: 'Create temporary password' },
     bulk_verify: { title: `Verify ${confirm.users.length} user${confirm.users.length === 1 ? '' : 's'}?`, text: 'Marks the selected accounts as verified by an administrator. This is recorded in the audit log.', label: 'Verify users' },
   }[confirm.kind]
 
@@ -389,6 +395,18 @@ export default function AdminUsers() {
           </p>
           <Field label="New role"><Select value={roleChoice} onChange={(e) => setRoleChoice(e.target.value)} options={[{ value: 'recruiter', label: 'Recruiter' }, { value: 'admin', label: 'Admin' }]} /></Field>
         </div>
+      </Modal>
+      <Modal open={!!tempPw} onClose={() => setTempPw(null)} title="Temporary password created"
+        footer={<Button onClick={() => setTempPw(null)}>Done</Button>}>
+        {tempPw && (
+          <div className="cl-stack" style={{ gap: 12 }}>
+            <Alert tone="warn">This password is shown only once. Copy it now and share it with {tempPw.name} securely (not in a public chat).</Alert>
+            <div className="adm-temp">Login: <code>{tempPw.login}</code></div>
+            <div className="adm-temp">Password: <code>{tempPw.password}</code>
+              <Button size="sm" variant="secondary" onClick={() => { navigator.clipboard?.writeText(tempPw.password); toast('Password copied', 'success') }}>Copy</Button></div>
+            <p className="cl-muted" style={{ fontSize: 13 }}>Recruiters and admins see a reminder to change it in Settings → Security after signing in.</p>
+          </div>
+        )}
       </Modal>
     </div>
   )

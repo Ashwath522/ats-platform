@@ -1887,6 +1887,7 @@ def _account_dict(s: Session, rec: RecruiterUser, u: User) -> dict:
         "department": prof.get("department"), "location": prof.get("location"),
         "avatar_url": _media(rp.avatar_path) if rp else None, "last_login_at": _iso(u.last_login_at),
         "created_at": _iso(u.created_at), "password_changed_at": st.get("security", {}).get("password_changed_at"),
+        "must_change_password": bool(st.get("security", {}).get("must_change_password")),
         "notifications": {**NOTIFICATION_DEFAULTS, **st.get("notifications", {})},
     }
 
@@ -1959,6 +1960,7 @@ def change_password(body: PasswordChange, recruiter: str = Depends(get_current_r
         rec.password_hash = new_hash
         st = _settings(u)
         st.setdefault("security", {})["password_changed_at"] = _iso(utc_now())
+        st["security"].pop("must_change_password", None)
         u.settings_json = json.dumps(st)
         s.add(u)
         s.add(rec)

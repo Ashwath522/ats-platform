@@ -1091,6 +1091,38 @@ async def _reset_password(kind: str, obj, s: Session) -> dict:
     return {**delivery, "to": to}
 
 
+def _set_temp_password(s: Session, admin: str, uid: str, kind: str, obj, me) -> dict:
+    """Give a user a new random password, shown to the admin once. Used when the
+    login / reset email can't be delivered. Old reset links stop working."""
+    import secrets as _secrets
+    import string as _string
+    from ..auth import hash_password
+    from .auth import _invalidate_email_tokens, mark_must_change_password
+    if kind == "u" and obj.id == me.id:
+        raise HTTPException(status_code=400, detail="Change your own password in Settings instead")
+    alphabet = _string.ascii_letters + _string.digits
+    pw = "".join(_secrets.choice(alphabet) for _ in range(12)) + _secrets.choice("23456789") + _secrets.choice("abcdefghjkmnpqrstuvwxyz")
+    h = hash_password(pw)
+    if kind == "c":
+        obj.password_hash = h
+        s.add(obj)
+        _invalidate_email_tokens(s, obj.username, "candidate_reset")
+        login = obj.username
+    else:
+        obj.password_hash = h
+        mark_must_change_password(obj)
+        s.add(obj)
+        legacy = s.exec(select(RecruiterUser).where(RecruiterUser.username == obj.email)).first()
+        if legacy:
+            legacy.password_hash = h
+            s.add(legacy)
+        _invalidate_email_tokens(s, obj.email, "password_reset")
+        login = obj.email
+    s.commit()
+    _audit(s, admin, "set_temp_password", uid, candidate_id=obj.id if kind == "c" else None)
+    return {"ok": True, "login": login, "temporary_password": pw, "shown_once": True}
+
+
 async def _do_action(s: Session, admin: str, uid: str, action: str, role: Optional[str] = None) -> dict:
     kind, obj = _find_user(s, uid)
     me = _admin_user(s, admin)
@@ -1120,6 +1152,8 @@ async def _do_action(s: Session, admin: str, uid: str, action: str, role: Option
         res = await _reset_password(kind, obj, s)
         _audit(s, admin, "reset_password", uid, candidate_id=cand_id, details={"email_sent": res.get("email_sent")})
         return {"ok": True, **res}
+    if action == "temp_password":
+        return _set_temp_password(s, admin, uid, kind, obj, me)
     if action == "change_role":
         if kind != "u" or obj.role not in {"recruiter", "admin"}:
             raise HTTPException(status_code=400, detail="Only recruiter and admin roles can be changed")
@@ -1349,6 +1383,10 @@ async def create_user(body: NewUser, admin: str = Depends(get_current_admin)):
             cand_id = c.id
         else:
             u = _create_user(s, name=name, email=email, password=password, role=body.type, phone=phone, email_verified=True)
+            from .auth import mark_must_change_password
+            mark_must_change_password(u)
+            s.add(u)
+            s.commit()
             if body.type == "recruiter":
                 ru = s.exec(select(RecruiterUser).where(RecruiterUser.username == email)).first()
                 if ru and not s.exec(select(RecruiterProfile).where(RecruiterProfile.recruiter_id == ru.id)).first():
@@ -1363,10 +1401,12 @@ async def create_user(body: NewUser, admin: str = Depends(get_current_admin)):
     try:
         delivery = await run_in_threadpool(_send_email_or_dev, email, subject, txt, {"temporary_password": password}, html, "admin_account_created")
     except HTTPException:
-        delivery = {"email_sent": False, "warning": "Account created but the email could not be delivered."}
+        delivery = {"email_sent": False, "warning": "Account created, but the login email could not be sent. Copy the temporary password below and share it with the user securely."}
     res = {"created": True, "user": user, **{k: v for k, v in delivery.items() if k != "dev_only"}}
-    if _dev_mode():
+    # Never lose the only copy of the password: show it once when the email didn't go out.
+    if not res.get("email_sent") or _dev_mode():
         res["temporary_password"] = password
+        res["shown_once"] = True
     return res
 
 

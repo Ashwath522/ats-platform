@@ -71,6 +71,7 @@ export default function RecruiterLogin() {
           loginAdmin(data.access_token, data.email || addr)
           navigate('/admin/dashboard')
         } else if (data.role === 'recruiter') {
+          try { localStorage.setItem('ats_recruiter_must_change', data.must_change_password ? '1' : '0') } catch { /* ignore */ }
           loginRecruiter(data.access_token, data.email || data.username || addr)
           navigate('/recruiter/dashboard')
         } else {

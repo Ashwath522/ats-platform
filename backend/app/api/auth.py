@@ -150,6 +150,29 @@ def ensure_admin_user() -> None:
         _create_user(session, name="Admin", email=email, password=password, role="admin", email_verified=True)
 
 
+def mark_must_change_password(user, value: bool = True) -> None:
+    """Flag (in settings_json) that the user signs in with a temporary password."""
+    import json as _json
+    try:
+        st = _json.loads(user.settings_json or "{}") or {}
+    except ValueError:
+        st = {}
+    sec = st.setdefault("security", {})
+    if value:
+        sec["must_change_password"] = True
+    else:
+        sec.pop("must_change_password", None)
+    user.settings_json = _json.dumps(st)
+
+
+def must_change_password(user) -> bool:
+    import json as _json
+    try:
+        return bool(((_json.loads(user.settings_json or "{}") or {}).get("security") or {}).get("must_change_password"))
+    except (ValueError, AttributeError):
+        return False
+
+
 def _token_response(user: User) -> dict:
     email = user.email
     name = user.name
@@ -161,6 +184,7 @@ def _token_response(user: User) -> dict:
         "email": email,
         "name": name,
         "role": role,
+        "must_change_password": must_change_password(user),
     }
 
 
@@ -545,6 +569,8 @@ def approve_recruiter_request(request_id: int, admin: User = Depends(get_current
             role="recruiter",
             email_verified=True,
         )
+        mark_must_change_password(user)
+        session.add(user)
         user_data = _serialize_user(user)
         user_email = user.email
         recruiter_request.status = "approved"
@@ -568,13 +594,15 @@ def approve_recruiter_request(request_id: int, admin: User = Depends(get_current
                 "approved": True,
                 "user": user_data,
                 "email_sent": False,
-                "warning": "Recruiter account created but email delivery failed.",
+                "warning": "Recruiter account created, but the login email could not be sent. Copy the temporary password below and share it with the recruiter securely.",
             }
         else:
             raise
-    
-    if _dev_mode_enabled():
+    # The admin must always be able to hand over the login: show the one-time
+    # password whenever the email did not go out (it is never stored in clear).
+    if not response.get("email_sent") or _dev_mode_enabled():
         response["temporary_password"] = generated_password
+        response["shown_once"] = True
     return response
 
 
