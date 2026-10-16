@@ -72,6 +72,12 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] LLM Mode: Deterministic-only scoring active — no cloud API keys or local Ollama detected")
 
     try:
+        import asyncio as _asyncio
+        from .services.llm_stream import auto_select_openrouter_models
+        _asyncio.get_event_loop().create_task(auto_select_openrouter_models())
+    except Exception:
+        logger.exception("[STARTUP] OpenRouter model check skipped")
+    try:
         from .services import live_scheduler
         live_scheduler.start()
     except Exception:

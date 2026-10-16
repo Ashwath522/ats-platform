@@ -550,3 +550,12 @@ def test_health_probe_reports_status_without_keys(client, monkeypatch):
     g = data["ai_providers"]["groq"]
     assert g["configured"] is True and g["reachable"] is False and g["http_status"] == 401 and g["status"] == "auth_error"
     assert "gsk_supersecretvalue99" not in json.dumps(data)
+
+
+def test_openrouter_free_model_fallback_choice():
+    from app.services.llm_stream import pick_free_model
+    cur = "meta-llama/llama-3.3-70b-instruct:free"
+    assert pick_free_model([{"id": cur}, {"id": "x:free"}], cur) is None
+    models = [{"id": "openai/gpt-4o"}, {"id": "google/gemma-3-27b-it:free"}, {"id": "qwen/qwen3-14b:free"}]
+    assert pick_free_model(models, cur) == "qwen/qwen3-14b:free"
+    assert pick_free_model([{"id": "openai/gpt-4o"}], cur) is None
