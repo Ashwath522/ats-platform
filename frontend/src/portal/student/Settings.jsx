@@ -145,7 +145,10 @@ function Overview({ profile, displayName, branch, setModal }) {
           <div className="cl-col" style={{ gap: 6, minWidth: 0 }}>
             <h3 style={{ fontSize: 19 }}>{displayName}</h3>
             <span className="cl-muted">Student{profile.headline ? ` · ${profile.headline}` : ''}</span>
-            {profile.linkedin_verified && <span className="chip matched" style={{ marginLeft: 8 }}>LinkedIn verified</span>}
+            <span className="cl-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {profile.linkedin_verified && <span className="cl-chip blue">✓ LinkedIn verified</span>}
+              <a href="/candidate/onboarding/linkedin" className="cl-chip clickable" style={{ textDecoration: 'none' }}>Import from LinkedIn</a>
+            </span>
             <div className="st-links" style={{ paddingTop: 6, gap: 8 }}>
               <span>{profile.college ? <CollegeName name={profile.college} id={profile.college_meta?.id} domain={profile.college_meta?.domain} size={20} /> : <><Building size={16} /><span className="cl-muted">Add your college</span></>}</span>
               <span><GraduationCap size={16} />{profile.degree || branch.long}{profile.grad_year ? ` (${profile.grad_year})` : ''}</span>

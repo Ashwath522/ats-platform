@@ -20,7 +20,8 @@ import os
 import shutil
 from ..services.report_parsers.router import route_file
 from ..services.scorer import evaluate_profile_project
-from ..services.linkedin_pdf import parse_linkedin_text
+from ..services.linkedin_pdf import parse_linkedin_pdf
+from ..services.linkedin_url import normalize_linkedin_url as _normalize_linkedin_url
 
 logger = logging.getLogger("ats-platform")
 
@@ -100,16 +101,13 @@ _V2_JSON = {"interests": ("interests_json", []), "achievements": ("achievements_
 _COLLEGE_META_KEY = "college_meta"
 _HOST_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})*\.[a-z]{2,24}$")
 _COLLEGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
-_LINKEDIN_URL_RE = re.compile(r"^https?://(?:[a-z]{2,3}\.)?www\.linkedin\.com/in/([A-Za-z0-9-]+)$", re.I)
+
 
 def normalize_linkedin_url(value):
-    raw = str(value or '').strip()
-    if not raw: return None
-    candidate = raw if re.match(r'^https?://', raw, re.I) else 'https://' + raw
-    candidate = candidate.split('?', 1)[0].rstrip('/')
-    m = _LINKEDIN_URL_RE.match(candidate)
-    if not m: raise HTTPException(422, 'Enter a valid LinkedIn profile URL, such as linkedin.com/in/your-name')
-    return 'https://www.linkedin.com/in/' + m.group(1)
+    try:
+        return _normalize_linkedin_url(value)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 def _clean_college_meta(raw: Optional[dict], college: Optional[str]) -> Optional[dict]:
@@ -156,7 +154,7 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
     v2 = {k: getattr(profile, k, None) for k in _V2_SCALARS}
     v2.update({k: _j(getattr(profile, col, None), d) for k, (col, d) in _V2_JSON.items()})
     if isinstance(v2.get("preferences"), dict):
-        verified = v2["preferences"].get("linkedin_verified")
+        verified = v2["preferences"].pop("linkedin_verified", None)
         v2["preferences"].pop(_COLLEGE_META_KEY, None)
     else: verified = None
     v2["college_meta"] = _college_meta(profile)
@@ -301,11 +299,13 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
             profile.longitude = update.longitude
         if update.gender is not None:
             profile.gender = update.gender
+        previous_linkedin = (profile.linkedin_url or "").strip()
         for k in _V2_SCALARS:
             v = getattr(update, k)
             if v is not None:
                 setattr(profile, k, v.strip() if isinstance(v, str) else v)
-        if update.linkedin_url is not None:
+        # Validate only a changed link, so an older free-text value never blocks other edits.
+        if update.linkedin_url is not None and update.linkedin_url.strip() != previous_linkedin:
             profile.linkedin_url = normalize_linkedin_url(update.linkedin_url)
         previous_prefs = _j(profile.preferences_json, {})
         prev_meta = previous_prefs.get(_COLLEGE_META_KEY)
@@ -354,19 +354,28 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
         return _profile_to_dict(profile, resume, _project_count(session, user.id))
 
 @router.post("/linkedin-import")
-async def linkedin_import(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
-    data = await file.read()
-    if len(data) > 5 * 1024 * 1024 or not data.startswith(b"%PDF"):
-        raise HTTPException(400, "Upload a PDF file smaller than 5 MB")
+def linkedin_import(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+    """Preview only: read LinkedIn's "Save to PDF" export and return profile
+    fields for the student to review. Nothing is saved; the file is deleted."""
+    data = file.file.read(5 * 1024 * 1024 + 1)
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(413, "That PDF is larger than 5 MB")
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(400, "Please upload the PDF from LinkedIn (More → Save to PDF)")
     fd, path = tempfile.mkstemp(suffix=".pdf")
     try:
-        with os.fdopen(fd, "wb") as f: f.write(data)
-        from ..services.extract import extract_text_from_file
-        return parse_linkedin_text(extract_text_from_file(path) or "")
-    except Exception:
-        return parse_linkedin_text("")
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:
+            return parse_linkedin_pdf(path)
+        except Exception as e:
+            logger.warning("LinkedIn PDF parse failed: %s", e)
+            raise HTTPException(422, "Couldn't read that PDF. Download it again from LinkedIn (More → Save to PDF) and retry.")
     finally:
-        if os.path.exists(path): os.remove(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 @router.post("/project-upload")

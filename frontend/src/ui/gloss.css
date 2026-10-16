@@ -1,0 +1,81 @@
+/*
+ * Glossy ("liquid glass") finish for the CoreLink UI kit.
+ *
+ * Scoped to our own component classes only: it never changes `position`,
+ * `overflow` or adds pseudo-elements, so absolutely-positioned controls (the
+ * password eye, clear buttons, menus) and third-party widgets (Google's
+ * button) keep their layout. Highlights are drawn with background-image and
+ * inset shadows, which work on top of each variant's own background colour.
+ */
+
+:root {
+  --gl-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.10) 46%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.05) 100%);
+  --gl-sweep: linear-gradient(110deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0.38) 50%, rgba(255, 255, 255, 0) 70%);
+  --gl-edge: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.cl-btn:not(.ghost) {
+  background-image: var(--gl-sweep), var(--gl-sheen) !important;
+  background-size: 260% 100%, 100% 100% !important;
+  background-position: 120% 0, 0 0 !important;
+  background-repeat: no-repeat !important;
+  box-shadow: var(--gl-edge), 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.06);
+  transition: background-color 0.15s, background-position 0.6s ease, border-color 0.15s, box-shadow 0.2s, transform 0.12s;
+}
+.cl-btn:not(.ghost):hover:not(:disabled) {
+  background-position: -60% 0, 0 0 !important;
+  box-shadow: var(--gl-edge), 0 2px 4px rgba(15, 23, 42, 0.08), 0 8px 20px rgba(15, 23, 42, 0.10);
+}
+.cl-btn.primary {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.12), 0 2px 4px rgba(11, 92, 255, 0.18), 0 8px 22px rgba(11, 92, 255, 0.24);
+}
+.cl-btn.primary:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.12), 0 3px 6px rgba(11, 92, 255, 0.22), 0 12px 28px rgba(11, 92, 255, 0.30);
+}
+.cl-btn.secondary, .cl-btn.outline, .cl-btn.danger, .cl-btn.success {
+  background-color: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  backdrop-filter: saturate(180%) blur(12px);
+}
+.cl-btn.white { box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 6px 18px rgba(0, 0, 0, 0.22); }
+/* Buttons that bring their own gradient keep it, with the sheen on top. */
+.cl-btn.st-gradient-btn:not(.ghost) {
+  background-image: var(--gl-sweep), var(--gl-sheen), linear-gradient(90deg, #1e6bff, #0b4fe0) !important;
+  background-size: 260% 100%, 100% 100%, 100% 100% !important;
+  background-position: 120% 0, 0 0, 0 0 !important;
+  color: #fff !important;
+}
+.cl-btn.st-gradient-btn:not(.ghost):hover:not(:disabled) { background-position: -60% 0, 0 0, 0 0 !important; }
+.cl-btn:active:not(:disabled) { transform: scale(0.975); }
+.cl-btn:disabled { box-shadow: none; }
+
+/* Round / square icon buttons */
+.cl-icon-btn.boxed, .cl-bell, .cl-user {
+  background-image: var(--gl-sheen);
+  box-shadow: var(--gl-edge), 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────── */
+.cl-nav-item.active {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 60%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 3px rgba(11, 92, 255, 0.10), 0 4px 14px rgba(11, 92, 255, 0.08);
+}
+.cl-tabbar {
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+.cl-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+/* ── Social sign-in (Google + LinkedIn) ─────────────────────────────── */
+.pub-social { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.pub-social > .pub-or { margin: 18px 0 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-btn:not(.ghost), .cl-btn:not(.ghost):hover:not(:disabled) { transition: none; background-position: 120% 0, 0 0 !important; }
+}
