@@ -32,7 +32,8 @@ export function Privacy() {
       <p>CoreLink is a student project that helps core engineering students find jobs and practise interviews, and helps approved recruiters find candidates. This page explains what we collect and why.</p>
       <h2>What we collect</h2>
       <ul>
-        <li><strong>Account details:</strong> your email address and a hashed password. If you use <em>Sign in with Google</em>, we receive only your name, email address and whether Google has verified that email. We never see your Google password and do not access Gmail, Drive, contacts or any other Google data.</li>
+        <li><strong>Account details:</strong> your email address and a hashed password. If you use <em>Sign in with Google or LinkedIn</em>, we receive only your name, email address and email-verified status. We do not use your photo or access anything else from either service.</li>
+        <li><strong>LinkedIn imports:</strong> a LinkedIn PDF is read once to pre-fill your form and is not stored. A pasted LinkedIn URL is stored only as a link; we never fetch profile pages.</li>
         <li><strong>Profile information you enter:</strong> education, branch, skills, projects, resume and links you choose to add.</li>
         <li><strong>Activity on CoreLink:</strong> jobs you save or apply to, interview practice answers and their scores, and messages from recruiters.</li>
         <li><strong>Interview practice:</strong> when you allow it, your camera and microphone are used live in your browser for the AI interview. Answers are turned into text for feedback; we do not store video. Practice sessions never save any camera image — integrity alerts are shown only to you.</li>
@@ -54,6 +55,7 @@ export function Privacy() {
         <li>Edit your profile and privacy settings at any time.</li>
         <li>Download your data or delete your account from Settings.</li>
         <li>Remove CoreLink’s access to your Google account at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer">myaccount.google.com/permissions</a>.</li>
+        <li>Revoke LinkedIn access at <a href="https://www.linkedin.com/psettings/permitted-services" target="_blank" rel="noreferrer">linkedin.com/psettings/permitted-services</a>.</li>
       </ul>
     </Shell>
   )

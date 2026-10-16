@@ -11,6 +11,7 @@ const AdminLogin = lazy(() => import('./portal/public/AdminLogin.jsx'))
 const Privacy = lazy(() => import('./portal/public/Legal.jsx').then((m) => ({ default: m.Privacy })))
 const Terms = lazy(() => import('./portal/public/Legal.jsx').then((m) => ({ default: m.Terms })))
 const CandidatePage = lazy(() => import('./pages/CandidatePage.jsx'))
+const LinkedInCallback = lazy(() => import('./portal/public/LinkedInCallback.jsx'))
 
 // Student (pages 04–12)
 const StudentShell = lazy(() => import('./portal/student/StudentShell.jsx'))
@@ -25,6 +26,7 @@ const StudentApplications = lazy(() => import('./portal/student/Applications.jsx
 const AIInterviewPrep = lazy(() => import('./portal/student/AIInterviewPrep.jsx'))
 const Resources = lazy(() => import('./portal/student/Resources.jsx'))
 const StudentSettings = lazy(() => import('./portal/student/Settings.jsx'))
+const LinkedInOnboarding = lazy(() => import('./portal/student/LinkedInOnboarding.jsx'))
 const InterviewRoom = lazy(() => import('./interview/InterviewRoom.jsx'))
 
 // Recruiter (pages 13–22)
@@ -78,6 +80,8 @@ export default function App() {
             <Route path="/candidate/login" element={<StudentLogin />} />
             <Route path="/recruiter/login" element={<RecruiterLogin />} />
             <Route path="/admin/login" element={<AdminLogin />} />
+            <Route path="/auth/linkedin/callback" element={<LinkedInCallback />} />
+            <Route path="/candidate/onboarding/linkedin" element={<LinkedInOnboarding />} />
 
             {/* AI interview rooms (full screen, no shell) */}
             <Route path="/candidate/interview/:appId" element={<InterviewRoom />} />

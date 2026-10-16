@@ -727,8 +727,8 @@ export default function InterviewRoom({ practice = false }) {
           </div>
 
           {(avatarState === 'listening' || heard) && voiceOk && !typing && (
-            <div className="iv-heard">
-              <span className="iv-heard-label">You</span>
+            <div className={`iv-heard ${avatarState === 'listening' ? 'iv-heard-live' : ''}`} aria-live="polite">
+              <span className="iv-heard-label"><span className="iv-live-dot" /> {avatarState === 'listening' ? 'Live caption' : 'You'}</span>
               <p>{heard || <em>Listening…</em>}</p>
             </div>
           )}
@@ -778,7 +778,7 @@ export default function InterviewRoom({ practice = false }) {
                 aria-label="I'm done answering"
               >
                 {avatarState === 'listening' ? (heard ? <Check size={28} /> : <Mic size={28} />) : <MicOff size={26} />}
-                <span>{heard ? 'Done' : 'Mic on'}</span>
+                <span>{avatarState === 'listening' ? (heard ? 'Done' : 'Listening') : 'Mic off'}</span>
               </button>
             )}
             <button onClick={() => { setTyping((t) => !t); listenerRef.current && typing === false && listenerRef.current.stop() }} aria-label="Type instead" className={typing ? 'active' : ''}>

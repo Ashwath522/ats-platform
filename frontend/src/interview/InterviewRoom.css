@@ -78,7 +78,8 @@
   cursor: pointer;
   transition: transform 0.1s ease, filter 0.15s ease, opacity 0.15s;
 }
-.iv-primary { background: var(--iv-accent); color: #1b1300; box-shadow: 0 8px 22px rgba(245, 165, 36, 0.3); }
+.iv-primary { background: linear-gradient(145deg, #ffd778 0%, var(--iv-accent) 48%, #df8510 100%); color: #1b1300; box-shadow: inset 0 1px 1px rgba(255,255,255,.72), 0 8px 22px rgba(245, 165, 36, 0.3); position: relative; overflow: hidden; }
+.iv-primary::before, .iv-controls button::before, .iv-send::before { content: ''; position: absolute; inset: 1px 10%; height: 42%; border-radius: inherit; background: linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0)); pointer-events: none; }
 .iv-primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 .iv-primary:not(:disabled):active, .iv-secondary:active { transform: scale(0.98); }
 .iv-secondary { background: rgba(255, 255, 255, 0.08); color: var(--iv-ink); border: 1px solid var(--iv-line); font-weight: 600; min-height: 46px; }
@@ -129,8 +130,10 @@
 .iv-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes iv-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.5; } 40% { transform: translateY(-7px); opacity: 1; } }
 
-.iv-heard { width: 100%; margin-top: 12px; background: rgba(45, 212, 191, 0.08); border: 1px solid rgba(45, 212, 191, 0.25); border-radius: 16px; padding: 10px 14px; }
+.iv-heard { width: 100%; margin-top: 12px; background: linear-gradient(135deg, rgba(45, 212, 191, 0.14), rgba(14, 56, 73, .72)); border: 1px solid rgba(45, 212, 191, 0.3); border-radius: 16px; padding: 10px 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.16); }
+.iv-heard-live { box-shadow: 0 0 0 1px rgba(45,212,191,.08), 0 0 28px rgba(45,212,191,.14), inset 0 1px 0 rgba(255,255,255,.18); }
 .iv-heard-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--iv-teal); }
+.iv-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--iv-teal); box-shadow: 0 0 0 4px rgba(45,212,191,.16); animation: iv-blink 1.2s infinite; }
 .iv-heard p { margin: 4px 0 0; font-size: 15px; line-height: 1.45; color: var(--iv-ink); max-height: 132px; overflow-y: auto; }
 .iv-heard em { color: var(--iv-dim); }
 .iv-nudge { margin-top: 10px; font-size: 13.5px; color: var(--iv-dim); text-align: center; }
@@ -166,7 +169,8 @@
 .iv-controls button {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   width: 58px; height: 58px; border-radius: 18px; border: 0;
-  background: rgba(255, 255, 255, 0.08); color: var(--iv-ink);
+  position: relative; overflow: hidden; background: linear-gradient(145deg, rgba(255,255,255,.18), rgba(255,255,255,.055)); color: var(--iv-ink);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.2), 0 7px 18px rgba(0,0,0,.22);
   font-size: 10.5px; font-weight: 600; cursor: pointer;
   transition: transform 0.1s ease, background 0.15s;
 }
@@ -174,7 +178,9 @@
 .iv-controls button:not(:disabled):active { transform: scale(0.94); }
 .iv-controls button.active { background: rgba(245, 165, 36, 0.2); color: var(--iv-accent); }
 .iv-controls .iv-mic { width: 76px; height: 76px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); }
-.iv-controls .iv-mic.on { background: var(--iv-teal); color: #04221d; box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.2); }
+.iv-controls .iv-mic.on { background: linear-gradient(145deg, #9ff9e6, var(--iv-teal) 55%, #18a996); color: #04221d; box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.2), inset 0 2px 2px rgba(255,255,255,.65), 0 10px 28px rgba(45,212,191,.28); animation: iv-mic-glow 1.8s ease-in-out infinite; }
+.iv-controls .iv-mic.on::before { background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,0)); }
+@keyframes iv-mic-glow { 50% { box-shadow: 0 0 0 10px rgba(45,212,191,.08), 0 0 30px rgba(45,212,191,.36), inset 0 2px 2px rgba(255,255,255,.65); } }
 .iv-controls .iv-mic:disabled { opacity: 1; }
 .iv-controls .iv-end { background: rgba(239, 68, 68, 0.9); color: #fff; }
 

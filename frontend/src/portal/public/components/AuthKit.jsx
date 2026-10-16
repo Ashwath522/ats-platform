@@ -191,3 +191,25 @@ export function GoogleSignIn({ role = 'candidate', onSuccess, onError, text = 'c
     </div>
   )
 }
+
+let liConfig = null
+async function linkedinConfig() {
+  if (liConfig) return liConfig
+  try { const r = await fetch(apiUrl('/api/auth/linkedin/config')); liConfig = r.ok ? await r.json() : { enabled: false } }
+  catch { liConfig = { enabled: false } }
+  return liConfig
+}
+
+export function LinkedInSignIn({ role = 'candidate', onError }) {
+  const [cfg, setCfg] = useState(null)
+  useEffect(() => { if (!isNativeApp()) linkedinConfig().then(setCfg) }, [])
+  if (isNativeApp() || !cfg?.enabled) return null
+  const start = () => {
+    const bytes = new Uint8Array(16); crypto.getRandomValues(bytes)
+    const state = [...bytes].map((x) => x.toString(16).padStart(2, '0')).join('')
+    const redirect = `${window.location.origin}/auth/linkedin/callback`
+    sessionStorage.setItem('linkedin_oauth', JSON.stringify({ state, role, returnTo: window.location.pathname }))
+    window.location.assign(`https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${encodeURIComponent(cfg.client_id)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}&scope=openid%20profile%20email`)
+  }
+  return <button type="button" className="pub-linkedin" onClick={start}><b>in</b> Continue with LinkedIn</button>
+}
