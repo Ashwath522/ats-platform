@@ -161,7 +161,7 @@ function Requests({ api, version, onChanged }) {
             <p>{created.name} ({created.email}) can now sign in at the recruiter login page.</p>
             {created.email_sent === false && <Alert tone="warn">{created.warning || 'The credentials email could not be delivered — share the password securely.'}</Alert>}
             {created.temporary_password && (
-              <div className="adm-temp">Temporary password (development mode only): <code>{created.temporary_password}</code>
+              <div className="adm-temp">Temporary password (shown only once — copy it now): <code>{created.temporary_password}</code>
                 <Button size="sm" variant="secondary" icon={Copy} onClick={() => navigator.clipboard?.writeText(created.temporary_password)}>Copy</Button></div>
             )}
           </div>

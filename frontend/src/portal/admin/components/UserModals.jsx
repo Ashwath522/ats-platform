@@ -36,7 +36,7 @@ function CopyBtn({ value }) {
   )
 }
 
-/** Add Recruiter / Admin / Candidate. Shows the temporary password once in dev mode. */
+/** Add Recruiter / Admin / Candidate. Shows the temporary password once when the email could not be sent (or in dev mode). */
 export function AddUserModal({ open, type, api, onClose, onCreated }) {
   const toast = useToast()
   const [form, setForm] = useState({})
@@ -76,7 +76,7 @@ export function AddUserModal({ open, type, api, onClose, onCreated }) {
           </Alert>
           {result.temporary_password && (
             <div className="adm-temp">
-              <span>Temporary password (shown once, development mode only):</span>
+              <span>Temporary password (shown only once — copy it now):</span>
               <code>{result.temporary_password}</code>
               <CopyBtn value={result.temporary_password} />
             </div>

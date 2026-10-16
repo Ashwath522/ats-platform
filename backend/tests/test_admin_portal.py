@@ -224,3 +224,63 @@ def test_settings_and_public_stats(client, world):
     assert pub["students"] == 2 and pub["open_jobs"] == 1
     assert "Acme Industries" in pub["company_names"] and "NewCo Engineering" not in pub["company_names"]
     assert not any(k in json.dumps(pub) for k in ("asha@", "rita@", "password"))
+
+
+def _email_fails(monkeypatch):
+    """Production-like: not dev mode and the email provider rejects the message."""
+    from app.api import auth as auth_api
+    from app.services.email_delivery import EmailDeliveryError
+    for k in ("DEV_MODE", "DEBUG", "ENV"):
+        monkeypatch.delenv(k, raising=False)
+
+    def boom(*a, **kw):
+        raise EmailDeliveryError("provider rejected")
+    monkeypatch.setattr(auth_api, "send_email", boom)
+
+
+def test_approve_shows_password_when_email_fails_and_it_works(client, world, monkeypatch):
+    _email_fails(monkeypatch)
+    r = client.post(f"{P}/recruiter-requests/{world['pending']}/approve", headers=world["admin"])
+    body = r.json()
+    assert r.status_code == 200 and body["email_sent"] is False and body.get("shown_once") is True
+    pw = body["temporary_password"]
+    assert len(pw) >= 12
+    login = client.post("/api/recruiter/auth/login", data={"username": "pp@newco.test", "password": pw})
+    assert login.status_code == 200, login.text
+    assert login.json()["must_change_password"] is True
+    tok = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert client.get("/api/recruiter/hiring/account", headers=tok).json()["must_change_password"] is True
+    ch = client.post("/api/recruiter/hiring/account/password", json={"current_password": pw, "new_password": "MyOwnPass2026"}, headers=tok)
+    assert ch.status_code == 200, ch.text
+    again = client.post("/api/recruiter/auth/login", data={"username": "pp@newco.test", "password": "MyOwnPass2026"})
+    assert again.status_code == 200 and again.json()["must_change_password"] is False
+
+
+def test_add_recruiter_shows_password_when_email_fails(client, world, monkeypatch):
+    _email_fails(monkeypatch)
+    from app.api import admin_portal
+    import app.api.auth as auth_api
+    monkeypatch.setattr(auth_api, "_send_email_or_dev", lambda *a, **k: (_ for _ in ()).throw(auth_api.HTTPException(status_code=502, detail="x")))
+    r = client.post(f"{P}/users", json={"type": "recruiter", "name": "Neel HR", "email": "neel@acme.test", "company": "Acme"}, headers=world["admin"])
+    assert r.status_code == 200, r.text
+    pw = r.json()["temporary_password"]
+    assert client.post("/api/recruiter/auth/login", data={"username": "neel@acme.test", "password": pw}).status_code == 200
+
+
+def test_admin_sets_temporary_password_for_recruiter_and_student(client, world):
+    h = world["admin"]
+    r = client.post(f"{P}/users/{world['rec_uid']}/actions", json={"action": "temp_password"}, headers=h)
+    assert r.status_code == 200 and r.json()["shown_once"] is True
+    pw = r.json()["temporary_password"]
+    assert client.post("/api/recruiter/auth/login", data={"username": "rita@acme.test", "password": PW}).status_code == 401
+    ok = client.post("/api/recruiter/auth/login", data={"username": "rita@acme.test", "password": pw})
+    assert ok.status_code == 200 and ok.json()["must_change_password"] is True
+    r = client.post(f"{P}/users/c-{world['c1']}/actions", json={"action": "temp_password"}, headers=h)
+    spw = r.json()["temporary_password"]
+    assert client.post("/api/candidate/auth/login", data={"username": "asha@student.test", "password": spw}).status_code == 200
+    # cannot do it to yourself
+    assert client.post(f"{P}/users/{world['admin_uid']}/actions", json={"action": "temp_password"}, headers=h).status_code == 400
+    # the password never appears in the audit log
+    with Session(engine) as s:
+        dump = " ".join(str(a.raw_verdicts_json or "") + str(a.human_action or "") for a in s.exec(select(DecisionAuditLog)).all())
+    assert pw not in dump and spw not in dump

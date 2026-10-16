@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { Home, Users, PlusSquare, Briefcase, UserCheck, FileCheck2, Bookmark, CalendarDays, Handshake, Building2, BarChart3, Settings } from 'lucide-react'
 import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
@@ -39,6 +39,7 @@ export default function RecruiterShell() {
   const prefetch = usePortalPrefetch(api, RECRUITER_ROUTES, { idleData: ['/recruiter/applications'] })
   const [company, setCompany] = useState(null)
   const [me, setMe] = useState(null)
+  const mustChange = (() => { try { return localStorage.getItem('ats_recruiter_must_change') === '1' } catch { return false } })()
 
   const reload = useCallback(async () => {
     const [p, c] = await Promise.all([
@@ -57,6 +58,11 @@ export default function RecruiterShell() {
     <RecruiterCtx.Provider value={{ me, company, setCompany, reload, companyName }}>
       <PortalLayout
         prefetch={prefetch}
+        notice={mustChange ? (
+          <div className="cl-alert warn" role="status" style={{ marginBottom: 16 }}>
+            You signed in with a temporary password. <Link to="/recruiter/settings?tab=security" style={{ fontWeight: 600 }}>Set your own password</Link> in Settings → Security.
+          </div>
+        ) : null}
         role="recruiter"
         brandSub="for Recruiters"
         nav={RECRUITER_NAV}

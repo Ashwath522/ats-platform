@@ -27,6 +27,7 @@ export function PasswordModal({ open, onClose, onChanged }) {
     setBusy(true)
     try {
       const r = await api.post(`${H}/account/password`, { current_password: f.current, new_password: f.next })
+      try { localStorage.removeItem('ats_recruiter_must_change') } catch { /* ignore */ }
       toast('Password changed', 'success'); onChanged?.(r); onClose()
     } catch (x) { setErr({ form: x.message }) } finally { setBusy(false) }
   }

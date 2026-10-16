@@ -24,6 +24,7 @@ export default function PortalLayout({
   outletContext,
   children,
   prefetch,
+  notice,
 }) {
   const [drawer, setDrawer] = useState(false)
   const [scrolled, setScrolled] = useState(false)
@@ -86,6 +87,7 @@ export default function PortalLayout({
             </div>
           </header>
           <main className="cl-content cl-page-enter" key={location.pathname}>
+            {notice}
             {children || (
               // Page chunks load inside the shell: the sidebar / top bar stay put and
               // only the content area shows a skeleton (was: whole-app blank fallback).
