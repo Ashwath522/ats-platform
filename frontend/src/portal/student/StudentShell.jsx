@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { Home, User, FileText, Briefcase, Compass, ClipboardCheck, Bot, BookOpen, Settings } from 'lucide-react'
+import { Home, User, FileText, Briefcase, Compass, Building2, ClipboardCheck, Bot, BookOpen, Settings } from 'lucide-react'
 import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
 import { useApi } from '../../ui/useApi.js'
@@ -13,6 +13,7 @@ export const STUDENT_NAV = [
   { to: '/candidate/resume-skills', label: 'Resume & Skills', icon: FileText },
   { to: '/candidate/projects', label: 'Projects', icon: Briefcase },
   { to: '/candidate/opportunities', label: 'Opportunities', icon: Compass },
+  { to: '/candidate/companies', label: 'Companies', icon: Building2 },
   { to: '/candidate/applications', label: 'Applications', icon: ClipboardCheck },
   { to: '/candidate/ai-interview', label: 'AI Interview', icon: Bot },
   { to: '/candidate/resources', label: 'Resources', icon: BookOpen },

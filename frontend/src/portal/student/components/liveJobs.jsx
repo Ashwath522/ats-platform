@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bookmark, CheckCircle2, Clock, ExternalLink, MapPin, Radio, ShieldCheck, X, AlertCircle } from 'lucide-react'
-import { Alert, Badge, Button, LogoTile, Modal, Skeleton, timeAgo, useToast } from '../../../ui/index.jsx'
+import { Alert, Badge, Button, Modal, Skeleton, timeAgo, useToast } from '../../../ui/index.jsx'
+import { CompanyLogo } from '../../shared/companies.jsx'
 import { useApi } from '../../../ui/useApi.js'
 import { JobTags, fmtSalary } from './shared.jsx'
 import './student.css'
@@ -118,9 +119,9 @@ export function ExternalJobModal({ jobId, onClose, saved, onToggleSave, onChange
       {job && (
         <div className="cl-col" style={{ gap: 14 }}>
           <div className="cl-row" style={{ alignItems: 'flex-start' }}>
-            <LogoTile name={job.company} size={52} />
+            <CompanyLogo name={job.company} domain={job.company_domain} size={52} />
             <div className="cl-grow" style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700, color: 'var(--cl-ink)', fontSize: 16 }}>{job.company}</div>
+              <div style={{ fontWeight: 700, color: 'var(--cl-ink)', fontSize: 16 }}>{job.company_slug ? <Link to={`/candidate/companies/${job.company_slug}`} style={{ color: 'inherit' }}>{job.company}</Link> : job.company}</div>
               <div className="cl-meta" style={{ marginTop: 4 }}>
                 <span><MapPin size={14} />{job.location || '—'}</span>
                 {salary && <span>{salary}</span>}

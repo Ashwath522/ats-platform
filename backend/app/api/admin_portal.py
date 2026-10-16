@@ -615,7 +615,8 @@ def _fmt_ist(dt: datetime) -> str:
 
 
 def _company_public(e: dict) -> dict:
-    return {**e, "registered": _iso(e.get("registered"))}
+    from ..services.company_directory import is_demo_company_name
+    return {**e, "registered": _iso(e.get("registered")), "is_demo": is_demo_company_name(e.get("name"))}
 
 
 @router.get(f"{P}/overview")
@@ -1486,6 +1487,8 @@ def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branch: Opt
         jobs = s.exec(select(Job).order_by(Job.created_at.desc())).all()
         app_counts = dict(s.exec(select(Application.job_id, func.count()).group_by(Application.job_id)).all())
         flagged = {f.target_id for f in s.exec(select(ContentFlag).where(ContentFlag.kind == "job", ContentFlag.status == "open")).all()}
+        from ..services.company_directory import index as _dir_index
+        demo_recs = _dir_index().demo_recruiters
         rows = []
         for j in jobs:
             ru = ix.ru_by_id.get(j.recruiter_id)
@@ -1494,6 +1497,7 @@ def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branch: Opt
                          "status": j.status, "job_type": j.job_type, "remote_type": j.remote_type, "openings": j.openings,
                          "salary_min": j.salary_min, "salary_max": j.salary_max, "currency": j.currency,
                          "applications": app_counts.get(j.id, 0), "flagged": j.id in flagged,
+                         "is_demo": j.recruiter_id in demo_recs,
                          "created_at": _iso(j.created_at), "updated_at": _iso(j.updated_at)})
     kpis = {"total": len(rows), "open": sum(1 for r in rows if r["status"] == "open"), "closed": sum(1 for r in rows if r["status"] == "closed"),
             "paused": sum(1 for r in rows if r["status"] in {"paused", "draft"}), "flagged": sum(1 for r in rows if r["flagged"]),
@@ -1552,6 +1556,9 @@ def set_job_status(job_id: int, body: JobStatusBody, admin: str = Depends(get_cu
         s.commit()
         _audit(s, admin, "close_job" if body.status == "closed" else "reopen_job", f"job-{job_id}", job_id=job_id,
                details={"from": old, "to": body.status})
+        if old != "open" and body.status == "open":
+            from ..services.company_directory import notify_new_internal_job
+            notify_new_internal_job(s.get(Job, job_id))
         return {"id": job_id, "status": body.status}
 
 

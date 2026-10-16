@@ -12,6 +12,7 @@ import { mediaUrl } from '../../lib/api.js'
 import { BRANCHES } from '../../branding/branches.js'
 import { ConfirmModal, MiniStat, fmtDateTime, fmtNum, qs } from './components/adminKit.jsx'
 import './components/liveData.css'
+import DemoCompaniesCard from './components/DemoCompaniesCard.jsx'
 
 const RUN_TONE = { ok: 'green', partial: 'amber', error: 'red', skipped: '', running: 'blue' }
 const RUN_LABEL = { ok: 'Success', partial: 'Partial', error: 'Failed', skipped: 'Skipped', running: 'Running' }
@@ -133,6 +134,7 @@ export default function AdminLiveData() {
               </div>
             )}
           </Card>
+          <DemoCompaniesCard />
         </>
       )}
       {tab === 'history' && <RunHistory runs={d?.runs} loading={q.loading && !d} />}

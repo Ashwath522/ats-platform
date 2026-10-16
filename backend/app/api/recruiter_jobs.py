@@ -176,7 +176,16 @@ def create_job(
         session.add(job)
         session.commit()
         session.refresh(job)
+        _notify_followers(job)
         return _job_to_dict(job)
+
+
+def _notify_followers(job: Job) -> None:
+    """Students following this company get an (at most daily) email; the bell
+    item is derived from the job itself."""
+    from ..services.company_directory import notify_new_internal_job
+
+    notify_new_internal_job(job)
 
 
 @router.get("")
@@ -248,6 +257,7 @@ def update_job(
             if remote_type not in ("remote", "onsite", "hybrid"):
                 raise HTTPException(status_code=400, detail="remote_type must be 'remote', 'onsite', or 'hybrid'")
             job.remote_type = remote_type
+        was_open = job.status == "open"
         if status is not None:
             if status not in JOB_STATUSES:
                 raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(JOB_STATUSES)}")
@@ -257,6 +267,8 @@ def update_job(
         session.add(job)
         session.commit()
         session.refresh(job)
+        if not was_open and job.status == "open":
+            _notify_followers(job)
         return _job_to_dict(job)
 
 

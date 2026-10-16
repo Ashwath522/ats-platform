@@ -8,6 +8,7 @@ import { useQuery } from '../../../ui/useApi.js'
 import VerificationReport from '../../../components/VerificationReport.jsx'
 import { AccountPill, KV, Timeline, UserTypeBadge, VerificationPill, fmtDateTime } from './adminKit.jsx'
 import { DetailSkeleton, EditUserModal, FullProfileModal } from './UserModals.jsx'
+import { CollegeName } from '../../../ui/CollegePicker.jsx'
 
 /**
  * Right-hand "User Details" panel on page 24 (slides over the page on
@@ -103,7 +104,7 @@ export default function UserDetailsPanel({ uid, api, onClose, onAction, onChange
               <h4 style={{ marginBottom: 10 }}>Profile Summary</h4>
               {isCand ? (
                 <div className="adm-psum">
-                  <div><GraduationCap size={16} /><span>College</span><strong>{d.college || '—'}</strong></div>
+                  <div><GraduationCap size={16} /><span>College</span><strong>{d.college ? <CollegeName name={d.college} size={18} /> : '—'}</strong></div>
                   <div><BookOpen size={16} /><span>Branch</span><strong>{d.dept || '—'}</strong></div>
                   <div><BarChart3 size={16} /><span>CGPA</span><strong>{d.cgpa ?? '—'}</strong></div>
                   <div><MapPin size={16} /><span>Location</span><strong>{d.location || '—'}</strong></div>

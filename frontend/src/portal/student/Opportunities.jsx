@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Briefcase, GraduationCap, Clock, Building, Globe, MapPin, ArrowRight, Filter, Search, List, LayoutGrid, Bookmark, BrainCircuit,
   BadgeIndianRupee, Gauge, Layers, X, ExternalLink, Radio,
 } from 'lucide-react'
-import { Alert, Button, Card, EmptyState, Field, Hero, Input, LogoTile, Pagination, Segmented, Select, Skeleton, Tabs, ViewAll, Badge } from '../../ui/index.jsx'
+import { Alert, Button, Card, EmptyState, Field, Hero, Input, Pagination, Segmented, Select, Skeleton, Tabs, ViewAll, Badge } from '../../ui/index.jsx'
+import { CompanyLogo, CompanySearch, DemoBadge } from '../shared/companies.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { BRANCHES } from '../../branding/branches.js'
 import { useStudent } from './StudentShell.jsx'
@@ -20,7 +21,7 @@ const TYPE_TABS = [
   { id: 'onsite', label: 'On-site', icon: MapPin },
   { id: 'remote', label: 'Remote', icon: Globe },
 ]
-const EMPTY = { q: '', location: '', job_type: '', experience: '', branch: '', salary_min: '', remote: '', near: '', origin: '' }
+const EMPTY = { q: '', location: '', job_type: '', experience: '', branch: '', salary_min: '', remote: '', near: '', origin: '', company: '' }
 const ORIGIN = { corelink: 'CoreLink jobs', live: 'Live company listings' }
 const SALARY = [{ value: '300000', label: '₹3 LPA +' }, { value: '500000', label: '₹5 LPA +' }, { value: '800000', label: '₹8 LPA +' }, { value: '1200000', label: '₹12 LPA +' }]
 const EXP = { fresher: 'Fresher', '0-2': '0–2 years', '2-5': '2–5 years', '5+': '5+ years' }
@@ -29,7 +30,9 @@ export default function Opportunities() {
   const api = useApi('candidate')
   const { branch, profile } = useStudent()
   const [params, setParams] = useSearchParams()
-  const initial = useMemo(() => ({ ...EMPTY, q: params.get('q') || '', remote: params.get('remote') ? 'remote' : '', near: params.get('near') ? '1' : '', origin: ['live', 'corelink'].includes(params.get('origin')) ? params.get('origin') : '' }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => ({ ...EMPTY, q: params.get('q') || '', remote: params.get('remote') ? 'remote' : '', near: params.get('near') ? '1' : '', origin: ['live', 'corelink'].includes(params.get('origin')) ? params.get('origin') : '', company: /^[a-z0-9-]{1,80}$/.test(params.get('company') || '') ? params.get('company') : '' }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const [companyText, setCompanyText] = useState('')
+  const [companyName, setCompanyName] = useState('')
   const [draft, setDraft] = useState(initial)
   const [filters, setFilters] = useState(initial)
   const [tab, setTab] = useState(params.get('type') || 'all')
@@ -57,13 +60,22 @@ export default function Opportunities() {
   const q = useQuery(() => api.get(`/api/student/opportunities?${qs}`), [api, qs])
   const data = q.data
 
-  const apply = () => {
-    setFilters(draft); setPage(1)
+  const syncUrl = (f) => {
     const next = new URLSearchParams(params)
-    if (draft.q) next.set('q', draft.q); else next.delete('q')
+    if (f.q) next.set('q', f.q); else next.delete('q')
+    if (f.company) next.set('company', f.company); else next.delete('company')
     setParams(next, { replace: true })
   }
-  const clear = () => { setDraft(EMPTY); setFilters(EMPTY); setPage(1); setSavedOnly(false); setParams({}, { replace: true }) }
+  const apply = () => { setFilters(draft); setPage(1); syncUrl(draft) }
+  const pickCompany = (c) => {
+    const f = { ...draft, company: c.slug }
+    setDraft(f); setFilters(f); setPage(1); setCompanyText(''); setCompanyName(c.name); syncUrl(f)
+  }
+  const clear = () => { setDraft(EMPTY); setFilters(EMPTY); setPage(1); setSavedOnly(false); setCompanyText(''); setCompanyName(''); setParams({}, { replace: true }) }
+  // name for the chip when the page was opened with ?company=<slug>
+  useEffect(() => {
+    if (filters.company && !companyName) api.get(`/api/student/company-directory/${filters.company}`).then((c) => setCompanyName(c.name)).catch(() => {})
+  }, [filters.company]) // eslint-disable-line react-hooks/exhaustive-deps
   const setD = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }))
   const active = Object.entries(filters).filter(([, v]) => v)
   const countLabel = data ? `${data.total} ${savedOnly ? 'Saved ' : ''}Opportunit${data.total === 1 ? 'y' : 'ies'}` : 'Opportunities'
@@ -97,8 +109,8 @@ export default function Opportunities() {
 
           {(active.length > 0 || savedOnly) && (
             <div className="cl-chips">
-              {active.map(([k, v]) => <span key={k} className="cl-chip blue">{k === 'salary_min' ? `₹${v / 100000}+ LPA` : k === 'near' ? 'Near me' : k === 'experience' ? EXP[v] || v : k === 'branch' ? BRANCHES.find((b) => b.id === v)?.label || v : k === 'origin' ? ORIGIN[v] || v : v}
-                <button type="button" aria-label={`Remove ${k} filter`} onClick={() => { const n = { ...filters, [k]: '' }; setFilters(n); setDraft(n); setPage(1); if (k === 'q') setParams({}, { replace: true }) }}><X size={13} /></button></span>)}
+              {active.map(([k, v]) => <span key={k} className="cl-chip blue">{k === 'salary_min' ? `₹${v / 100000}+ LPA` : k === 'near' ? 'Near me' : k === 'experience' ? EXP[v] || v : k === 'branch' ? BRANCHES.find((b) => b.id === v)?.label || v : k === 'origin' ? ORIGIN[v] || v : k === 'company' ? `Company: ${companyName || v}` : v}
+                <button type="button" aria-label={`Remove ${k} filter`} onClick={() => { const n = { ...filters, [k]: '' }; setFilters(n); setDraft(n); setPage(1); if (k === 'q' || k === 'company') syncUrl(n); if (k === 'company') setCompanyName('') }}><X size={13} /></button></span>)}
               {savedOnly && <span className="cl-chip blue">Saved jobs<button type="button" aria-label="Show all jobs" onClick={() => setSavedOnly(false)}><X size={13} /></button></span>}
               <button className="cl-link" onClick={clear}>Clear all</button>
             </div>
@@ -120,6 +132,11 @@ export default function Opportunities() {
           <Card title={<><Filter size={20} />Filters</>} action={<button className="cl-link" onClick={clear}>Clear All</button>}>
             <form className="cl-col" style={{ gap: 14 }} onSubmit={(e) => { e.preventDefault(); apply() }}>
               <Field label="Search by title, company or keyword"><Input icon={Search} value={draft.q} onChange={setD('q')} placeholder="e.g. Design Intern, CAD, Simulation…" maxLength={120} /></Field>
+              <div className="st-filter-row"><Building size={18} /><Field label="Company">
+                <CompanySearch api={api} value={companyText} onChange={setCompanyText} onPick={pickCompany} label="Filter by company"
+                  placeholder={companyName ? `${companyName} — type to change` : 'Type a company, e.g. Bosch'}
+                  footer={<li className="co-suggest-foot"><Link to="/candidate/companies">Browse all companies →</Link></li>} />
+              </Field></div>
               <div className="st-filter-row"><MapPin size={18} /><Field label="Location"><Select value={draft.location} onChange={setD('location')} placeholder="All Locations" options={data?.facets?.locations || []} /></Field></div>
               <div className="st-filter-row"><Briefcase size={18} /><Field label="Job Type"><Select value={draft.job_type} onChange={setD('job_type')} placeholder="All Types" options={[{ value: 'internship', label: 'Internship' }, { value: 'full-time', label: 'Full Time' }, { value: 'part-time', label: 'Part Time' }, { value: 'apprenticeship', label: 'Apprenticeship' }]} /></Field></div>
               <div className="st-filter-row"><Gauge size={18} /><Field label="Experience Level"><Select value={draft.experience} onChange={setD('experience')} placeholder="All Levels" options={Object.entries(EXP).map(([value, label]) => ({ value, label }))} /></Field></div>
@@ -136,7 +153,7 @@ export default function Opportunities() {
               <div className="cl-list">
                 {savedJobs.items.slice(0, 3).map((s) => (
                   <div key={s.job_id} className="cl-list-item">
-                    <LogoTile name={s.company} src={s.company_logo} size={46} />
+                    <CompanyLogo name={s.company} domain={s.company_domain} src={s.company_logo} size={46} />
                     <button type="button" className="st-reset-btn" style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0 }} onClick={() => setOpenJob(s.job_id)}>
                       <strong className="cl-ellipsis" style={{ display: 'block', color: 'var(--cl-ink)', fontSize: 14 }}>{s.title}</strong>
                       <small className="cl-muted" style={{ display: 'block' }}>{s.company}</small>
@@ -171,11 +188,14 @@ function JobRow({ job, grid, saved, onSave, onOpen, onApplyExternal }) {
   const salary = fmtSalary(job)
   return (
     <article className={`cl-card st-job ${grid ? 'st-job-card' : ''}`} style={grid ? { gridTemplateColumns: '56px minmax(0,1fr)' } : undefined}>
-      <div className="st-job-logo"><LogoTile name={job.company} src={job.company_logo} size={grid ? 52 : 56} wide={!grid} /></div>
+      <div className="st-job-logo"><CompanyLogo name={job.company} domain={job.company_domain} src={job.company_logo} size={grid ? 52 : 56} wide={!grid && !job.company_domain} /></div>
       <div style={{ minWidth: 0 }} className="cl-col">
         <div>
           <h4 className="st-card-click" onClick={onOpen}>{job.title}</h4>
-          <div style={{ fontSize: 14, color: 'var(--cl-text)', marginTop: 2 }}>{job.company}</div>
+          <div className="cl-row cl-wrap" style={{ fontSize: 14, color: 'var(--cl-text)', marginTop: 2, gap: 8 }}>
+            {job.company_slug ? <Link to={`/candidate/companies/${job.company_slug}`} style={{ color: 'inherit' }}>{job.company}</Link> : job.company}
+            {job.company_demo && <DemoBadge compact />}
+          </div>
         </div>
         <div className="cl-row cl-wrap" style={{ gap: 8 }}>
           <span className="cl-meta"><span><MapPin size={14} />{job.location || '—'}</span>{salary && <span>{salary}</span>}</span>

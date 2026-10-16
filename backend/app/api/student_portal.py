@@ -205,9 +205,12 @@ def match_score(job: Job, jskills: List[str], pskills: List[str], pbranch: Optio
 
 
 def _job_card(job: Job, companies: _Companies, *, match: int, saved: bool, application: Optional[Application]) -> dict:
+    from ..services.company_directory import card_meta, slug_for_job
+
     name, logo = companies.of(job)
     days = max(0, (utc_now() - job.created_at).days) if job.created_at else None
     return {
+        **card_meta(slug_for_job(job)),
         "id": job.id,
         "title": job.title,
         "company": name,
@@ -1021,6 +1024,7 @@ def opportunities(
     saved_only: bool = Query(False),
     sort: str = Query("relevance", pattern="^(relevance|newest|salary)$"),
     origin: str = Query("all", pattern="^(all|corelink|live)$", description="all | corelink (in-app jobs) | live (official company listings)"),
+    company: Optional[str] = Query(None, max_length=80, description="company directory slug"),
     page: int = Query(1, ge=1, le=500),
     page_size: int = Query(10, ge=1, le=50),
     candidate: str = Depends(get_current_candidate),
@@ -1048,8 +1052,14 @@ def opportunities(
         bfilter = branch_id(branch) if branch else None
         pcity = _city(profile.location_text)
 
+        from ..services import company_directory as _cd
+        dir_ix = _cd.index() if company else None
+        company_slug = (company or "").strip().lower() or None
+
         rows = []
         for job in jobs:
+            if company_slug and _cd.slug_for_job(job, dir_ix) != company_slug:
+                continue
             name, _logo = companies.of(job)
             jskills = job_skills(job)
             if ql:
@@ -1095,6 +1105,8 @@ def opportunities(
                     ext_applied[ext_id] = created
         ext_rows = []
         for e in ext_all:
+            if company_slug and _cd.slug_for_external(e, dir_ix) != company_slug:
+                continue
             if ql:
                 hay = " ".join([e.title, e.company_name, e.description_text or "", e.location_text or "",
                                 BRANCH_LABELS.get(e.branch or "", "")]).lower()
@@ -1212,6 +1224,16 @@ def opportunity_detail(job_id: int, candidate: str = Depends(get_current_candida
         return card
 
 
+def _dir_meta_job(job) -> dict:
+    from ..services.company_directory import card_meta, slug_for_job
+    return card_meta(slug_for_job(job))
+
+
+def _dir_meta_ext(e) -> dict:
+    from ..services.company_directory import card_meta, slug_for_external
+    return card_meta(slug_for_external(e))
+
+
 def _saved_list(session: Session, cid: int) -> List[dict]:
     companies = _Companies(session)
     out = []
@@ -1220,6 +1242,7 @@ def _saved_list(session: Session, cid: int) -> List[dict]:
     for s, job in rows:
         name, logo = companies.of(job)
         out.append({
+            **_dir_meta_job(job),
             "job_id": job.id, "title": job.title, "company": name, "company_logo": logo,
             "location": job.location_text, "branch": branch_id(job.branch), "job_type": job.job_type,
             "remote_type": job.remote_type, "status": job.status, "saved_at": _iso(s.created_at), "external": False,
@@ -1231,6 +1254,7 @@ def _saved_list(session: Session, cid: int) -> List[dict]:
                              .where(SavedExternalJob.candidate_id == cid)
                              .order_by(SavedExternalJob.created_at.desc()).limit(MAX_SAVED)).all():
         out.append({
+            **_dir_meta_ext(e),
             "job_id": f"ext-{e.id}", "external_job_id": e.id, "external": True, "title": e.title, "company": e.company_name,
             "company_logo": None, "location": e.location_text, "branch": e.branch, "job_type": e.job_type,
             "remote_type": e.remote_type, "status": "open" if e.status == "active" else "closed", "saved_at": _iso(s.created_at),

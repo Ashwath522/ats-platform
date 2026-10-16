@@ -726,11 +726,18 @@ def bulk_job_status(body: BulkStatusIn, recruiter: str = Depends(get_current_rec
     with Session(engine) as session:
         ctx = Ctx(session, recruiter, with_apps=False)
         jobs = [_owned_job(ctx, i) for i in set(body.ids)]
+        reopened = [j.id for j in jobs if j.status != "open" and body.status == "open"]
         for j in jobs:
             j.status = body.status
             j.updated_at = utc_now()
             session.add(j)
         session.commit()
+        if reopened:   # followers of this company hear about newly opened roles
+            from ..services.company_directory import notify_new_internal_job
+            for j in jobs:
+                if j.id in reopened:
+                    session.refresh(j)
+                    notify_new_internal_job(j)
         return {"updated": len(jobs), "status": body.status}
 
 

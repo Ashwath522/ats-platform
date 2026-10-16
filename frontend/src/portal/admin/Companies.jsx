@@ -4,6 +4,7 @@ import { Building2, BadgeCheck, Clock3, Briefcase, UsersRound, FileText, Eye, Fl
 import {
   Alert, Badge, Button, Card, DataTable, EmptyState, LogoTile, Menu, Modal, PageHeader, Pagination, Skeleton, StatusPill, fmtDate, useToast,
 } from '../../ui/index.jsx'
+import { DemoBadge } from '../shared/companies.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import VerificationReport from '../../components/VerificationReport.jsx'
 import { CompanyPill, FilterSelect, KV, MiniStat, NoteModal, fmtNum, qs } from './components/adminKit.jsx'
@@ -46,7 +47,7 @@ export default function AdminCompanies() {
     { key: 'name', header: 'Company', sortable: true, render: (c) => (
       <span className="cl-row" style={{ gap: 10, minWidth: 0 }}>
         <LogoTile name={c.name} src={c.logo} size={34} />
-        <Cell2 main={c.name} sub={c.website ? c.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : null} />
+        <Cell2 main={<>{c.name}{c.is_demo && <> <DemoBadge compact /></>}</>} sub={c.website ? c.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : null} />
       </span>
     ) },
     { key: 'industry', header: 'Industry', render: (c) => <span className="cl-muted">{c.industry || '—'}</span>, hideOnMobile: true },

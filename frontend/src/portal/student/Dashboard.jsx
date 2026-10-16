@@ -5,6 +5,7 @@ import { Alert, Button, Card, DataTable, EmptyState, Hero, LogoTile, Menu, Progr
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { useStudent } from './StudentShell.jsx'
 import { JobMediaCard, JobDetailsModal, ExplainabilityModal, useSavedJobs } from './components/shared.jsx'
+import FollowedCompanies from './components/FollowedCompanies.jsx'
 
 const SHORTCUTS = [
   { to: '/candidate/resume-skills', title: 'My Resume', sub: 'Check & improve with AI', icon: FileText, tone: '' },
@@ -129,6 +130,8 @@ export default function Dashboard() {
           ))}
         </Card>
       </div>
+
+      <FollowedCompanies />
 
       <div className="st-split">
         <Card title="Recent Applications" action={<ViewAll to="/candidate/applications" />}>

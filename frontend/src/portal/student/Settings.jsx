@@ -11,6 +11,7 @@ import {
 import { useApi } from '../../ui/useApi.js'
 import { useAuth } from '../../auth.jsx'
 import { useStudent } from './StudentShell.jsx'
+import { CollegeName } from '../../ui/CollegePicker.jsx'
 import { ChipsModal, IdentityModal, openAuthedFile, useProfileSave } from './components/editors.jsx'
 import './components/student.css'
 
@@ -145,7 +146,7 @@ function Overview({ profile, displayName, branch, setModal }) {
             <h3 style={{ fontSize: 19 }}>{displayName}</h3>
             <span className="cl-muted">Student{profile.headline ? ` · ${profile.headline}` : ''}</span>
             <div className="st-links" style={{ paddingTop: 6, gap: 8 }}>
-              <span><Building size={16} />{profile.college || <span className="cl-muted">Add your college</span>}</span>
+              <span>{profile.college ? <CollegeName name={profile.college} id={profile.college_meta?.id} domain={profile.college_meta?.domain} size={20} /> : <><Building size={16} /><span className="cl-muted">Add your college</span></>}</span>
               <span><GraduationCap size={16} />{profile.degree || branch.long}{profile.grad_year ? ` (${profile.grad_year})` : ''}</span>
               <span><MapPin size={16} />{profile.location_text || <span className="cl-muted">Add your location</span>}</span>
             </div>
@@ -245,7 +246,7 @@ function EducationCard({ profile, onEdit }) {
   return (
     <Card title="Education Details" action={<Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>}>
       <div className="st-kv-box" style={{ padding: '0 14px' }}>
-        <KV icon={Building} label="College / University" value={profile.college} />
+        <KV icon={Building} label="College / University" value={profile.college && <CollegeName name={profile.college} id={profile.college_meta?.id} domain={profile.college_meta?.domain} size={20} />} />
         <KV icon={GraduationCap} label="Degree" value={profile.degree} />
         <KV icon={CalendarDays} label="Graduation Year" value={profile.grad_year} />
         <KV icon={CalendarDays} label="Current Year" value={profile.current_year} />
