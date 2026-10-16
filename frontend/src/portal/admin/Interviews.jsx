@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CalendarDays, CalendarClock, CheckCircle2, Bot, CircleX, Video, MapPin, Eye } from 'lucide-react'
-import { Alert, Avatar, Badge, Card, DataTable, EmptyState, Menu, PageHeader, Pagination, StatusPill, Tabs, statusLabel } from '../../ui/index.jsx'
+import { CalendarDays, CalendarClock, CheckCircle2, Bot, CircleX, Video, MapPin, Eye, ShieldAlert } from 'lucide-react'
+import { Alert, Avatar, Badge, Card, DataTable, EmptyState, Menu, Modal, PageHeader, Pagination, StatusPill, Tabs, statusLabel } from '../../ui/index.jsx'
+import ProctoringReview from '../shared/ProctoringReview.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { FilterSelect, MiniStat, fmtDateTime, fmtNum, qs } from './components/adminKit.jsx'
 import { Cell2, ListToolbar, useListState } from './components/ListKit.jsx'
@@ -13,6 +14,7 @@ export default function AdminInterviews() {
   const navigate = useNavigate()
   const [kind, setKind] = useState('')
   const [status, setStatus] = useState('')
+  const [proctor, setProctor] = useState(null) // AI interview row being reviewed
   const ls = useListState({ kind, status })
   const list = useQuery(() => api.get(`/api/admin/portal/interviews${qs({ kind, status, q: ls.dq, page: ls.page, page_size: ls.pageSize })}`),
     [api, kind, status, ls.dq, ls.page, ls.pageSize])
@@ -41,7 +43,10 @@ export default function AdminInterviews() {
     { key: 'status', header: 'Status', render: (r) => <StatusPill status={r.status} /> },
     { key: 'rating', header: 'Result', render: (r) => (r.rating != null ? <span><strong>{r.rating}</strong>{r.kind === 'ai' ? '/100' : '/5'}{r.recommendation ? <small className="cl-muted"> · {statusLabel(r.recommendation)}</small> : null}</span> : '—') },
     { key: 'actions', header: '', render: (r) => (
-      <Menu items={[{ label: 'View candidate', icon: Eye, onClick: () => navigate(`/admin/users?user=${r.candidate?.id}`), disabled: !r.candidate?.id }]} />
+      <Menu items={[
+        { label: 'View candidate', icon: Eye, onClick: () => navigate(`/admin/users?user=${r.candidate?.id}`), disabled: !r.candidate?.id },
+        ...(r.kind === 'ai' ? [{ label: 'View proctoring', icon: ShieldAlert, onClick: () => setProctor(r) }] : []),
+      ]} />
     ) },
   ]
 
@@ -66,6 +71,10 @@ export default function AdminInterviews() {
         <Pagination page={ls.page} pages={Math.max(1, Math.ceil((d?.total || 0) / ls.pageSize))} total={d?.total || 0} pageSize={ls.pageSize}
           setPage={ls.setPage} setPageSize={ls.setPageSize} noun="interviews" />
       </Card>
+      <Modal open={!!proctor} onClose={() => setProctor(null)} size="lg"
+        title={proctor ? `Proctoring — ${proctor.candidate?.name || 'Candidate'} · ${proctor.job}` : ''}>
+        {proctor && <ProctoringReview role="admin" sessionId={String(proctor.id).replace(/^a-/, '')} />}
+      </Modal>
     </div>
   )
 }

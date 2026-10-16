@@ -1,3 +1,5 @@
+import { createTask } from './mp-loader'
+
 export interface PoseResult {
   poseScore: number; // 0-100, higher is better
   personPresent: boolean;
@@ -17,15 +19,9 @@ export class PoseDetector {
   async initialize(): Promise<void> {
     if (typeof window === 'undefined') return;
     try {
-      // @ts-expect-error - MediaPipe is loaded dynamically from a CDN and the package exposes no local TS declarations.
-      const vision = await import(/* turbopackIgnore: true */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/+esm");
-      const filesetResolver = await vision.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-      );
-      this.poseLandmarker = await vision.PoseLandmarker.createFromOptions(filesetResolver, {
+      this.poseLandmarker = await createTask('PoseLandmarker', {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-          delegate: "GPU"
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
         },
         runningMode: "IMAGE",
         numPoses: 1

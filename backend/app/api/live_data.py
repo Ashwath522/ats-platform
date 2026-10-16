@@ -75,7 +75,7 @@ def _start(kind: str, who: str, background: BackgroundTasks) -> dict:
 
 
 @router.post("/api/admin/live-sync", status_code=202)
-async def admin_trigger(body: SyncBody, background: BackgroundTasks, admin: str = Depends(get_current_admin)):
+def admin_trigger(body: SyncBody, background: BackgroundTasks, admin: str = Depends(get_current_admin)):
     out = _start(body.kind, f"admin:{admin}", background)
     if out["started"]:
         _audit(admin, f"live_sync:{body.kind}")
@@ -83,7 +83,7 @@ async def admin_trigger(body: SyncBody, background: BackgroundTasks, admin: str 
 
 
 @router.post("/api/internal/live-sync", status_code=202)
-async def internal_trigger(background: BackgroundTasks, body: Optional[SyncBody] = None,
+def internal_trigger(background: BackgroundTasks, body: Optional[SyncBody] = None,
                            x_sync_token: Optional[str] = Header(default=None)):
     expected = (os.environ.get("LIVE_SYNC_TOKEN") or "").strip()
     if not expected:
@@ -96,7 +96,7 @@ async def internal_trigger(background: BackgroundTasks, body: Optional[SyncBody]
 # ── admin status / settings ──────────────────────────────────────────────────
 
 @router.get("/api/admin/live-sync/status")
-async def admin_status(history: int = Query(30, ge=1, le=100), admin: str = Depends(get_current_admin)):
+def admin_status(history: int = Query(30, ge=1, le=100), admin: str = Depends(get_current_admin)):
     return live_sync.status_snapshot(history)
 
 
@@ -108,12 +108,12 @@ class SettingsBody(BaseModel):
 
 
 @router.get("/api/admin/live-sync/settings")
-async def get_settings(admin: str = Depends(get_current_admin)):
+def get_settings(admin: str = Depends(get_current_admin)):
     return {"settings": live_sync.load_settings(), "sources": list(PROVIDERS)}
 
 
 @router.put("/api/admin/live-sync/settings")
-async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admin)):
+def put_settings(body: SettingsBody, admin: str = Depends(get_current_admin)):
     try:
         st = live_sync.save_settings(body.model_dump(exclude_unset=True))
     except ValueError as exc:
@@ -143,7 +143,7 @@ def _admin_job(e: ExternalJob) -> dict:
 
 
 @router.get("/api/admin/live-sync/jobs")
-async def admin_jobs(status: str = Query("active", pattern="^(active|expired|hidden|all)$"), source: Optional[str] = Query(None, max_length=30),
+def admin_jobs(status: str = Query("active", pattern="^(active|expired|hidden|all)$"), source: Optional[str] = Query(None, max_length=30),
                      q: Optional[str] = Query(None, max_length=120), page: int = Query(1, ge=1, le=500),
                      page_size: int = Query(20, ge=1, le=100), admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
@@ -167,7 +167,7 @@ class JobStatusBody(BaseModel):
 
 
 @router.patch("/api/admin/live-sync/jobs/{job_id}")
-async def admin_job_status(job_id: int, body: JobStatusBody, admin: str = Depends(get_current_admin)):
+def admin_job_status(job_id: int, body: JobStatusBody, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         e = s.get(ExternalJob, job_id)
         if not e:
@@ -194,7 +194,7 @@ def _res(r: LiveResource) -> dict:
 
 
 @router.get("/api/admin/live-resources")
-async def admin_resources(branch: Optional[str] = Query(None, max_length=20), kind: Optional[str] = Query(None, max_length=20),
+def admin_resources(branch: Optional[str] = Query(None, max_length=20), kind: Optional[str] = Query(None, max_length=20),
                           source: Optional[str] = Query(None, max_length=20), status: str = Query("all", pattern="^(active|hidden|all)$"),
                           q: Optional[str] = Query(None, max_length=120), page: int = Query(1, ge=1, le=500),
                           page_size: int = Query(20, ge=1, le=100), admin: str = Depends(get_current_admin)):
@@ -236,7 +236,7 @@ class ResourceIn(BaseModel):
 
 
 @router.post("/api/admin/live-resources", status_code=201)
-async def admin_add_resource(body: ResourceIn, admin: str = Depends(get_current_admin)):
+def admin_add_resource(body: ResourceIn, admin: str = Depends(get_current_admin)):
     _check_meta(body.branch, body.kind, body.title)
     url = body.url.strip()
     if not re.match(r"^https://[^\s/]+\.[^\s/]+", url):
@@ -300,7 +300,7 @@ class ResourcePatch(BaseModel):
 
 
 @router.patch("/api/admin/live-resources/{rid}")
-async def admin_patch_resource(rid: int, body: ResourcePatch, admin: str = Depends(get_current_admin)):
+def admin_patch_resource(rid: int, body: ResourcePatch, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         r = s.get(LiveResource, rid)
         if not r:
@@ -319,7 +319,7 @@ async def admin_patch_resource(rid: int, body: ResourcePatch, admin: str = Depen
 
 
 @router.delete("/api/admin/live-resources/{rid}")
-async def admin_delete_resource(rid: int, admin: str = Depends(get_current_admin)):
+def admin_delete_resource(rid: int, admin: str = Depends(get_current_admin)):
     from ..services.media_utils import delete_media_file
 
     with Session(engine) as s:
@@ -410,7 +410,7 @@ def _ext_or_404(session: Session, ext_id: int, cid: int, *, allow_inactive_for_o
 
 
 @router.get("/api/student/external-jobs/{ext_id}")
-async def external_job_detail(ext_id: int, candidate: str = Depends(get_current_candidate)):
+def external_job_detail(ext_id: int, candidate: str = Depends(get_current_candidate)):
     from .student_portal import _candidate_context, branch_id, profile_skills
 
     with Session(engine) as s:
@@ -435,7 +435,7 @@ class TrackBody(BaseModel):
 
 
 @router.post("/api/student/external-jobs/{ext_id}/track")
-async def track_external(ext_id: int, body: TrackBody, candidate: str = Depends(get_current_candidate)):
+def track_external(ext_id: int, body: TrackBody, candidate: str = Depends(get_current_candidate)):
     from .student_portal import _user
 
     with Session(engine) as s:
@@ -463,7 +463,7 @@ async def track_external(ext_id: int, body: TrackBody, candidate: str = Depends(
 
 
 @router.get("/api/student/live-resources")
-async def student_live_resources(branch: Optional[str] = Query(None, max_length=40), kind: Optional[str] = Query(None, max_length=20),
+def student_live_resources(branch: Optional[str] = Query(None, max_length=40), kind: Optional[str] = Query(None, max_length=20),
                                  q: Optional[str] = Query(None, max_length=120), limit: int = Query(12, ge=1, le=60),
                                  candidate: str = Depends(get_current_candidate)):
     from .student_portal import _candidate_context, branch_id

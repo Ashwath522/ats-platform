@@ -193,6 +193,16 @@ def _media(path: Optional[str]) -> Optional[str]:
     return f"/media/{path}" if path else None
 
 
+def _as_dt(v):
+    """Scalar-subquery datetimes come back as strings on SQLite."""
+    if v is None or isinstance(v, datetime):
+        return v
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "").replace(" ", "T"))
+    except ValueError:
+        return None
+
+
 def _send(to: Optional[str], email, category: str) -> Optional[int]:
     if not to:
         return None
@@ -206,7 +216,16 @@ def _send(to: Optional[str], email, category: str) -> Optional[int]:
 
 # ─── recruiter / ownership helpers ───────────────────────────────────────────
 
-def _rec(s: Session, email: str) -> RecruiterUser:
+def _rec(s: Session, email: str, row: bool = False) -> RecruiterUser:
+    """Recruiter (id, username) from the auth principal cache - no query on a
+    warm cache. ``row=True`` loads the ORM row (needed to change the password)."""
+    if not row:
+        from ..auth import _principal
+
+        found = _principal("recruiter", email)
+        if not found:
+            raise HTTPException(status_code=404, detail="Recruiter account not found")
+        return found
     rec = s.exec(select(RecruiterUser).where(RecruiterUser.username == email)).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recruiter account not found")
@@ -218,7 +237,10 @@ def _user(s: Session, email: str) -> Optional[User]:
 
 
 def _my_jobs(s: Session, rid: int) -> Dict[int, Job]:
-    return {j.id: j for j in s.exec(select(Job).where(Job.recruiter_id == rid)).all()}
+    """Cached, read-only job rows of this recruiter (cleared on any job write)."""
+    from ..services.hot_data import recruiter_jobs
+
+    return {j.id: j for j in recruiter_jobs(rid)}
 
 
 def _owned_app(s: Session, app_id: int, rid: int):
@@ -249,19 +271,24 @@ def _candidates(s: Session, ids: Iterable[int]) -> Dict[int, dict]:
     ids = list({i for i in ids if i})
     if not ids:
         return {}
-    users = {u.id: u for u in s.exec(select(CandidateUser).where(CandidateUser.id.in_(ids))).all()}
-    profiles = {p.candidate_id: p for p in s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id.in_(ids))).all()}
-    out = {}
-    for cid in ids:
-        u, p = users.get(cid), profiles.get(cid)
-        email = (p.contact_email if p and p.contact_email else None) or (u.username if u else None)
-        name = (p.full_name if p and p.full_name else None) or (email.split("@")[0].replace(".", " ").title() if email else f"Candidate {cid}")
-        out[cid] = {
-            "name": name, "email": email, "college": p.college if p else None, "branch": p.branch if p else None,
-            "cgpa": p.cgpa if p else None, "avatar_url": _media(p.avatar_path) if p else None,
-            "location": p.location_text if p else None,
-        }
-    return out
+    users, profiles = {}, {}
+    for u, p in s.exec(select(CandidateUser, CandidateProfile)
+                       .outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)
+                       .where(CandidateUser.id.in_(ids))).all():   # 1 query (was 2)
+        users[u.id] = u
+        if p is not None:
+            profiles[u.id] = p
+    return {cid: _cand_dict(cid, users.get(cid), profiles.get(cid)) for cid in ids}
+
+
+def _cand_dict(cid: int, u, p) -> dict:
+    email = (p.contact_email if p and p.contact_email else None) or (u.username if u else None)
+    name = (p.full_name if p and p.full_name else None) or (email.split("@")[0].replace(".", " ").title() if email else f"Candidate {cid}")
+    return {
+        "name": name, "email": email, "college": p.college if p else None, "branch": p.branch if p else None,
+        "cgpa": p.cgpa if p else None, "avatar_url": _media(p.avatar_path) if p else None,
+        "location": p.location_text if p else None,
+    }
 
 
 def _company(s: Session, rec: RecruiterUser) -> CompanyProfile:
@@ -470,9 +497,16 @@ class CompanyUpdate(BaseModel):
 
 @router.get("/company")
 def get_company(recruiter: str = Depends(get_current_recruiter)):
-    with Session(engine) as s:
-        rec = _rec(s, recruiter)
-        return _company_dict(s, rec, _company(s, rec))
+    """Fetched by the recruiter shell on every page: cached per recruiter and
+    cleared on any write to the company / jobs / team / request tables."""
+    import copy
+    from ..services.hot_data import company_page_cache
+
+    def load():
+        with Session(engine) as s:
+            rec = _rec(s, recruiter)
+            return _company_dict(s, rec, _company(s, rec))
+    return copy.deepcopy(company_page_cache.get_or_set(recruiter, load))
 
 
 @router.put("/company")
@@ -716,14 +750,25 @@ def pick_applications(
         jobs = _my_jobs(s, rec.id)
         if not jobs:
             return {"items": []}
-        apps = s.exec(select(Application).where(Application.job_id.in_(list(jobs)))).all()
+        from sqlalchemy.orm import load_only
+
+        # applications + candidate in ONE query (was 2); only the columns shown
+        apps, cands = [], {}
+        for a, u, p in s.exec(select(Application, CandidateUser, CandidateProfile)
+                              .options(load_only(Application.id, Application.job_id, Application.candidate_id, Application.status,
+                                                 Application.candidate_status, Application.interview_status,
+                                                 Application.interview_eval_score, Application.final_score, Application.ats_score))
+                              .outerjoin(CandidateUser, CandidateUser.id == Application.candidate_id)
+                              .outerjoin(CandidateProfile, CandidateProfile.candidate_id == Application.candidate_id)
+                              .where(Application.job_id.in_(list(jobs)))).all():
+            apps.append(a)
+            cands[a.candidate_id] = _cand_dict(a.candidate_id, u, p)
         ivs = s.exec(select(ScheduledInterview).where(ScheduledInterview.job_id.in_(list(jobs)))).all()
         iv_apps = defaultdict(list)
         for iv in ivs:
             iv_apps[iv.application_id].append(iv)
         offers = s.exec(select(Offer).where(Offer.job_id.in_(list(jobs)))).all()
         active_offer = {o.application_id: o for o in offers if o.status in OPEN_OFFER_STATUSES}
-        cands = _candidates(s, [a.candidate_id for a in apps])
         out = []
         for a in apps:
             interviewed = any(iv.status != "cancelled" for iv in iv_apps[a.id]) or a.interview_status == "completed"
@@ -813,16 +858,27 @@ def _ai_rows(s: Session, jobs: Dict[int, Job]) -> List[dict]:
     """Completed AI interviews (Application.interview_status == completed) — read-only rows."""
     if not jobs:
         return []
-    apps = s.exec(select(Application).where(Application.job_id.in_(list(jobs)), Application.interview_status == "completed")).all()
-    if not apps:
+    # ONE query: completed applications + candidate + latest session time (was 3)
+    from sqlalchemy import func as sa_func
+    from sqlalchemy.orm import load_only
+
+    done_q = (select(sa_func.max(sa_func.coalesce(InterviewSession.completed_at, InterviewSession.started_at)))
+              .where(InterviewSession.application_id == Application.id).scalar_subquery())
+    rows = s.exec(select(Application, done_q, CandidateUser, CandidateProfile)
+                  .options(load_only(Application.id, Application.job_id, Application.candidate_id, Application.applied_at,
+                                     Application.interview_eval_score, Application.interview_status,
+                                     Application.interview_recommendation, Application.interview_risk_level))
+                  .outerjoin(CandidateUser, CandidateUser.id == Application.candidate_id)
+                  .outerjoin(CandidateProfile, CandidateProfile.candidate_id == Application.candidate_id)
+                  .where(Application.job_id.in_(list(jobs)), Application.interview_status == "completed")).all()
+    if not rows:
         return []
-    sessions = s.exec(select(InterviewSession).where(InterviewSession.application_id.in_([a.id for a in apps]))).all()
-    done_at = {}
-    for ses in sessions:
-        t = ses.completed_at or ses.started_at
-        if t and (ses.application_id not in done_at or t > done_at[ses.application_id]):
-            done_at[ses.application_id] = t
-    cands = _candidates(s, [a.candidate_id for a in apps])
+    apps, done_at, cands = [], {}, {}
+    for a, done, u, p in rows:
+        apps.append(a)
+        if done is not None:
+            done_at[a.id] = _as_dt(done)
+        cands[a.candidate_id] = _cand_dict(a.candidate_id, u, p)
     out = []
     for a in apps:
         job, c = jobs[a.job_id], cands.get(a.candidate_id, {})
@@ -919,9 +975,12 @@ def list_interviews(
         jobs = _my_jobs(s, rec.id)
         if not jobs:
             return {"items": [], "total": 0}
-        ivs = s.exec(select(ScheduledInterview).where(ScheduledInterview.job_id.in_(list(jobs)))).all()
-        cands = _candidates(s, [iv.candidate_id for iv in ivs])
-        rows = [_iv_dict(iv, jobs.get(iv.job_id), cands.get(iv.candidate_id, {})) for iv in ivs]
+        # interviews + their candidates in ONE query (was 2)
+        rows = [_iv_dict(iv, jobs.get(iv.job_id), _cand_dict(iv.candidate_id, u, p))
+                for iv, u, p in s.exec(select(ScheduledInterview, CandidateUser, CandidateProfile)
+                                       .outerjoin(CandidateUser, CandidateUser.id == ScheduledInterview.candidate_id)
+                                       .outerjoin(CandidateProfile, CandidateProfile.candidate_id == ScheduledInterview.candidate_id)
+                                       .where(ScheduledInterview.job_id.in_(list(jobs)))).all()]
         if include_ai:
             rows += _ai_rows(s, jobs)
         lo, hi = _parse_day(start, "start"), _parse_day(end, "end", end=True)
@@ -1277,8 +1336,7 @@ def list_offers(
     with Session(engine) as s:
         rec = _rec(s, recruiter)
         jobs = _my_jobs(s, rec.id)
-        offers = s.exec(select(Offer).where(Offer.job_id.in_(list(jobs) or [-1])).order_by(Offer.offer_date.desc())).all()
-        cands = _candidates(s, [o.candidate_id for o in offers])
+        offers, cands = _offers_with_candidates(s, list(jobs), newest_first=True)   # 1 query (was 2)
         lo, hi = _parse_day(start, "start"), _parse_day(end, "end", end=True)
         rows = []
         counts = Counter()
@@ -1302,6 +1360,20 @@ def list_offers(
         return {"items": rows[offset:offset + limit], "total": len(rows), "counts": dict(counts)}
 
 
+def _offers_with_candidates(s: Session, job_ids: List[int], newest_first: bool = False):
+    q = (select(Offer, CandidateUser, CandidateProfile)
+         .outerjoin(CandidateUser, CandidateUser.id == Offer.candidate_id)
+         .outerjoin(CandidateProfile, CandidateProfile.candidate_id == Offer.candidate_id)
+         .where(Offer.job_id.in_(job_ids or [-1])))
+    if newest_first:
+        q = q.order_by(Offer.offer_date.desc(), Offer.id.desc())
+    offers, cands = [], {}
+    for o, u, p in s.exec(q).all():
+        offers.append(o)
+        cands[o.candidate_id] = _cand_dict(o.candidate_id, u, p)
+    return offers, cands
+
+
 def _pipeline(apps: List[Application], ivs: List[ScheduledInterview], offers: List[Offer]) -> List[dict]:
     interviewed = {iv.application_id for iv in ivs if iv.status != "cancelled"} | {a.id for a in apps if a.interview_status == "completed"}
     made = [o for o in offers if o.status != "draft"]
@@ -1321,9 +1393,15 @@ def offer_stats(recruiter: str = Depends(get_current_recruiter)):
         rec = _rec(s, recruiter)
         jobs = _my_jobs(s, rec.id)
         ids = list(jobs) or [-1]
-        offers = s.exec(select(Offer).where(Offer.job_id.in_(ids))).all()
-        apps = s.exec(select(Application).where(Application.job_id.in_(ids))).all()
-        ivs = s.exec(select(ScheduledInterview).where(ScheduledInterview.job_id.in_(ids))).all()
+        from sqlalchemy.orm import load_only
+
+        offers, cands = _offers_with_candidates(s, ids)
+        apps = s.exec(select(Application).options(load_only(Application.id, Application.status, Application.candidate_status,
+                                                            Application.interview_status))
+                      .where(Application.job_id.in_(ids))).all()
+        ivs = s.exec(select(ScheduledInterview).options(load_only(ScheduledInterview.id, ScheduledInterview.application_id,
+                                                                  ScheduledInterview.status))
+                     .where(ScheduledInterview.job_id.in_(ids))).all()
         now = utc_now()
         w0, w1 = now - timedelta(days=30), now - timedelta(days=60)
         made = [o for o in offers if o.status != "draft"]
@@ -1336,7 +1414,6 @@ def offer_stats(recruiter: str = Depends(get_current_recruiter)):
         resp = lambda o: o.responded_at or o.updated_at  # noqa: E731
         accepted = [o for o in made if o.status in ("accepted", "joined")]
         status_counts = Counter(o.status for o in made)
-        cands = _candidates(s, [o.candidate_id for o in offers])
         timeline = sorted([o for o in made if o.status in ("accepted", "joined") and o.joining_date], key=lambda o: o.joining_date)
         return {
             "kpis": {
@@ -1420,6 +1497,10 @@ def update_offer(offer_id: int, body: OfferUpdate, recruiter: str = Depends(get_
         if o.status in ("withdrawn", "declined", "joined"):
             raise HTTPException(status_code=409, detail=f"A {o.status} offer can no longer be edited")
         data = body.model_dump(exclude_unset=True)
+        if o.status == "accepted" and body.status != "negotiation" and any(
+                k in data and data[k] is not None for k in ("ctc", "ctc_amount", "joining_date", "letter_text")):
+            # the candidate accepted these terms - changing them needs a new round of consent
+            raise HTTPException(status_code=409, detail="This offer was accepted — move it to negotiation before changing its terms")
         changes = []
         if data.get("ctc") is not None and data["ctc"].strip() != (o.ctc or ""):
             changes.append(f"CTC {o.ctc or '—'} → {data['ctc'].strip()}")
@@ -1621,18 +1702,24 @@ def analytics(
         if job_id and job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
         ids = list(jobs) or [-1]
-        apps = s.exec(select(Application).where(Application.job_id.in_(ids))).all()
+        from sqlalchemy import func as sa_func
+        from sqlalchemy.orm import defer
+
+        # applications (heavy text columns deferred) + latest AI-session time in ONE query
+        done_q = (select(sa_func.max(sa_func.coalesce(InterviewSession.completed_at, InterviewSession.started_at)))
+                  .where(InterviewSession.application_id == Application.id).scalar_subquery())
+        app_rows = s.exec(select(Application, done_q)
+                          .options(*(defer(getattr(Application, c)) for c in ("interview_transcript_json", "skills_matched_detail",
+                                                                              "skills_gap_detail", "project_summary", "risk_notes",
+                                                                              "repo_match_reasoning", "human_decision_notes")))
+                          .where(Application.job_id.in_(ids))).all()
+        apps = [a for a, _ in app_rows]
         ivs = s.exec(select(ScheduledInterview).where(ScheduledInterview.job_id.in_(ids))).all()
         offers = s.exec(select(Offer).where(Offer.job_id.in_(ids))).all()
-        ai_apps = [a for a in apps if a.interview_status == "completed"]
         ai_done = {}
-        if ai_apps:
-            for ses in s.exec(select(InterviewSession).where(InterviewSession.application_id.in_([a.id for a in ai_apps]))).all():
-                t = ses.completed_at or ses.started_at
-                if t and (ses.application_id not in ai_done or t > ai_done[ses.application_id]):
-                    ai_done[ses.application_id] = t
-            for a in ai_apps:
-                ai_done.setdefault(a.id, a.applied_at)
+        for a, done in app_rows:
+            if a.interview_status == "completed":
+                ai_done[a.id] = _as_dt(done) or a.applied_at
         app_by_id = {a.id: a for a in apps}
 
         span = hi - lo
@@ -1804,8 +1891,8 @@ def _account_dict(s: Session, rec: RecruiterUser, u: User) -> dict:
     }
 
 
-def _me(s: Session, email: str):
-    rec = _rec(s, email)
+def _me(s: Session, email: str, row: bool = False):
+    rec = _rec(s, email, row=row)
     u = _user(s, email)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1860,7 +1947,7 @@ def update_notifications(body: NotificationPrefs, recruiter: str = Depends(get_c
 @router.post("/account/password")
 def change_password(body: PasswordChange, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as s:
-        rec, u = _me(s, recruiter)
+        rec, u = _me(s, recruiter, row=True)
         if not verify_password(body.current_password, u.password_hash):
             raise HTTPException(status_code=400, detail="Current password is incorrect")
         if body.new_password == body.current_password:

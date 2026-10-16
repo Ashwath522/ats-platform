@@ -29,7 +29,7 @@ def _require_owned_company(session: Session, company_id: int, recruiter: str) ->
 
 
 @router.get("/companies")
-async def list_owned_companies(recruiter: str = Depends(get_current_recruiter)):
+def list_owned_companies(recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         companies = session.exec(
             select(Company)
@@ -53,7 +53,7 @@ async def list_owned_companies(recruiter: str = Depends(get_current_recruiter)):
 
 
 @router.post("/companies")
-async def create_company(name: str = Form(...), recruiter: str = Depends(get_current_recruiter)):
+def create_company(name: str = Form(...), recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         company = Company(name=name, owner_username=recruiter)
         session.add(company)
@@ -63,7 +63,7 @@ async def create_company(name: str = Form(...), recruiter: str = Depends(get_cur
 
 
 @router.delete("/companies/{company_id}")
-async def delete_company(company_id: int, recruiter: str = Depends(get_current_recruiter)):
+def delete_company(company_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         company = _require_owned_company(session, company_id, recruiter)
         jds = session.exec(select(JobDescription).where(JobDescription.company_id == company_id)).all()
@@ -75,7 +75,7 @@ async def delete_company(company_id: int, recruiter: str = Depends(get_current_r
 
 
 @router.put("/companies/{company_id}")
-async def update_company(
+def update_company(
     company_id: int,
     name: str = Form(...),
     recruiter: str = Depends(get_current_recruiter),
@@ -90,7 +90,7 @@ async def update_company(
 
 
 @router.get("/companies/{company_id}/job-descriptions")
-async def list_job_descriptions(company_id: int, recruiter: str = Depends(get_current_recruiter)):
+def list_job_descriptions(company_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         _require_owned_company(session, company_id, recruiter)
         jds = session.exec(
@@ -111,7 +111,7 @@ async def list_job_descriptions(company_id: int, recruiter: str = Depends(get_cu
 
 
 @router.post("/companies/{company_id}/job-description")
-async def set_job_description(
+def set_job_description(
     company_id: int,
     title: str = Form(...),
     description: str = Form(...),
@@ -151,7 +151,7 @@ async def set_job_description(
 
 
 @router.get("/companies/{company_id}/matching-resumes")
-async def matching_resumes(
+def matching_resumes(
     company_id: int,
     top_k: int = Query(default=20, ge=1, le=MAX_TOP_K),
     offset: int = Query(default=0, ge=0),
@@ -220,7 +220,7 @@ class PostCreate(BaseModel):
     content: str
 
 @router.post("/posts")
-async def create_recruiter_post(
+def create_recruiter_post(
     post_in: PostCreate,
     recruiter: str = Depends(get_current_recruiter)
 ):
@@ -245,7 +245,7 @@ async def create_recruiter_post(
         }
 
 @router.get("/posts")
-async def get_recruiter_posts(
+def get_recruiter_posts(
     recruiter: str = Depends(get_current_recruiter)
 ):
     with Session(engine) as session:

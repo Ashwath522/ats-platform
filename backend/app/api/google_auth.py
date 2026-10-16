@@ -50,7 +50,7 @@ class GoogleLogin(BaseModel):
 
 
 @router.get("/api/auth/google/config")
-async def google_config():
+def google_config():
     cid = client_id()
     return {"enabled": bool(cid), "client_id": cid or None}
 
@@ -133,7 +133,7 @@ def _staff_login(email: str, want: str) -> dict:
 
 @router.post("/api/auth/google")
 @limiter.limit("20/minute")
-async def google_login(request: Request, body: GoogleLogin):
+def google_login(request: Request, body: GoogleLogin):
     role = (body.role or "candidate").strip().lower()
     if role not in ("candidate", "recruiter", "admin"):
         raise HTTPException(status_code=400, detail="Unknown role")

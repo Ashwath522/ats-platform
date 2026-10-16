@@ -10,7 +10,7 @@ router = APIRouter(tags=["admin"])
 
 
 @router.post("/api/suggestions")
-async def create_suggestion(
+def create_suggestion(
     text: str = Form(...),
     submitter: Optional[str] = Form(None),
 ):
@@ -26,7 +26,7 @@ async def create_suggestion(
 
 
 @router.get("/api/admin/suggestions")
-async def admin_suggestions(
+def admin_suggestions(
     admin: User = Depends(get_current_admin),
 ):
     """Admin-gated endpoint to see stats and all user suggestions."""
@@ -50,7 +50,7 @@ async def admin_suggestions(
         }
 
 @router.get("/api/admin/ai-key-status")
-async def admin_ai_key_status(
+def admin_ai_key_status(
     admin: User = Depends(get_current_admin),
 ):
     """Admin-gated endpoint to check AI key health."""
@@ -88,7 +88,7 @@ async def admin_ai_key_status(
 
 
 @router.post("/api/admin/retention/purge")
-async def admin_retention_purge(
+def admin_retention_purge(
     days: int = 30,
     admin: User = Depends(get_current_admin),
 ):
@@ -101,7 +101,7 @@ async def admin_retention_purge(
 
 
 @router.get("/api/admin/email/status")
-async def admin_email_status(admin: User = Depends(get_current_admin)):
+def admin_email_status(admin: User = Depends(get_current_admin)):
     """Which email provider is active, whether it is configured, and the recent delivery log."""
     from ..services import email_delivery
 

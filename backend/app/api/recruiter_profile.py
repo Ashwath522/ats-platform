@@ -49,16 +49,18 @@ def _recruiter_profile_to_dict(user: RecruiterUser, profile: RecruiterProfile) -
 
 
 @router.get("")
-async def get_recruiter_profile(recruiter: str = Depends(get_current_recruiter)):
+def get_recruiter_profile(recruiter: str = Depends(get_current_recruiter)):
     """Fetch current recruiter's profile, headline, bio, and avatar/cover urls."""
+    from ..auth import cached_recruiter
+
+    user = cached_recruiter(recruiter)            # principal cache: no query when warm
     with Session(engine) as session:
-        user = _get_recruiter_user(session, recruiter)
         profile = _get_or_create_profile(session, user.id)
         return _recruiter_profile_to_dict(user, profile)
 
 
 @router.put("")
-async def update_recruiter_profile(
+def update_recruiter_profile(
     update: RecruiterProfileUpdate,
     recruiter: str = Depends(get_current_recruiter),
 ):
@@ -82,7 +84,7 @@ async def update_recruiter_profile(
 
 
 @router.post("/avatar")
-async def upload_recruiter_avatar(
+def upload_recruiter_avatar(
     file: UploadFile = File(...),
     recruiter: str = Depends(get_current_recruiter),
 ):
@@ -105,7 +107,7 @@ async def upload_recruiter_avatar(
 
 
 @router.post("/cover-photo")
-async def upload_recruiter_cover_photo(
+def upload_recruiter_cover_photo(
     file: UploadFile = File(...),
     recruiter: str = Depends(get_current_recruiter),
 ):

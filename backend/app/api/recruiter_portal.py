@@ -92,7 +92,14 @@ def _loads(raw, default):
 
 
 def _iso(d: Optional[datetime]) -> Optional[str]:
-    return d.isoformat() if d else None
+    """Naive UTC -> ISO with an explicit Z (without it browsers read the time as
+    local: next-round times on Shortlisted / candidate detail were 5h30 off in India)."""
+    if not d:
+        return None
+    if d.tzinfo is not None:
+        from datetime import timezone as _tz
+        d = d.astimezone(_tz.utc).replace(tzinfo=None)
+    return d.isoformat() + "Z"
 
 
 def _split_skills(text: Optional[str]) -> List[str]:
@@ -129,8 +136,10 @@ def _me(session: Session, username: str) -> RecruiterUser:
 
 
 def _company_prefix(session: Session, rec: RecruiterUser) -> str:
-    cp = session.exec(select(CompanyProfile).where(CompanyProfile.owner_recruiter_id == rec.id)).first()
-    name = (cp.name if cp else "") or ""
+    from ..services.hot_data import company_directory
+
+    rp = company_directory()[0].get(rec.id)   # cached; no query
+    name = (rp[0] if rp else "") or ""
     words = [w for w in re.split(r"[^A-Za-z0-9]+", name) if w and w.lower() not in {"pvt", "ltd", "limited", "private", "inc", "the", "and", "of"}]
     if len(words) >= 2:
         return "".join(w[0] for w in words[:4]).upper()
@@ -219,15 +228,48 @@ def interview_state(app: Application, sis: List[ScheduledInterview], now: dateti
 
 
 # ─── Per-request data context ────────────────────────────────────────────────
+# Large text columns that list pages never show (loaded lazily if touched).
+_HEAVY_APP_COLS = ("interview_transcript_json", "skills_matched_detail", "skills_gap_detail", "project_summary",
+                   "risk_notes", "repo_match_reasoning", "human_decision_notes", "ai_recommendation",
+                   "interview_recommendation")
+
+
+def _recruiter_jobs(rid: int) -> List[Job]:
+    """Recruiter's jobs, newest first - cached (cleared on any job write). Read-only rows."""
+    from ..services.hot_data import recruiter_jobs
+
+    return recruiter_jobs(rid)
+
+
+def _as_dt(v):
+    if v is None or isinstance(v, datetime):
+        return v
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "").replace(" ", "T"))
+    except ValueError:
+        return None
+
+
 class Ctx:
     """Loads the recruiter's jobs + applications (+ related rows) once."""
 
-    def __init__(self, session: Session, username: str, with_apps: bool = True):
+    def __init__(self, session: Session, username: str, with_apps: bool = True, light: bool = False):
+        """``light=True`` (read-only list pages): the job list comes from a
+        per-recruiter cache, heavy Application text columns are deferred and
+        applications + candidate profiles + scheduled rounds + offers + verified
+        project counts arrive in ONE joined query. Never mutate ``ctx.jobs``
+        of a light context."""
+        from ..auth import cached_recruiter
+
         self.session = session
         self.username = username
-        self.me = _me(session, username)
+        self.light = light
+        self.me = cached_recruiter(username) if light else _me(session, username)
         self.now = utc_now()
-        self.jobs: List[Job] = session.exec(select(Job).where(Job.recruiter_id == self.me.id).order_by(Job.created_at.desc())).all()
+        if light:
+            self.jobs = _recruiter_jobs(self.me.id)
+        else:
+            self.jobs: List[Job] = session.exec(select(Job).where(Job.recruiter_id == self.me.id).order_by(Job.created_at.desc())).all()
         self.job_by_id: Dict[int, Job] = {j.id: j for j in self.jobs}
         self.prefix = _company_prefix(session, self.me)
         self.apps: List[Application] = []
@@ -236,32 +278,106 @@ class Ctx:
         self.profiles: Dict[int, CandidateProfile] = {}
         self.users: Dict[int, CandidateUser] = {}
         self.verified: Dict[int, int] = {}
+        self.has_transcript: Dict[int, bool] = {}
+        self.ai_done: Dict[int, Optional[datetime]] = {}
         if with_apps and self.job_by_id:
-            ids = list(self.job_by_id)
-            self.apps = session.exec(
-                select(Application).where(Application.job_id.in_(ids)).order_by(Application.applied_at.desc()).limit(MAX_APPS)
-            ).all()
-            for s in session.exec(select(ScheduledInterview).where(ScheduledInterview.recruiter_id == self.me.id)).all():
-                self.sis[s.application_id].append(s)
-            for o in session.exec(select(Offer).where(Offer.recruiter_id == self.me.id)).all():
-                self.offers[o.application_id].append(o)
-            self.load_candidates({a.candidate_id for a in self.apps})
+            if light:
+                self._load_light()
+            else:
+                ids = list(self.job_by_id)
+                self.apps = session.exec(
+                    select(Application).where(Application.job_id.in_(ids)).order_by(Application.applied_at.desc()).limit(MAX_APPS)
+                ).all()
+                for s in session.exec(select(ScheduledInterview).where(ScheduledInterview.recruiter_id == self.me.id)).all():
+                    self.sis[s.application_id].append(s)
+                for o in session.exec(select(Offer).where(Offer.recruiter_id == self.me.id)).all():
+                    self.offers[o.application_id].append(o)
+                self.load_candidates({a.candidate_id for a in self.apps})
+        for lst in self.offers.values():
+            lst.sort(key=lambda o: (o.created_at or self.now, o.id or 0), reverse=True)   # latest offer first
         self.app_by_id = {a.id: a for a in self.apps}
         self.applicant_ids = {a.candidate_id for a in self.apps}
 
+    def _load_light(self):
+        from sqlalchemy import and_, func, select as sa_select
+        from sqlalchemy.orm import defer
+
+        rid = self.me.id
+        ids = list(self.job_by_id)
+        top = (sa_select(Application.id).where(Application.job_id.in_(ids))
+               .order_by(Application.applied_at.desc()).limit(MAX_APPS).scalar_subquery())
+        verified = (sa_select(func.count(StudentProject.id))
+                    .where(StudentProject.candidate_id == Application.candidate_id, StudentProject.status == "verified")
+                    .scalar_subquery())
+        ai_done = (sa_select(func.max(func.coalesce(InterviewSession.completed_at, InterviewSession.started_at)))
+                   .where(InterviewSession.application_id == Application.id, InterviewSession.status == "completed")
+                   .scalar_subquery())
+        has_tx = func.length(func.coalesce(Application.interview_transcript_json, "")) > 2
+        q = (sa_select(Application, has_tx, ai_done, verified, CandidateProfile, CandidateUser, ScheduledInterview, Offer)
+             .options(*(defer(getattr(Application, c)) for c in _HEAVY_APP_COLS))
+             .outerjoin(CandidateProfile, CandidateProfile.candidate_id == Application.candidate_id)
+             .outerjoin(CandidateUser, CandidateUser.id == Application.candidate_id)
+             .outerjoin(ScheduledInterview, and_(ScheduledInterview.application_id == Application.id,
+                                                 ScheduledInterview.recruiter_id == rid))
+             .outerjoin(Offer, and_(Offer.application_id == Application.id, Offer.recruiter_id == rid))
+             .where(Application.id.in_(top)))
+        apps: Dict[int, Application] = {}
+        seen_si, seen_of = set(), set()
+        for a, htx, done, nver, prof, user, si, off in self.session.execute(q).all():
+            if a.id not in apps:
+                apps[a.id] = a
+                self.has_transcript[a.id] = bool(htx)
+                if done is not None:
+                    self.ai_done[a.id] = _as_dt(done)
+                if prof is not None:
+                    self.profiles[a.candidate_id] = prof
+                if user is not None:
+                    self.users[a.candidate_id] = user
+                self.verified[a.candidate_id] = int(nver or 0)
+            if si is not None and si.id not in seen_si:
+                seen_si.add(si.id)
+                self.sis[si.application_id].append(si)
+            if off is not None and off.id not in seen_of:
+                seen_of.add(off.id)
+                self.offers[off.application_id].append(off)
+        self.apps = sorted(apps.values(), key=lambda a: (a.applied_at, a.id), reverse=True)
+
+    def undefer(self, apps: Iterable[Application]) -> None:
+        """Load the deferred heavy columns of ``apps`` in ONE query (light ctx)."""
+        if not self.light:
+            return
+        from sqlalchemy.orm import attributes
+        from sqlalchemy.orm.base import instance_state
+
+        todo = {a.id: a for a in apps if any(c in instance_state(a).unloaded for c in _HEAVY_APP_COLS)}
+        if not todo:
+            return
+        cols = [getattr(Application, c) for c in _HEAVY_APP_COLS]
+        for row in self.session.exec(select(Application.id, *cols).where(Application.id.in_(list(todo)))).all():
+            a = todo.get(row[0])
+            for name, value in zip(_HEAVY_APP_COLS, row[1:]):
+                attributes.set_committed_value(a, name, value)
+
     def load_candidates(self, cids: Iterable[int]):
-        cids = [c for c in set(cids) if c not in self.profiles and c not in self.users]
+        cids = [c for c in set(cids) if c not in self.users]
         if not cids:
             return
-        for p in self.session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id.in_(cids))).all():
-            self.profiles[p.candidate_id] = p
-        for u in self.session.exec(select(CandidateUser).where(CandidateUser.id.in_(cids))).all():
+        # ONE query: user + profile + verified-project count per candidate
+        from sqlalchemy import func, select as sa_select
+
+        verified = (sa_select(func.count(StudentProject.id))
+                    .where(StudentProject.candidate_id == CandidateUser.id, StudentProject.status == "verified")
+                    .scalar_subquery())
+        for u, p, nver in self.session.execute(
+            sa_select(CandidateUser, CandidateProfile, verified)
+            .outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)
+            .where(CandidateUser.id.in_(cids))
+        ).all():
             self.users[u.id] = u
-        rows = self.session.exec(
-            select(StudentProject.candidate_id).where(StudentProject.candidate_id.in_(cids)).where(StudentProject.status == "verified")
-        ).all()
-        for cid in rows:
-            self.verified[cid] = self.verified.get(cid, 0) + 1
+            if p is not None:
+                self.profiles.setdefault(u.id, p)
+            if nver:
+                self.verified[u.id] = int(nver)
 
     def name(self, cid: int) -> str:
         return _display_name(self.profiles.get(cid), self.users.get(cid))
@@ -316,7 +432,7 @@ class Ctx:
             "stage_label": STAGE_LABELS[st],
             "applied_at": _iso(a.applied_at),
             "can_unlock": a.status == "shortlisted" and (a.repo_match_score is not None or a.project_score is not None) and (a.interview_status in (None, "locked")),
-            "has_ai_result": a.interview_status == "completed" or bool(a.interview_transcript_json),
+            "has_ai_result": a.interview_status == "completed" or (self.has_transcript.get(a.id, False) if self.light else bool(a.interview_transcript_json)),
             "offer_id": offers[0].id if offers else None,
             "offer_status": offers[0].status if offers else None,
             "pending_human_review": a.pending_human_review,
@@ -371,7 +487,7 @@ def _pipeline_kpis(ctx: Ctx, days: int = 30) -> dict:
             first_apply[a.candidate_id] = a.applied_at
     shortlisted = [a for a in apps if stages[a.id] in ("shortlisted", "interview", "offer", "hired")]
     si_all = [s for lst in ctx.sis.values() for s in lst if s.status != "cancelled"]
-    ai_done = _ai_completed_dates(ctx.session, [a.id for a in apps if a.interview_status == "completed"])
+    ai_done = ctx.ai_done if ctx.light else _ai_completed_dates(ctx.session, [a.id for a in apps if a.interview_status == "completed"])
     ai_apps = [a for a in apps if a.interview_status == "completed"]
     offers_all = [o for lst in ctx.offers.values() for o in lst if o.status != "draft"]
     hired = [o for o in offers_all if o.status in ("accepted", "joined")]
@@ -462,7 +578,7 @@ def overview(days: int = Query(30), recruiter: str = Depends(get_current_recruit
     if days not in (7, 30, 90):
         raise HTTPException(status_code=400, detail="days must be 7, 30 or 90")
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         kpis = _pipeline_kpis(ctx, 30)
         # Applications trend — daily counts for the selected window.
         today = ctx.now.date()
@@ -546,7 +662,7 @@ def _job_item(ctx: Ctx, j: Job, apps_by_job: Dict[int, List[Application]]) -> di
 @router.get("/jobs")
 def list_jobs(recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         by_job: Dict[int, List[Application]] = defaultdict(list)
         for a in ctx.apps:
             by_job[a.job_id].append(a)
@@ -775,20 +891,32 @@ def list_candidates(
     if sort not in ("match", "cgpa", "newest", "name"):
         raise HTTPException(status_code=400, detail="sort must be match, cgpa, newest or name")
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         apps_by_cand: Dict[int, List[Application]] = defaultdict(list)
         for a in ctx.apps:
             apps_by_cand[a.candidate_id].append(a)
         if view == "search":
-            all_profiles = session.exec(select(CandidateProfile)).all()
+            # ONE query: every profile with its account + verified-project count.
+            # (Previously the accounts of non-applicants were never loaded, so
+            # suspended students still showed up in platform search.)
+            from sqlalchemy import func, select as sa_select
+
+            verified = (sa_select(func.count(StudentProject.id))
+                        .where(StudentProject.candidate_id == CandidateProfile.candidate_id, StudentProject.status == "verified")
+                        .scalar_subquery())
             cids = []
-            for p in all_profiles:
-                if p.candidate_id in ctx.applicant_ids or _privacy(p)["visibility"] != "private":
-                    cids.append(p.candidate_id)
-                    ctx.profiles.setdefault(p.candidate_id, p)
-            ctx.load_candidates(cids)
-            # Exclude suspended accounts from platform search.
-            cids = [c for c in cids if not (ctx.users.get(c) and ctx.users[c].status == "suspended") or c in ctx.applicant_ids]
+            for p, u, nver in session.execute(
+                sa_select(CandidateProfile, CandidateUser, verified)
+                .join(CandidateUser, CandidateUser.id == CandidateProfile.candidate_id)
+            ).all():
+                mine = p.candidate_id in ctx.applicant_ids
+                if not mine and (_privacy(p)["visibility"] == "private" or u.status == "suspended"):
+                    continue
+                cids.append(p.candidate_id)
+                ctx.profiles.setdefault(p.candidate_id, p)
+                ctx.users.setdefault(u.id, u)
+                if nver and u.id not in ctx.verified:
+                    ctx.verified[u.id] = int(nver)
         else:
             cids = list(apps_by_cand)
         items = [_candidate_item(ctx, cid, apps_by_cand.get(cid, []), ctx.jobs) for cid in cids]
@@ -868,10 +996,11 @@ def _si_dict(s: ScheduledInterview, ctx: Ctx) -> dict:
 @router.get("/candidates/{candidate_id}")
 def candidate_detail(candidate_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         p = _visible_candidate(ctx, candidate_id)
         user = ctx.users.get(candidate_id)
         my_apps = [a for a in ctx.apps if a.candidate_id == candidate_id]
+        ctx.undefer(my_apps)
         applied = bool(my_apps)
         priv = _privacy(p)
         contact_visible = applied or priv["show_contact"]
@@ -939,7 +1068,7 @@ def _resume_for(ctx: Ctx, cid: int) -> Resume:
 @router.get("/candidates/{candidate_id}/resume")
 def candidate_resume(candidate_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         r = _resume_for(ctx, candidate_id)
         text = None
         try:
@@ -964,7 +1093,7 @@ def candidate_resume(candidate_id: int, recruiter: str = Depends(get_current_rec
 @router.get("/candidates/{candidate_id}/resume/file")
 def candidate_resume_file(candidate_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         r = _resume_for(ctx, candidate_id)
         if not r.file_path or not os.path.exists(r.file_path):
             raise HTTPException(status_code=404, detail="The resume file is no longer stored; view the extracted text instead")
@@ -978,7 +1107,7 @@ class CompareIn(BaseModel):
 @router.post("/candidates/compare")
 def compare_candidates(body: CompareIn, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         out = []
         for cid in dict.fromkeys(body.candidate_ids):
             p = _visible_candidate(ctx, cid)
@@ -1010,7 +1139,7 @@ def _note_dict(n: RecruiterNote) -> dict:
 @router.get("/candidates/{candidate_id}/notes")
 def list_notes(candidate_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         _visible_candidate(ctx, candidate_id)
         rows = session.exec(
             select(RecruiterNote).where(RecruiterNote.recruiter_id == ctx.me.id).where(RecruiterNote.candidate_id == candidate_id).order_by(RecruiterNote.created_at.desc()).limit(200)
@@ -1183,7 +1312,7 @@ def list_applications(
     if sort not in SORTS:
         raise HTTPException(status_code=400, detail=f"sort must be one of: {', '.join(SORTS)}")
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         apps = _filter_apps(ctx, job, branch, location, experience, q, min_match, min_cgpa, date_from, date_to)
         stages = {a.id: ctx.stage(a) for a in apps}
         counts = Counter(stages.values())
@@ -1226,8 +1355,9 @@ def list_applications(
 @router.get("/applications/{application_id}")
 def application_detail(application_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         a = ctx.owned_app(application_id)
+        ctx.undefer([a])
         item = ctx.app_item(a)
         j = ctx.job_by_id[a.job_id]
         item.update({
@@ -1412,7 +1542,7 @@ def list_shortlisted(
     if sort not in SORTS:
         raise HTTPException(status_code=400, detail=f"sort must be one of: {', '.join(SORTS)}")
     with Session(engine) as session:
-        ctx = Ctx(session, recruiter)
+        ctx = Ctx(session, recruiter, light=True)
         SHORT = ("shortlisted", "interview", "offer", "hired")
         all_short = [a for a in ctx.apps if ctx.stage(a) in SHORT]
         apps = [a for a in _filter_apps(ctx, job, branch, location, experience, q, min_match, min_cgpa, "", "") if ctx.stage(a) in SHORT]

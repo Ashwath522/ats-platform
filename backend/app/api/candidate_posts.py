@@ -14,7 +14,7 @@ class PostCreate(BaseModel):
 
 
 @router.get("")
-async def list_all_posts(candidate: str = Depends(get_current_candidate)):
+def list_all_posts(candidate: str = Depends(get_current_candidate)):
     """List posts from all candidates, newest first (global feed)."""
     with Session(engine) as session:
         # Query Post and join with CandidateUser + CandidateProfile
@@ -42,7 +42,7 @@ async def list_all_posts(candidate: str = Depends(get_current_candidate)):
 
 
 @router.post("")
-async def create_post(body: PostCreate, candidate: str = Depends(get_current_candidate)):
+def create_post(body: PostCreate, candidate: str = Depends(get_current_candidate)):
     """Create a new post (text only)."""
     if not body.content or not body.content.strip():
         raise HTTPException(status_code=400, detail="Post content cannot be empty")

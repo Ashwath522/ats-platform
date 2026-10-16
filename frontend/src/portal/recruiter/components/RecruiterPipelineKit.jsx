@@ -12,6 +12,7 @@ import {
 } from '../../../ui/index.jsx'
 import { BRANCHES, BRANCH_BY_ID, getBranch } from '../../../branding/branches.js'
 import './RecruiterPages.css'
+import ProctoringReview from '../../shared/ProctoringReview.jsx'
 
 export const API = '/api/recruiter/portal'
 
@@ -219,12 +220,13 @@ export function AiResultModal({ open, onClose, api, applicationId }) {
     <Modal open={open} onClose={onClose} size="lg" title={d ? `AI interview — ${d.candidate_name}` : 'AI interview result'}>
       {state.loading && <Skeleton h={120} />}
       {state.error && <Alert tone="error">{state.error}</Alert>}
-      {d && <AiResultBody d={{ ...d, eval_score: d.interview_eval_score, recommendation: d.interview_recommendation, risk_level: d.interview_risk_level, status: d.interview_status }} />}
+      {d && <AiResultBody applicationId={applicationId} d={{ ...d, eval_score: d.interview_eval_score, recommendation: d.interview_recommendation, risk_level: d.interview_risk_level, status: d.interview_status }} />}
     </Modal>
   )
 }
 
-export function AiResultBody({ d }) {
+export function AiResultBody({ d, applicationId }) {
+  const appId = applicationId ?? d.application_id
   return (
     <div className="cl-col" style={{ gap: 14 }}>
       <div className="rp-mini-stats">
@@ -247,6 +249,7 @@ export function AiResultBody({ d }) {
         </ol>
       ) : <p className="cl-muted">No transcript recorded yet.</p>}
       {d.evidence_url && <a href={d.evidence_url} target="_blank" rel="noreferrer" className="cl-link">Open interview evidence</a>}
+      {appId != null && (d.status === 'completed' || d.status === 'in_progress') && <ProctoringReview role="recruiter" applicationId={appId} />}
     </div>
   )
 }

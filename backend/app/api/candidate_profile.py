@@ -139,12 +139,23 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
 
 
 @router.get("")
-async def get_profile(candidate: str = Depends(get_current_candidate)):
+def get_profile(candidate: str = Depends(get_current_candidate)):
+    """ONE round trip: profile + its resume + project count (the candidate id
+    comes from the auth principal cache). Used by every student page shell."""
+    from sqlalchemy import func, select as sa_select
+    from ..db import StudentProject
+    from ..auth import cached_candidate
+
+    cid = cached_candidate(candidate).id
+    n_projects = sa_select(func.count(StudentProject.id)).where(StudentProject.candidate_id == cid).scalar_subquery()
     with Session(engine) as session:
-        user = _get_candidate_user(session, candidate)
-        profile = _get_or_create_profile(session, user.id)
-        resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
-        return _profile_to_dict(profile, resume, _project_count(session, user.id))
+        row = session.execute(sa_select(CandidateProfile, Resume, n_projects)
+                              .outerjoin(Resume, Resume.id == CandidateProfile.resume_id)
+                              .where(CandidateProfile.candidate_id == cid)).first()
+        if row is None:
+            profile = _get_or_create_profile(session, cid)
+            return _profile_to_dict(profile, None, 0)
+        return _profile_to_dict(row[0], row[1], int(row[2] or 0))
 
 
 def _project_count(session: Session, candidate_id: int) -> int:
@@ -153,7 +164,7 @@ def _project_count(session: Session, candidate_id: int) -> int:
 
 
 @router.post("/resume")
-async def upload_profile_resume(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+def upload_profile_resume(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
     """
     Upload/replace the resume on the candidate's profile. The frontend has
     called this endpoint since the Profile page was built, but it never
@@ -174,7 +185,7 @@ async def upload_profile_resume(file: UploadFile = File(...), candidate: str = D
         return _profile_to_dict(profile, resume)
 
 @router.post("/project")
-async def upload_profile_project(
+def upload_profile_project(
     description: str = Form(...),
     file: Optional[UploadFile] = File(None),
     candidate: str = Depends(get_current_candidate)
@@ -211,7 +222,7 @@ async def upload_profile_project(
 
 
 @router.put("")
-async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_candidate)):
+def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
@@ -267,7 +278,7 @@ async def update_profile(update: ProfileUpdate, candidate: str = Depends(get_cur
 
 
 @router.post("/project-upload")
-async def upload_candidate_project(
+def upload_candidate_project(
     file: UploadFile = File(...),
     description: str = Form(""),
     candidate: str = Depends(get_current_candidate),
@@ -357,7 +368,7 @@ async def upload_candidate_project(
 
 
 @router.get("/status")
-async def get_candidate_status(
+def get_candidate_status(
     candidate: str = Depends(get_current_candidate),
 ):
     """
@@ -393,7 +404,7 @@ async def get_candidate_status(
 # ────── Education Management ──────
 
 @router.put("/education")
-async def update_candidate_education(
+def update_candidate_education(
     education_list: List[dict],
     candidate: str = Depends(get_current_candidate),
 ):
@@ -421,7 +432,7 @@ async def update_candidate_education(
 # ────── Certifications Management ──────
 
 @router.post("/certifications")
-async def add_candidate_certification(
+def add_candidate_certification(
     name: str = Form(...),
     issuing_organization: str = Form(...),
     issue_date: Optional[str] = Form(None),
@@ -463,7 +474,7 @@ async def add_candidate_certification(
 
 
 @router.delete("/certifications/{cert_index}")
-async def delete_candidate_certification(
+def delete_candidate_certification(
     cert_index: int = Path(..., ge=0),
     candidate: str = Depends(get_current_candidate),
 ):
@@ -495,7 +506,7 @@ async def delete_candidate_certification(
 # ────── Avatar & Cover Photo Management ──────
 
 @router.post("/avatar")
-async def upload_candidate_avatar(
+def upload_candidate_avatar(
     file: UploadFile = File(...),
     candidate: str = Depends(get_current_candidate),
 ):
@@ -519,7 +530,7 @@ async def upload_candidate_avatar(
 
 
 @router.post("/cover-photo")
-async def upload_candidate_cover_photo(
+def upload_candidate_cover_photo(
     file: UploadFile = File(...),
     candidate: str = Depends(get_current_candidate),
 ):

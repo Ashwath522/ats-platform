@@ -1,3 +1,5 @@
+import { createTask } from './mp-loader'
+
 export type LandmarkPoint = {
   x: number
   y: number
@@ -34,15 +36,9 @@ export class GazeHeadPoseEstimator {
   async initialize(): Promise<void> {
     if (typeof window === 'undefined') return;
     try {
-      // @ts-expect-error - MediaPipe is loaded dynamically from a CDN and the package exposes no local TS declarations.
-      const vision = await import(/* turbopackIgnore: true */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/+esm");
-      const filesetResolver = await vision.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-      );
-      this.faceLandmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
+      this.faceLandmarker = await createTask('FaceLandmarker', {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-          delegate: "GPU"
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
         },
         runningMode: "IMAGE",
         numFaces: 1

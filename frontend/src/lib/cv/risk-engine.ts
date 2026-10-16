@@ -30,6 +30,9 @@ const SIGNAL_WEIGHTS: Record<string, number> = {
   slouching: 8,
   leaning: 6,
   darkLighting: 12,
+  pasteDetected: 15,
+  secondScreen: 20,
+  bookDetected: 15,
   continuousFaceVisible: -5,
   goodLighting: -3,
 }
@@ -46,6 +49,9 @@ const CONCERN_SIGNALS = [
   'slouching',
   'leaning',
   'darkLighting',
+  'pasteDetected',
+  'secondScreen',
+  'bookDetected',
 ] as const
 
 const HIGH_RISK_THRESHOLD = 60

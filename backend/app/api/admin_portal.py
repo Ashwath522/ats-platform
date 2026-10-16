@@ -36,7 +36,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field as PField
-from sqlalchemy import delete as sa_delete, func, or_, text
+from sqlalchemy import case, delete as sa_delete, func, or_, text
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
@@ -256,6 +256,30 @@ class _Index:
         return self.company_for_recruiter_id(job.recruiter_id) or "Unknown company"
 
 
+from ..services.cache import TTLCache as _TTLCache
+
+_INDEX_TABLES = {"recruiteruser", "companyprofile", "recruiterprofile", "recruiterrequest", "teammember", "company"}
+_index_cache = _TTLCache("admin_index", ttl=60, tables=_INDEX_TABLES)
+_users_cache = _TTLCache("admin_users", ttl=30, tables=_INDEX_TABLES | {"candidateuser", "candidateprofile", "user", "decisionauditlog"})
+_companies_cache = _TTLCache("admin_companies", ttl=30, tables=_INDEX_TABLES | {"user", "job", "application"})
+
+
+def _index(s: Session) -> "_Index":
+    """Process-cached _Index (six small tables; cleared on any write to them). Read-only."""
+    return _index_cache.get_or_set("ix", lambda: _Index(s))
+
+
+def _users_rows(s: Session, include_requests: bool = True) -> List[dict]:
+    """Cached unified user rows (copies - callers may mutate)."""
+    rows = _users_cache.get_or_set(("rows", include_requests), lambda: _build_users(s, _index(s), include_requests))
+    return [dict(r) for r in rows]
+
+
+def _companies_rows(s: Session) -> List[dict]:
+    rows = _companies_cache.get_or_set("rows", lambda: _companies(s, _index(s)))
+    return [dict(r) for r in rows]
+
+
 _FREE_MAIL = {"gmail", "yahoo", "outlook", "hotmail", "icloud", "proton", "protonmail", "live", "rediffmail"}
 
 
@@ -288,8 +312,10 @@ def _admin_verified_ids(s: Session) -> set:
 
 def _build_users(s: Session, ix: _Index, include_requests: bool = True) -> List[dict]:
     verified_ids = _admin_verified_ids(s)
-    cands = s.exec(select(CandidateUser)).all()
-    profiles = {p.candidate_id: p for p in s.exec(select(CandidateProfile)).all()}
+    pairs = s.exec(select(CandidateUser, CandidateProfile)
+                   .outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)).all()   # 1 query (was 2)
+    cands = [c for c, _ in pairs]
+    profiles = {c.id: p for c, p in pairs if p is not None}
     users = s.exec(select(User)).all()
     users_by_email = {u.email.lower(): u for u in users}
     owner_ids = set(ix.cp_by_owner)
@@ -407,8 +433,7 @@ def _find_user(s: Session, uid: str) -> Tuple[str, Any]:
 
 
 def _row_for(s: Session, uid: str) -> dict:
-    ix = _Index(s)
-    for r in _build_users(s, ix):
+    for r in _users_rows(s):
         if r["id"] == uid:
             return r
     raise HTTPException(status_code=404, detail="User not found")
@@ -429,19 +454,24 @@ def _guard_staff_change(s: Session, me: User, target: User, action: str) -> None
 # ── platform health ───────────────────────────────────────────────────────────
 
 
-def _health(s: Session) -> dict:
+def _health(s: Session, extra: Optional[Dict[str, Any]] = None, out_counts: Optional[dict] = None) -> dict:
+    """DB ping that doubles as the counter query: ONE round trip returns the
+    7-day email delivery counts plus any ``extra`` scalar subqueries (their
+    values are written to ``out_counts``)."""
+    since = utc_now() - timedelta(days=7)
+    email = lambda *st: select(func.count()).select_from(EmailLog).where(EmailLog.created_at >= since, EmailLog.status.in_(st)).scalar_subquery()  # noqa: E731
+    extra = extra or {}
     t0 = time.perf_counter()
     db_ok = True
+    sent = failed = 0
     try:
-        s.exec(text("SELECT 1")).all()
+        row = s.exec(select(email("sent", "logged"), email("failed"), *extra.values())).one()
+        sent, failed = int(row[0] or 0), int(row[1] or 0)
+        if out_counts is not None:
+            out_counts.update({k: int(v or 0) for k, v in zip(extra.keys(), row[2:])})
     except Exception:  # pragma: no cover
         db_ok = False
     db_ms = round((time.perf_counter() - t0) * 1000, 1)
-    since = utc_now() - timedelta(days=7)
-    email_rows = s.exec(select(EmailLog.status, func.count()).where(EmailLog.created_at >= since).group_by(EmailLog.status)).all()
-    by = {k: n for k, n in email_rows}
-    sent = by.get("sent", 0) + by.get("logged", 0)
-    failed = by.get("failed", 0)
     try:
         from ..services.llm_stream import configured_providers
         providers = [p.name for p in configured_providers()]
@@ -501,7 +531,9 @@ def _count_before(dates: Iterable[Optional[datetime]], b: datetime) -> int:
 
 def _companies(s: Session, ix: _Index) -> List[dict]:
     """CompanyProfile rows + companies of approved/pending recruiter requests (deduplicated by name)."""
-    jobs = s.exec(select(Job)).all()
+    from ..services.hot_data import all_jobs
+
+    jobs = all_jobs()
     app_counts = dict(s.exec(select(Application.job_id, func.count()).group_by(Application.job_id)).all())
     users = s.exec(select(User).where(User.role == "recruiter")).all()
     out: Dict[str, dict] = {}
@@ -566,12 +598,28 @@ def _companies(s: Session, ix: _Index) -> List[dict]:
     return res
 
 
+def _as_dt(v):
+    """UNION columns: datetimes on Postgres, strings on SQLite."""
+    if v is None or isinstance(v, datetime):
+        return v
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "").replace(" ", "T"))
+    except ValueError:
+        return None
+
+
+def _fmt_ist(dt: datetime) -> str:
+    """Stored times are naive UTC; admins read them in IST (was printed as UTC with no zone)."""
+    from datetime import timezone as _tz
+    return dt.replace(tzinfo=_tz.utc).astimezone(_tz(timedelta(hours=5, minutes=30))).strftime("%d %b %Y, %I:%M %p IST")
+
+
 def _company_public(e: dict) -> dict:
     return {**e, "registered": _iso(e.get("registered"))}
 
 
 @router.get(f"{P}/overview")
-async def overview(start: Optional[str] = None, end: Optional[str] = None, granularity: str = "monthly",
+def overview(start: Optional[str] = None, end: Optional[str] = None, granularity: str = "monthly",
                    admin: str = Depends(get_current_admin)):
     t_start = time.perf_counter()
     if granularity not in {"monthly", "weekly"}:
@@ -580,13 +628,22 @@ async def overview(start: Optional[str] = None, end: Optional[str] = None, granu
     span = b - a
     pa = a - span
     with Session(engine) as s:
-        ix = _Index(s)
-        users = _build_users(s, ix, include_requests=False)
-        companies = _companies(s, ix)
-        jobs = s.exec(select(Job)).all()
-        app_dates = s.exec(select(Application.applied_at)).all()
-        offers = s.exec(select(Offer)).all()
-        hire_dates = [(o.responded_at or o.updated_at or o.offer_date) for o in offers if o.status in {"accepted", "joined"}]
+        ix = _index(s)
+        users = _users_rows(s, include_requests=False)
+        companies = _companies_rows(s)
+        from sqlalchemy import literal, null as sa_null, union_all as sa_union_all
+        from ..services.hot_data import all_jobs
+
+        jobs = all_jobs()                                                    # cached
+        # application dates + hire dates in ONE round trip (was 2 full-table loads)
+        app_dates, hire_dates = [], []
+        dates_q = sa_union_all(
+            select(literal("a"), Application.applied_at),
+            select(literal("h"), func.coalesce(Offer.responded_at, Offer.updated_at, Offer.offer_date)).where(Offer.status.in_(["accepted", "joined"])),
+        )
+        for k, d in s.exec(dates_q).all():
+            d = _as_dt(d)
+            (app_dates if k == "a" else hire_dates).append(d)
 
         user_dates = [u["joined"] for u in users]
         comp_dates = [c["registered"] for c in companies if c["status"] in {"verified", "approved", "unverified"}]
@@ -662,11 +719,13 @@ async def overview(start: Optional[str] = None, end: Optional[str] = None, granu
                 flags.append({"kind": "suspended", "id": u["id"], "title": "Suspended account", "detail": f"{u['name']} ({u['type']})",
                               "severity": "low", "at": _iso(u["joined"]), "link": f"/admin/users?tab=suspended"})
         flags.sort(key=lambda f: f["at"] or "", reverse=True)
-        open_flag_count = s.exec(select(func.count()).select_from(ContentFlag).where(ContentFlag.status == "open")).one()
-        pending_projects = s.exec(select(func.count()).select_from(StudentProject).where(StudentProject.status == "under_review")).one()
         pending_requests = sum(1 for r in ix.requests if r.status == "pending")
-
-        health = _health(s)
+        counters: dict = {}
+        health = _health(s, {
+            "open_flags": select(func.count()).select_from(ContentFlag).where(ContentFlag.status == "open").scalar_subquery(),
+            "pending_projects": select(func.count()).select_from(StudentProject).where(StudentProject.status == "under_review").scalar_subquery(),
+        }, counters)
+        open_flag_count, pending_projects = counters.get("open_flags", 0), counters.get("pending_projects", 0)
     health["overview_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
     return {
         "range": {"start": a.date().isoformat(), "end": (b - timedelta(days=1)).date().isoformat(), "granularity": granularity,
@@ -688,7 +747,7 @@ async def overview(start: Optional[str] = None, end: Optional[str] = None, granu
 
 
 @router.get(f"{P}/system")
-async def system_status(admin: str = Depends(get_current_admin)):
+def system_status(admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         return _health(s)
 
@@ -697,7 +756,7 @@ async def system_status(admin: str = Depends(get_current_admin)):
 
 
 @router.get(f"{P}/users")
-async def list_users(
+def list_users(
     q: Optional[str] = None, tab: str = "all", user_type: Optional[str] = None, verification: Optional[str] = None,
     status: Optional[str] = None, role: Optional[str] = None, joined_from: Optional[str] = None,
     joined_to: Optional[str] = None, branch: Optional[str] = None, college: Optional[str] = None,
@@ -707,8 +766,7 @@ async def list_users(
         raise HTTPException(status_code=400, detail="Unknown tab")
     jf, jt = _parse_day(joined_from, "joined_from"), _parse_day(joined_to, "joined_to")
     with Session(engine) as s:
-        ix = _Index(s)
-        rows = _build_users(s, ix)
+        rows = _users_rows(s)
     kpis = _user_kpis(rows)
     branches = sorted({r["branch"] for r in rows if r.get("branch")})
     colleges = sorted({r["college"] for r in rows if r.get("college")})
@@ -786,22 +844,49 @@ def _activity(s: Session, row: dict, kind: str, obj) -> List[dict]:
     if kind == "c":
         if row.get("profile_updated") and row["profile_updated"] != row["joined"]:
             add(row["profile_updated"], "Profile updated", None, "green")
-        apps = s.exec(select(Application).where(Application.candidate_id == obj.id).order_by(Application.applied_at.desc()).limit(20)).all()
-        jobs = {j.id: j for j in s.exec(select(Job).where(Job.id.in_([a.job_id for a in apps] or [0]))).all()}
-        for ap in apps:
-            j = jobs.get(ap.job_id)
-            add(ap.applied_at, f"Applied to job: {j.title if j else f'#{ap.job_id}'}", f"Status: {ap.status.replace('_', ' ')}", "blue")
-        for iv in s.exec(select(ScheduledInterview).where(ScheduledInterview.candidate_id == obj.id).limit(20)).all():
-            j = s.get(Job, iv.job_id)
-            add(iv.created_at, f"Interview scheduled: {iv.round_name}", f"{j.title if j else ''} · {iv.starts_at.strftime('%d %b %Y, %I:%M %p')} · {iv.status}", "purple")
-        for se in s.exec(select(InterviewSession).where(InterviewSession.candidate_id == obj.id).limit(20)).all():
-            label = "AI practice interview" if se.mode == "practice" else "AI interview"
-            add(se.started_at, f"{label} {se.status}", se.practice_topic or se.practice_kind, "purple")
-        for o in s.exec(select(Offer).where(Offer.candidate_id == obj.id).limit(20)).all():
-            j = s.get(Job, o.job_id)
-            add(o.offer_date, f"Offer {o.status}: {j.title if j else ''}", o.ctc, "green")
-        for pr in s.exec(select(StudentProject).where(StudentProject.candidate_id == obj.id).limit(20)).all():
-            add(pr.created_at, f"Project added: {pr.title}", f"Status: {pr.status.replace('_', ' ')}", "amber")
+        # ONE UNION ALL round trip for the whole timeline (was 5 queries + one per interview/offer)
+        from sqlalchemy import String, cast as sa_cast, literal, null as sa_null, union_all as sa_union_all
+
+        def part(kind_, at, a=None, b=None, c=None, src=None, joins=(), where=(), order=None, limit=20):
+            col = lambda v, n: (sa_cast(v, String) if v is not None else sa_cast(sa_null(), String)).label(n)  # noqa: E731
+            q = select(literal(kind_).label("k"), at.label("at"), col(a, "a"), col(b, "b"), col(c, "c")).select_from(src)
+            for t, on in joins:
+                q = q.outerjoin(t, on)
+            for w in where:
+                q = q.where(w)
+            if order is not None:
+                q = q.order_by(order)
+            sub = q.limit(limit).subquery()
+            return select(sub.c.k, sub.c.at, sub.c.a, sub.c.b, sub.c.c)
+
+        cid = obj.id
+        rows_ = s.exec(sa_union_all(
+            part("app", Application.applied_at, Job.title, Application.status, Application.job_id, Application,
+                 [(Job, Job.id == Application.job_id)], [Application.candidate_id == cid], Application.applied_at.desc()),
+            part("iv", ScheduledInterview.created_at, ScheduledInterview.round_name, Job.title, ScheduledInterview.starts_at,
+                 ScheduledInterview, [(Job, Job.id == ScheduledInterview.job_id)], [ScheduledInterview.candidate_id == cid],
+                 ScheduledInterview.created_at.desc()),
+            part("ses", InterviewSession.started_at, InterviewSession.mode, InterviewSession.status,
+                 func.coalesce(InterviewSession.practice_topic, InterviewSession.practice_kind), InterviewSession, (),
+                 [InterviewSession.candidate_id == cid], InterviewSession.started_at.desc()),
+            part("offer", Offer.offer_date, Offer.status, Job.title, Offer.ctc, Offer, [(Job, Job.id == Offer.job_id)],
+                 [Offer.candidate_id == cid], Offer.offer_date.desc()),
+            part("proj", StudentProject.created_at, StudentProject.title, StudentProject.status, None, StudentProject, (),
+                 [StudentProject.candidate_id == cid], StudentProject.created_at.desc()),
+        )).all()
+        for k, at, a, b, c in rows_:
+            at = _as_dt(at)
+            if k == "app":
+                add(at, f"Applied to job: {a if a else f'#{c}'}", f"Status: {(b or '').replace('_', ' ')}", "blue")
+            elif k == "iv":
+                starts = _as_dt(c)
+                add(at, f"Interview scheduled: {a}", f"{b or ''} · {_fmt_ist(starts) if starts else ''}", "purple")
+            elif k == "ses":
+                add(at, f"{'AI practice interview' if a == 'practice' else 'AI interview'} {b}", c, "purple")
+            elif k == "offer":
+                add(at, f"Offer {a}: {b or ''}", c, "green")
+            else:
+                add(at, f"Project added: {a}", f"Status: {(b or '').replace('_', ' ')}", "amber")
     elif kind == "u" and obj.role == "recruiter":
         ru = s.exec(select(RecruiterUser).where(RecruiterUser.username == obj.email)).first()
         if ru:
@@ -822,7 +907,7 @@ def _activity(s: Session, row: dict, kind: str, obj) -> List[dict]:
 
 
 @router.get(f"{P}/users/{{uid}}")
-async def user_detail(uid: str, admin: str = Depends(get_current_admin)):
+def user_detail(uid: str, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         kind, obj = _find_user(s, uid)
         row = _row_for(s, uid)
@@ -831,7 +916,11 @@ async def user_detail(uid: str, admin: str = Depends(get_current_admin)):
         out["notes"] = _notes_for(s, kind, obj)
         out["is_self"] = kind == "u" and obj.email == admin
         if kind == "c":
-            p = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == obj.id)).first()
+            cnt = lambda m, col: select(func.count()).select_from(m).where(col == obj.id).scalar_subquery()  # noqa: E731
+            prow = s.exec(select(cnt(Application, Application.candidate_id), cnt(StudentProject, StudentProject.candidate_id),
+                                 cnt(ScheduledInterview, ScheduledInterview.candidate_id), cnt(Offer, Offer.candidate_id),
+                                 select(CandidateProfile.id).where(CandidateProfile.candidate_id == obj.id).limit(1).scalar_subquery())).one()
+            p = s.get(CandidateProfile, prow[4]) if prow[4] else None   # 1 query for counts, 1 for the profile
             out["profile"] = None if not p else {
                 "headline": p.headline, "bio": p.bio, "skills": _jl(p.skills_json, [])[:30], "degree": p.degree,
                 "grad_year": p.grad_year, "current_year": p.current_year, "linkedin_url": p.linkedin_url,
@@ -840,12 +929,8 @@ async def user_detail(uid: str, admin: str = Depends(get_current_admin)):
                 "certifications": [{k: c.get(k) for k in ("name", "issuing_organization", "issue_date")} for c in _jl(p.certifications_json, []) if isinstance(c, dict)],
                 "resume": bool(p.resume_id),
             }
-            out["stats"] = {
-                "applications": s.exec(select(func.count()).select_from(Application).where(Application.candidate_id == obj.id)).one(),
-                "projects": s.exec(select(func.count()).select_from(StudentProject).where(StudentProject.candidate_id == obj.id)).one(),
-                "interviews": s.exec(select(func.count()).select_from(ScheduledInterview).where(ScheduledInterview.candidate_id == obj.id)).one(),
-                "offers": s.exec(select(func.count()).select_from(Offer).where(Offer.candidate_id == obj.id)).one(),
-            }
+            out["stats"] = {"applications": int(prow[0] or 0), "projects": int(prow[1] or 0),
+                            "interviews": int(prow[2] or 0), "offers": int(prow[3] or 0)}
         elif kind == "u":
             ru = s.exec(select(RecruiterUser).where(RecruiterUser.username == obj.email)).first()
             req = s.exec(select(RecruiterRequest).where(RecruiterRequest.email == obj.email).order_by(RecruiterRequest.submitted_at.desc())).first()
@@ -891,7 +976,7 @@ def _email_taken(s: Session, email: str, except_user: Optional[int] = None, exce
 
 
 @router.patch(f"{P}/users/{{uid}}")
-async def update_user(uid: str, body: UserUpdate, admin: str = Depends(get_current_admin)):
+def update_user(uid: str, body: UserUpdate, admin: str = Depends(get_current_admin)):
     name = body.name.strip() if body.name is not None else None
     if name is not None and len(name) < 2:
         raise HTTPException(status_code=422, detail="Name must be at least 2 characters")
@@ -1145,7 +1230,7 @@ def _do_delete(s: Session, admin: str, uid: str) -> dict:
 
 
 @router.delete(f"{P}/users/{{uid}}")
-async def delete_user(uid: str, admin: str = Depends(get_current_admin)):
+def delete_user(uid: str, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         return _do_delete(s, admin, uid)
 
@@ -1177,7 +1262,7 @@ async def bulk_users(body: BulkBody, admin: str = Depends(get_current_admin)):
             raise HTTPException(status_code=422, detail="Subject and message are required")
         from ..services.email_delivery import queue_email
         with Session(engine) as s:
-            rows = {r["id"]: r for r in _build_users(s, _Index(s))}
+            rows = {r["id"]: r for r in _users_rows(s)}
             for uid in ids:
                 r = rows.get(uid)
                 if not r or not r.get("email"):
@@ -1289,7 +1374,7 @@ class NoteBody(BaseModel):
 
 
 @router.post(f"{P}/users/{{uid}}/notes")
-async def add_note(uid: str, body: NoteBody, admin: str = Depends(get_current_admin)):
+def add_note(uid: str, body: NoteBody, admin: str = Depends(get_current_admin)):
     txt = body.text.strip()
     if not txt:
         raise HTTPException(status_code=422, detail="Note cannot be empty")
@@ -1313,7 +1398,7 @@ async def add_note(uid: str, body: NoteBody, admin: str = Depends(get_current_ad
 
 
 @router.delete(f"{P}/users/{{uid}}/notes/{{note_id}}")
-async def delete_note(uid: str, note_id: str, admin: str = Depends(get_current_admin)):
+def delete_note(uid: str, note_id: str, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         kind, obj = _find_user(s, uid)
         if kind == "c":
@@ -1340,9 +1425,9 @@ async def delete_note(uid: str, note_id: str, admin: str = Depends(get_current_a
 
 
 @router.get(f"{P}/companies")
-async def list_companies(q: Optional[str] = None, status: Optional[str] = None, admin: str = Depends(get_current_admin)):
+def list_companies(q: Optional[str] = None, status: Optional[str] = None, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        rows = _companies(s, _Index(s))
+        rows = _companies_rows(s)
     kpis = {"total": len(rows), "verified": sum(1 for r in rows if r["status"] in {"verified", "approved"}),
             "pending": sum(1 for r in rows if r["status"] == "pending"), "jobs": sum(r["jobs"] for r in rows),
             "recruiters": sum(r["recruiter_count"] for r in rows), "applications": sum(r["applications"] for r in rows)}
@@ -1355,10 +1440,10 @@ async def list_companies(q: Optional[str] = None, status: Optional[str] = None, 
 
 
 @router.get(f"{P}/companies/{{cid}}")
-async def company_detail(cid: str, admin: str = Depends(get_current_admin)):
+def company_detail(cid: str, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        ix = _Index(s)
-        rows = _companies(s, ix)
+        ix = _index(s)
+        rows = _companies_rows(s)
         c = next((r for r in rows if r["id"] == cid), None)
         if not c:
             raise HTTPException(status_code=404, detail="Company not found")
@@ -1393,11 +1478,11 @@ async def company_detail(cid: str, admin: str = Depends(get_current_admin)):
 
 
 @router.get(f"{P}/jobs")
-async def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branch: Optional[str] = None,
+def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branch: Optional[str] = None,
                     company: Optional[str] = None, page: int = 1, page_size: int = 10, export: bool = False,
                     admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        ix = _Index(s)
+        ix = _index(s)
         jobs = s.exec(select(Job).order_by(Job.created_at.desc())).all()
         app_counts = dict(s.exec(select(Application.job_id, func.count()).group_by(Application.job_id)).all())
         flagged = {f.target_id for f in s.exec(select(ContentFlag).where(ContentFlag.kind == "job", ContentFlag.status == "open")).all()}
@@ -1430,9 +1515,9 @@ async def list_jobs(q: Optional[str] = None, status: Optional[str] = None, branc
 
 
 @router.get(f"{P}/jobs/{{job_id}}")
-async def job_detail(job_id: int, admin: str = Depends(get_current_admin)):
+def job_detail(job_id: int, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        ix = _Index(s)
+        ix = _index(s)
         j = s.get(Job, job_id)
         if not j:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -1453,7 +1538,7 @@ class JobStatusBody(BaseModel):
 
 
 @router.post(f"{P}/jobs/{{job_id}}/status")
-async def set_job_status(job_id: int, body: JobStatusBody, admin: str = Depends(get_current_admin)):
+def set_job_status(job_id: int, body: JobStatusBody, admin: str = Depends(get_current_admin)):
     if body.status not in {"open", "closed"}:
         raise HTTPException(status_code=422, detail="status must be open or closed")
     with Session(engine) as s:
@@ -1503,7 +1588,7 @@ class JobFlagBody(BaseModel):
 
 
 @router.post(f"{P}/jobs/{{job_id}}/flag")
-async def flag_job(job_id: int, body: JobFlagBody, admin: str = Depends(get_current_admin)):
+def flag_job(job_id: int, body: JobFlagBody, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         j = s.get(Job, job_id)
         if not j:
@@ -1516,7 +1601,7 @@ async def flag_job(job_id: int, body: JobFlagBody, admin: str = Depends(get_curr
 
 
 @router.get(f"{P}/flags")
-async def list_flags(status: Optional[str] = None, admin: str = Depends(get_current_admin)):
+def list_flags(status: Optional[str] = None, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         stmt = select(ContentFlag).order_by(ContentFlag.created_at.desc()).limit(500)
         if status:
@@ -1527,7 +1612,7 @@ async def list_flags(status: Optional[str] = None, admin: str = Depends(get_curr
 
 
 @router.post(f"{P}/flags")
-async def create_flag(body: FlagBody, admin: str = Depends(get_current_admin)):
+def create_flag(body: FlagBody, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         return _flag_public(_create_flag(s, admin, body))
 
@@ -1538,7 +1623,7 @@ class FlagUpdate(BaseModel):
 
 
 @router.post(f"{P}/flags/{{flag_id}}")
-async def update_flag(flag_id: int, body: FlagUpdate, admin: str = Depends(get_current_admin)):
+def update_flag(flag_id: int, body: FlagUpdate, admin: str = Depends(get_current_admin)):
     if body.status not in {"open", "resolved", "dismissed"}:
         raise HTTPException(status_code=422, detail="status must be open, resolved or dismissed")
     with Session(engine) as s:
@@ -1558,7 +1643,7 @@ async def update_flag(flag_id: int, body: FlagUpdate, admin: str = Depends(get_c
 
 
 @router.get(f"{P}/recruiter-requests")
-async def recruiter_requests_history(status: str = "decided", admin: str = Depends(get_current_admin)):
+def recruiter_requests_history(status: str = "decided", admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         stmt = select(RecruiterRequest).order_by(RecruiterRequest.submitted_at.desc()).limit(100)
         if status == "decided":
@@ -1575,7 +1660,7 @@ async def recruiter_requests_history(status: str = "decided", admin: str = Depen
 
 
 @router.get(f"{P}/projects")
-async def list_projects(status: str = "under_review", admin: str = Depends(get_current_admin)):
+def list_projects(status: str = "under_review", admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         stmt = select(StudentProject).order_by(StudentProject.updated_at.desc()).limit(300)
         if status != "all":
@@ -1613,7 +1698,7 @@ def _project_email(name: Optional[str], title: str, verified: bool, note: Option
     return f"{head}: {title}"[:200], txt, html
 
 
-async def _decide_project(project_id: int, verified: bool, note: Optional[str], admin: str) -> dict:
+def _decide_project(project_id: int, verified: bool, note: Optional[str], admin: str) -> dict:
     from ..services.email_delivery import queue_email
     note = (note or "").strip() or None
     if not verified and not note:
@@ -1640,24 +1725,26 @@ async def _decide_project(project_id: int, verified: bool, note: Optional[str], 
 
 
 @router.post(f"{P}/projects/{{project_id}}/verify")
-async def verify_project(project_id: int, body: ProjectDecision, admin: str = Depends(get_current_admin)):
-    return await _decide_project(project_id, True, body.note, admin)
+def verify_project(project_id: int, body: ProjectDecision, admin: str = Depends(get_current_admin)):
+    return _decide_project(project_id, True, body.note, admin)
 
 
 @router.post(f"{P}/projects/{{project_id}}/reject")
-async def reject_project(project_id: int, body: ProjectDecision, admin: str = Depends(get_current_admin)):
-    return await _decide_project(project_id, False, body.note, admin)
+def reject_project(project_id: int, body: ProjectDecision, admin: str = Depends(get_current_admin)):
+    return _decide_project(project_id, False, body.note, admin)
 
 
 # ── applications / interviews / offers (read-only) ───────────────────────────
 
 
 def _people(s: Session, cand_ids: Iterable[int]) -> Dict[int, dict]:
-    ids = list(set(cand_ids)) or [0]
-    profiles = {p.candidate_id: p for p in s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id.in_(ids))).all()}
+    ids = list(set(cand_ids))
+    if not ids:
+        return {}
     out = {}
-    for c in s.exec(select(CandidateUser).where(CandidateUser.id.in_(ids))).all():
-        p = profiles.get(c.id)
+    for c, p in s.exec(select(CandidateUser, CandidateProfile)
+                       .outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)
+                       .where(CandidateUser.id.in_(ids))).all():   # 1 query (was 2)
         out[c.id] = {"id": f"c-{c.id}", "name": (p.full_name if p and p.full_name else c.username.split("@")[0]),
                      "email": c.username if "@" in c.username else (p.contact_email if p else None),
                      "college": p.college if p else None, "branch": branch_label(p.branch) if p else None}
@@ -1665,15 +1752,31 @@ def _people(s: Session, cand_ids: Iterable[int]) -> Dict[int, dict]:
 
 
 @router.get(f"{P}/applications")
-async def list_applications(q: Optional[str] = None, status: Optional[str] = None, company: Optional[str] = None,
+def list_applications(q: Optional[str] = None, status: Optional[str] = None, company: Optional[str] = None,
                             start: Optional[str] = None, end: Optional[str] = None, page: int = 1, page_size: int = 10,
                             export: bool = False, admin: str = Depends(get_current_admin)):
     sd, ed = _parse_day(start, "start"), _parse_day(end, "end")
     with Session(engine) as s:
-        ix = _Index(s)
-        apps = s.exec(select(Application).order_by(Application.applied_at.desc()).limit(20000)).all()
-        jobs = {j.id: j for j in s.exec(select(Job)).all()}
-        people = _people(s, (a.candidate_id for a in apps))
+        ix = _index(s)
+        from sqlalchemy.orm import load_only
+        from ..services.hot_data import all_jobs
+
+        # ONE query: only the listed columns (transcripts etc. stay in the DB) + the candidate
+        joined = s.exec(select(Application, CandidateUser, CandidateProfile)
+                        .options(load_only(Application.id, Application.candidate_id, Application.job_id, Application.status,
+                                           Application.candidate_status, Application.ats_score, Application.final_score,
+                                           Application.interview_status, Application.interview_eval_score, Application.applied_at))
+                        .outerjoin(CandidateUser, CandidateUser.id == Application.candidate_id)
+                        .outerjoin(CandidateProfile, CandidateProfile.candidate_id == Application.candidate_id)
+                        .order_by(Application.applied_at.desc(), Application.id.desc()).limit(20000)).all()
+        apps = [a for a, _, _ in joined]
+        jobs = {j.id: j for j in all_jobs()}                                   # cached
+        people = {}
+        for a, c, p in joined:
+            if c is not None and a.candidate_id not in people:
+                people[a.candidate_id] = {"id": f"c-{c.id}", "name": (p.full_name if p and p.full_name else c.username.split("@")[0]),
+                                          "email": c.username if "@" in c.username else (p.contact_email if p else None),
+                                          "college": p.college if p else None, "branch": branch_label(p.branch) if p else None}
         rows = []
         for a in apps:
             j = jobs.get(a.job_id)
@@ -1708,14 +1811,23 @@ async def list_applications(q: Optional[str] = None, status: Optional[str] = Non
 
 
 @router.get(f"{P}/interviews")
-async def list_interviews(kind: Optional[str] = None, status: Optional[str] = None, q: Optional[str] = None,
+def list_interviews(kind: Optional[str] = None, status: Optional[str] = None, q: Optional[str] = None,
                           page: int = 1, page_size: int = 10, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        ix = _Index(s)
-        jobs = {j.id: j for j in s.exec(select(Job)).all()}
+        ix = _index(s)
+        from sqlalchemy.orm import load_only
+        from ..services.hot_data import all_jobs
+
+        jobs = {j.id: j for j in all_jobs()}                                   # cached
         sched = s.exec(select(ScheduledInterview).order_by(ScheduledInterview.starts_at.desc()).limit(5000)).all()
-        ai = [x for x in s.exec(select(InterviewSession).order_by(InterviewSession.started_at.desc()).limit(5000)).all()
-              if (x.mode or "application") == "application" and x.application_id]
+        # application interviews only, filtered in SQL, without transcripts / plans (were loaded in full)
+        ai = s.exec(select(InterviewSession)
+                    .options(load_only(InterviewSession.id, InterviewSession.candidate_id, InterviewSession.job_id,
+                                       InterviewSession.application_id, InterviewSession.mode, InterviewSession.status,
+                                       InterviewSession.eval_json, InterviewSession.started_at, InterviewSession.completed_at))
+                    .where(or_(InterviewSession.mode == None, InterviewSession.mode == "application"),  # noqa: E711
+                           InterviewSession.application_id != None)  # noqa: E711
+                    .order_by(InterviewSession.started_at.desc()).limit(5000)).all()
         people = _people(s, [x.candidate_id for x in sched] + [x.candidate_id for x in ai])
         rows = []
         for iv in sched:
@@ -1751,11 +1863,12 @@ async def list_interviews(kind: Optional[str] = None, status: Optional[str] = No
 
 
 @router.get(f"{P}/offers")
-async def list_offers(status: Optional[str] = None, q: Optional[str] = None, page: int = 1, page_size: int = 10,
+def list_offers(status: Optional[str] = None, q: Optional[str] = None, page: int = 1, page_size: int = 10,
                       export: bool = False, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
-        ix = _Index(s)
-        jobs = {j.id: j for j in s.exec(select(Job)).all()}
+        ix = _index(s)
+        from ..services.hot_data import all_jobs
+        jobs = {j.id: j for j in all_jobs()}
         offers = s.exec(select(Offer).order_by(Offer.offer_date.desc()).limit(20000)).all()
         people = _people(s, (o.candidate_id for o in offers))
         rows = []
@@ -1787,24 +1900,24 @@ REPORT_KINDS = {"users", "companies", "jobs", "applications", "hires"}
 
 
 @router.get(f"{P}/reports/{{kind}}")
-async def report(kind: str, start: Optional[str] = None, end: Optional[str] = None, admin: str = Depends(get_current_admin)):
+def report(kind: str, start: Optional[str] = None, end: Optional[str] = None, admin: str = Depends(get_current_admin)):
     if kind not in REPORT_KINDS:
         raise HTTPException(status_code=404, detail="Unknown report")
     a, b = _range(start, end)
     inr = lambda d: d is not None and a <= d < b  # noqa: E731
     with Session(engine) as s:
-        ix = _Index(s)
+        ix = _index(s)
         if kind == "users":
             cols = ["id", "name", "email", "type", "college_or_company", "branch_or_department", "verification", "status", "joined", "last_login"]
             rows = [{"id": r["id"], "name": r["name"], "email": r["email"], "type": r["type"], "college_or_company": r["org"],
                      "branch_or_department": r["dept"], "verification": r["verification"], "status": r["status"],
                      "joined": _iso(r["joined"]), "last_login": _iso(r["last_login"])}
-                    for r in _build_users(s, ix, include_requests=False) if inr(r["joined"])]
+                    for r in _users_rows(s, include_requests=False) if inr(r["joined"])]
         elif kind == "companies":
             cols = ["name", "industry", "location", "status", "recruiters", "jobs", "open_jobs", "applications", "registered"]
             rows = [{"name": c["name"], "industry": c["industry"], "location": c["location"], "status": c["status"],
                      "recruiters": c["recruiter_count"], "jobs": c["jobs"], "open_jobs": c["open_jobs"], "applications": c["applications"],
-                     "registered": _iso(c["registered"])} for c in _companies(s, ix) if inr(c["registered"])]
+                     "registered": _iso(c["registered"])} for c in _companies_rows(s) if inr(c["registered"])]
         elif kind == "jobs":
             cols = ["id", "title", "company", "branch", "location", "status", "job_type", "openings", "applications", "created_at"]
             app_counts = dict(s.exec(select(Application.job_id, func.count()).group_by(Application.job_id)).all())
@@ -1859,7 +1972,7 @@ def _audit_public(r: DecisionAuditLog, jobs: Dict[int, str], people: Dict[int, d
 
 
 @router.get(f"{P}/audit-logs")
-async def audit_logs(event_type: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None,
+def audit_logs(event_type: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None,
                      q: Optional[str] = None, page: int = 1, page_size: int = 20, export: bool = False,
                      admin: str = Depends(get_current_admin)):
     sd, ed = _parse_day(start, "start"), _parse_day(end, "end")
@@ -1897,18 +2010,27 @@ async def audit_logs(event_type: Optional[str] = None, start: Optional[str] = No
             rows = s.exec(stmt.limit(MAX_EXPORT)).all()
         else:
             rows = s.exec(stmt.offset((page - 1) * page_size).limit(page_size)).all()
-        jobs = {j.id: j.title for j in s.exec(select(Job).where(Job.id.in_([r.job_id for r in rows if r.job_id] or [0]))).all()}
+        from ..services.hot_data import all_jobs
+
+        jobs = {j.id: j.title for j in all_jobs()}                     # cached
         people = _people(s, [r.candidate_id for r in rows if r.candidate_id])
-        types = [t for t, in [(x,) for x in s.exec(select(DecisionAuditLog.event_type).distinct()).all()]]
-        counts = dict(s.exec(select(DecisionAuditLog.event_type, func.count()).group_by(DecisionAuditLog.event_type)).all())
-        week = s.exec(select(func.count()).select_from(DecisionAuditLog).where(DecisionAuditLog.created_at >= utc_now() - timedelta(days=7))).one()
+        # per-type counts + last-7-days count in ONE query (was 3; the distinct
+        # event types are exactly the keys of the per-type counts)
+        week_ago = utc_now() - timedelta(days=7)
+        counts, week = {}, 0
+        for et, n, n7 in s.exec(select(DecisionAuditLog.event_type, func.count(),
+                                       func.sum(case((DecisionAuditLog.created_at >= week_ago, 1), else_=0)))
+                                .group_by(DecisionAuditLog.event_type)).all():
+            counts[et] = int(n or 0)
+            week += int(n7 or 0)
+        types = list(counts)
         return {"items": [_audit_public(r, jobs, people, full=export) for r in rows], "total": total, "page": page, "page_size": page_size,
                 "event_types": sorted(types), "kpis": {"total": sum(counts.values()), "last_7_days": week,
                                                        "admin_actions": counts.get("admin_action", 0), "by_type": counts}}
 
 
 @router.get(f"{P}/audit-logs/{{log_id}}")
-async def audit_log_detail(log_id: int, admin: str = Depends(get_current_admin)):
+def audit_log_detail(log_id: int, admin: str = Depends(get_current_admin)):
     with Session(engine) as s:
         r = s.get(DecisionAuditLog, log_id)
         if not r:
@@ -1928,9 +2050,9 @@ class RequestDecision(BaseModel):
 
 
 @router.post(f"{P}/recruiter-requests/{{request_id}}/approve")
-async def approve_request(request_id: int, admin: str = Depends(get_current_admin)):
+def approve_request(request_id: int, admin: str = Depends(get_current_admin)):
     from .auth import approve_recruiter_request
-    res = await approve_recruiter_request(request_id, admin=admin)
+    res = approve_recruiter_request(request_id, admin=admin)
     with Session(engine) as s:
         _audit(s, admin, "approve_recruiter_request", f"r-{request_id}",
                details={"email": (res.get("user") or {}).get("email"), "email_sent": res.get("email_sent")})
@@ -1938,10 +2060,10 @@ async def approve_request(request_id: int, admin: str = Depends(get_current_admi
 
 
 @router.post(f"{P}/recruiter-requests/{{request_id}}/reject")
-async def reject_request(request_id: int, body: RequestDecision, admin: str = Depends(get_current_admin)):
+def reject_request(request_id: int, body: RequestDecision, admin: str = Depends(get_current_admin)):
     from .auth import reject_recruiter_request
     reason = (body.reason or "").strip() or None
-    res = await reject_recruiter_request(request_id, reason=reason, admin=admin)
+    res = reject_recruiter_request(request_id, reason=reason, admin=admin)
     with Session(engine) as s:
         _audit(s, admin, "reject_recruiter_request", f"r-{request_id}", details={"reason": reason})
     return res
@@ -1968,6 +2090,12 @@ def _settings_path() -> str:
 
 
 def load_platform_settings() -> Dict[str, Any]:
+    from ..services.hot_data import platform_settings
+
+    return platform_settings(_load_platform_settings_uncached)
+
+
+def _load_platform_settings_uncached() -> Dict[str, Any]:
     out = dict(SETTINGS_DEFAULTS)
     with Session(engine) as s:
         rows = s.exec(select(PlatformSetting)).all()
@@ -1997,7 +2125,7 @@ class SettingsBody(BaseModel):
 
 
 @router.get(f"{P}/settings")
-async def get_settings(admin: str = Depends(get_current_admin)):
+def get_settings(admin: str = Depends(get_current_admin)):
     import os
     st = load_platform_settings()
     try:
@@ -2011,7 +2139,7 @@ async def get_settings(admin: str = Depends(get_current_admin)):
 
 
 @router.put(f"{P}/settings")
-async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admin)):
+def put_settings(body: SettingsBody, admin: str = Depends(get_current_admin)):
     import os
     st = load_platform_settings()
     changes = body.model_dump(exclude_unset=True)
@@ -2043,7 +2171,7 @@ async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admi
             else:
                 s.add(PlatformSetting(key=key, value_json=json.dumps(value)))
         s.commit()
-    _PUBLIC_CACHE.clear()
+    _public_cache.invalidate()
     with Session(engine) as s:
         _audit(s, admin, "update_settings", "platform", details=changes)
     return {"settings": st}
@@ -2051,26 +2179,29 @@ async def put_settings(body: SettingsBody, admin: str = Depends(get_current_admi
 
 # ── public stats (landing page, no auth) ──────────────────────────────────────
 
-_PUBLIC_CACHE: Dict[str, Any] = {}
 PUBLIC_TTL = 60
+_public_cache = _TTLCache("public_stats", ttl=PUBLIC_TTL, tables={"platformsetting"})
 
 
 @router.get("/api/public/stats")
-async def public_stats():
+def public_stats():
     """Live, non-personal platform counts for the public landing page.
-    Cached for a minute; company names are only those of approved companies."""
-    now = time.time()
-    hit = _PUBLIC_CACHE.get("stats")
-    if hit and now - hit[0] < PUBLIC_TTL:
-        return hit[1]
+    Cached for a minute (cleared at once when the admin changes platform
+    settings); company names are only those of approved companies."""
+    return _public_cache.get_or_set("stats", _public_stats_uncached)
+
+
+def _public_stats_uncached() -> dict:
     st = load_platform_settings()
     with Session(engine) as s:
-        ix = _Index(s)
-        companies = [c for c in _companies(s, ix) if c["status"] in {"verified", "approved"}]
-        students = s.exec(select(func.count()).select_from(CandidateUser).where(or_(CandidateUser.status == None, CandidateUser.status != "suspended"))).one()  # noqa: E711
-        open_jobs = s.exec(select(func.count()).select_from(Job).where(Job.status == "open")).one()
-        branches = {branch_id(b) for b in s.exec(select(Job.branch).where(Job.status == "open")).all() if b}
-        verified_projects = s.exec(select(func.count()).select_from(StudentProject).where(StudentProject.status == "verified")).one()
+        companies = [c for c in _companies_rows(s) if c["status"] in {"verified", "approved"}]
+        # ONE round trip for all the counters (was four)
+        students_q = select(func.count()).select_from(CandidateUser).where(or_(CandidateUser.status == None, CandidateUser.status != "suspended")).scalar_subquery()  # noqa: E711
+        jobs_q = select(func.count()).select_from(Job).where(Job.status == "open").scalar_subquery()
+        projects_q = select(func.count()).select_from(StudentProject).where(StudentProject.status == "verified").scalar_subquery()
+        students, open_jobs, verified_projects = s.exec(select(students_q, jobs_q, projects_q)).one()
+        from ..services.hot_data import open_jobs as _open_jobs
+        branches = {branch_id(j.branch) for j in _open_jobs() if j.branch}
     top = sorted(companies, key=lambda c: (-c["jobs"], c["name"]))[:6]
     out = {
         "students": students, "companies": len(companies), "open_jobs": open_jobs,
@@ -2081,5 +2212,4 @@ async def public_stats():
         "announcement": {"text": st["announcement_text"], "tone": st["announcement_tone"]} if st.get("announcement_enabled") and st.get("announcement_text") else None,
         "support_email": st.get("support_email"),
     }
-    _PUBLIC_CACHE["stats"] = (now, out)
     return out

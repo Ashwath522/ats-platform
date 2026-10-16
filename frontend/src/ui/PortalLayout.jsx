@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Bell, ChevronDown, Menu as MenuIcon, Search, LogOut, X } from 'lucide-react'
-import { Avatar, Brand, LogoTile, Menu, cx, timeAgo } from './index.jsx'
+import { Avatar, Brand, LogoTile, Menu, Skeleton, cx, timeAgo } from './index.jsx'
 import { useApi } from './useApi.js'
 import { haptic } from '../lib/platform.js'
 
@@ -23,6 +23,7 @@ export default function PortalLayout({
   onSearch,
   outletContext,
   children,
+  prefetch,
 }) {
   const [drawer, setDrawer] = useState(false)
   const [scrolled, setScrolled] = useState(false)
@@ -36,10 +37,13 @@ export default function PortalLayout({
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Hover / focus / touch on a nav link warms that page's code + data (see shells).
+  const warm = (to) => (prefetch ? { onMouseEnter: () => prefetch(to), onFocus: () => prefetch(to), onTouchStart: () => prefetch(to) } : {})
+
   const NavItem = ({ item }) => {
     const Icon = item.icon
     return (
-      <NavLink to={item.to} end={item.end} className={({ isActive }) => cx('cl-nav-item', (item.match ? item.match(location) : isActive) && 'active')}>
+      <NavLink to={item.to} end={item.end} {...warm(item.to)} className={({ isActive }) => cx('cl-nav-item', (item.match ? item.match(location) : isActive) && 'active')}>
         <Icon size={20} strokeWidth={1.9} />
         <span>{item.label}</span>
       </NavLink>
@@ -82,7 +86,13 @@ export default function PortalLayout({
             </div>
           </header>
           <main className="cl-content cl-page-enter" key={location.pathname}>
-            {children || <Outlet context={outletContext} />}
+            {children || (
+              // Page chunks load inside the shell: the sidebar / top bar stay put and
+              // only the content area shows a skeleton (was: whole-app blank fallback).
+              <Suspense fallback={<PageSkeleton />}>
+                <Outlet context={outletContext} />
+              </Suspense>
+            )}
           </main>
         </div>
       </div>
@@ -92,7 +102,7 @@ export default function PortalLayout({
           {tabs.map((t) => {
             const Icon = t.icon
             return (
-              <NavLink key={t.to} to={t.to} end={t.end} onClick={() => haptic('light')} className={({ isActive }) => cx('cl-tab', (isActive || t.match?.(location)) && 'active')}>
+              <NavLink key={t.to} to={t.to} end={t.end} {...warm(t.to)} onClick={() => haptic('light')} className={({ isActive }) => cx('cl-tab', (isActive || t.match?.(location)) && 'active')}>
                 <Icon size={21} />
                 <span>{t.short || t.label}</span>
               </NavLink>
@@ -100,6 +110,16 @@ export default function PortalLayout({
           })}
         </nav>
       )}
+    </div>
+  )
+}
+
+function PageSkeleton() {
+  return (
+    <div className="cl-stack" aria-busy="true" aria-label="Loading page">
+      <Skeleton h={150} r={18} />
+      <div className="cl-grid cl-grid-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={92} r={14} />)}</div>
+      <Skeleton h={260} r={16} />
     </div>
   )
 }
@@ -115,9 +135,13 @@ function NotificationBell({ role }) {
   useEffect(() => {
     let alive = true
     const load = () => api.get('/api/notifications').then((d) => alive && setItems(d?.items || [])).catch(() => {})
-    load()
-    const t = setInterval(load, 60000)
-    return () => { alive = false; clearInterval(t) }
+    // first load after the page's own data (the bell is never the critical path)
+    const first = setTimeout(load, 400)
+    // poll only while the tab is visible; refresh when the user comes back
+    const t = setInterval(() => { if (!document.hidden) load() }, 60000)
+    const onVis = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { alive = false; clearTimeout(first); clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [api])
   const unread = items.filter((n) => !seen || n.at > seen).length
   const markSeen = () => {
