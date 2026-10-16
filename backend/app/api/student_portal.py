@@ -101,7 +101,15 @@ def branch_id(value: Optional[str]) -> Optional[str]:
     return None
 
 
-def _user(session: Session, username: str) -> CandidateUser:
+def _user(session: Session, username: str):
+    """Lightweight NS(id, username, status) from the in-process principal cache
+    (no query on a warm cache). Use ``_user_row`` when the ORM row is needed."""
+    from ..auth import cached_candidate
+
+    return cached_candidate(username)
+
+
+def _user_row(session: Session, username: str) -> CandidateUser:
     user = session.exec(select(CandidateUser).where(CandidateUser.username == username)).first()
     if not user:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -119,7 +127,15 @@ def _profile(session: Session, cid: int) -> CandidateProfile:
 
 
 def _iso(d):
-    return d.isoformat() if d else None
+    """Stored datetimes are naive UTC: emit an explicit 'Z' so browsers show
+    local time (without it JS parses the string as *local* time - an
+    interview at 10:00 IST was shown as 04:30)."""
+    if not d:
+        return None
+    if getattr(d, "tzinfo", None) is not None:
+        from datetime import timezone as _tz
+        d = d.astimezone(_tz.utc).replace(tzinfo=None)
+    return d.isoformat() + "Z"
 
 
 def _media(path: Optional[str]) -> Optional[str]:
@@ -127,37 +143,16 @@ def _media(path: Optional[str]) -> Optional[str]:
 
 
 class _Companies:
-    """Per-request cache: job → (company name, logo url)."""
+    """job -> (company name, logo url). Backed by the process-wide company
+    directory cache (services/hot_data.py): no query per job any more."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Optional[Session] = None):
         self.s = session
-        self._by_company: Dict[int, str] = {}
-        self._by_recruiter: Dict[int, tuple] = {}
 
     def of(self, job: Optional[Job]) -> tuple:
-        if not job:
-            return "Company", None
-        logo = None
-        rp = self._recruiter_profile(job.recruiter_id)
-        if rp:
-            logo = rp[1]
-        if job.company_id:
-            if job.company_id not in self._by_company:
-                c = self.s.get(Company, job.company_id)
-                self._by_company[job.company_id] = c.name if c and c.name else ""
-            if self._by_company[job.company_id]:
-                return self._by_company[job.company_id], logo
-        if rp and rp[0]:
-            return rp[0], logo
-        return "Company", logo
+        from ..services.hot_data import company_of
 
-    def _recruiter_profile(self, rid: Optional[int]):
-        if rid is None:
-            return None
-        if rid not in self._by_recruiter:
-            cp = self.s.exec(select(CompanyProfile).where(CompanyProfile.owner_recruiter_id == rid)).first()
-            self._by_recruiter[rid] = (cp.name, _media(cp.logo_path)) if cp else None
-        return self._by_recruiter[rid]
+        return company_of(job)
 
 
 def _split_reqs(text: str) -> List[str]:
@@ -170,6 +165,12 @@ def _split_reqs(text: str) -> List[str]:
 
 
 def job_skills(job: Job) -> List[str]:
+    from ..services.hot_data import job_skills_cached
+
+    return job_skills_cached(job, _job_skills_uncached)
+
+
+def _job_skills_uncached(job: Job) -> List[str]:
     skills = _split_reqs(job.requirements or "")
     if len(skills) < 3:
         try:
@@ -488,37 +489,66 @@ def _no_resume_insights(bid: Optional[str]) -> dict:
 
 @router.get("/api/student/resume/insights")
 async def resume_insights(refresh: bool = Query(False), candidate: str = Depends(get_current_candidate)):
-    from ..services.deep_analysis import make_cache_key
+    # DB + CPU work runs in the threadpool; only the optional LLM call is awaited
+    # here, so this endpoint no longer blocks the event loop for other requests.
+    from starlette.concurrency import run_in_threadpool
 
-    with Session(engine) as session:
-        user = _user(session, candidate)
-        profile = _profile(session, user.id)
-        bid = branch_id(profile.branch)
-        n_projects = len(session.exec(select(StudentProject.id).where(StudentProject.candidate_id == user.id)).all())
-        n_certs = len(_j(profile.certifications_json, []))
-        n_ach = len(_j(profile.achievements_json, []))
-        resume, text = _resume_text(session, profile)
-        role_skills = branch_role_skills(bid)
-        pskills = {s.lower() for s in profile_skills(profile)}
-        suggested = [s for s in role_skills if s.lower() not in pskills]
-        if not resume or not text.strip():
-            out = _no_resume_insights(bid)
-            out.update({"role_skills": role_skills, "suggested_skills": suggested, "resume": None})
-            return out
-        key = make_cache_key(str(resume.id), f"student_insights:v1:{bid}:{n_projects}:{n_certs}:{n_ach}", "")
-        cached = session.exec(select(AnalysisCache).where(AnalysisCache.cache_key == key)).first()
-        resume_meta = {"id": resume.id, "filename": resume.filename, "uploaded_at": _iso(resume.uploaded_at)}
-        if cached and not refresh:
-            out = json.loads(cached.payload_json)
-            out.update({"role_skills": role_skills, "suggested_skills": suggested, "resume": resume_meta, "cached": True})
-            return out
-
-    out = compute_insights(text, bid, n_projects=n_projects, n_certs=n_certs, n_achievements=n_ach)
-    ai = await _llm_suggestions(text, out["best_role"], bid, out["bars"])
+    ctx = await run_in_threadpool(_insights_load, candidate, refresh)
+    if "result" in ctx:
+        return ctx["result"]
+    out = await run_in_threadpool(compute_insights, ctx["text"], ctx["bid"], n_projects=ctx["n_projects"],
+                                  n_certs=ctx["n_certs"], n_achievements=ctx["n_ach"])
+    ai = await _llm_suggestions(ctx["text"], out["best_role"], ctx["bid"], out["bars"])
     if ai:
         out["suggestions"] = ai + out["suggestions"]
         out["ai_enriched"] = True
     out["computed_at"] = _iso(utc_now())
+    await run_in_threadpool(_insights_store, ctx["key"], out)
+    out.update({"role_skills": ctx["role_skills"], "suggested_skills": ctx["suggested"], "resume": ctx["resume_meta"], "cached": False})
+    return out
+
+
+def _insights_load(candidate: str, refresh: bool) -> dict:
+    from ..services.deep_analysis import make_cache_key
+
+    with Session(engine) as session:
+        core = _core(session, candidate, projects=True)            # 1 query (profile + project count)
+        profile = core.profile
+        bid = branch_id(profile.branch)
+        n_projects = core.n_projects
+        n_certs = len(_j(profile.certifications_json, []))
+        n_ach = len(_j(profile.achievements_json, []))
+        role_skills = branch_role_skills(bid)
+        pskills = {s.lower() for s in profile_skills(profile)}
+        suggested = [s for s in role_skills if s.lower() not in pskills]
+        key = make_cache_key(str(profile.resume_id), f"student_insights:v1:{bid}:{n_projects}:{n_certs}:{n_ach}", "")
+        found = session.exec(select(Resume, AnalysisCache.payload_json)
+                             .outerjoin(AnalysisCache, AnalysisCache.cache_key == key)
+                             .where(Resume.id == profile.resume_id)).first() if profile.resume_id else None   # 1 query
+        resume = found[0] if found else None
+        if resume and found[1] and not refresh:
+            resume_meta = {"id": resume.id, "filename": resume.filename, "uploaded_at": _iso(resume.uploaded_at)}
+            out = json.loads(found[1])
+            out.update({"role_skills": role_skills, "suggested_skills": suggested, "resume": resume_meta, "cached": True})
+            return {"result": out}
+        text = ""
+        if resume:
+            try:
+                from ..resume_utils import vector_store
+
+                text = (vector_store.get_document("resumes", resume.vector_doc_id) or {}).get("document", "") or ""
+            except Exception:
+                text = ""
+        if not resume or not text.strip():
+            out = _no_resume_insights(bid)
+            out.update({"role_skills": role_skills, "suggested_skills": suggested, "resume": None})
+            return {"result": out}
+        resume_meta = {"id": resume.id, "filename": resume.filename, "uploaded_at": _iso(resume.uploaded_at)}
+    return {"text": text, "bid": bid, "n_projects": n_projects, "n_certs": n_certs, "n_ach": n_ach, "key": key,
+            "role_skills": role_skills, "suggested": suggested, "resume_meta": resume_meta}
+
+
+def _insights_store(key: str, out: dict) -> None:
     with Session(engine) as session:
         row = session.exec(select(AnalysisCache).where(AnalysisCache.cache_key == key)).first()
         if row:
@@ -528,8 +558,6 @@ async def resume_insights(refresh: bool = Query(False), candidate: str = Depends
             row = AnalysisCache(cache_key=key, payload_json=json.dumps(out))
         session.add(row)
         session.commit()
-    out.update({"role_skills": role_skills, "suggested_skills": suggested, "resume": resume_meta, "cached": False})
-    return out
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────
@@ -635,7 +663,7 @@ def _set_featured(session: Session, cid: int, keep_id: int):
 
 
 @router.get("/api/student/projects")
-async def list_projects(candidate: str = Depends(get_current_candidate)):
+def list_projects(candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         projects = session.exec(
@@ -645,7 +673,7 @@ async def list_projects(candidate: str = Depends(get_current_candidate)):
 
 
 @router.post("/api/student/projects", status_code=201)
-async def create_project(body: ProjectIn, candidate: str = Depends(get_current_candidate)):
+def create_project(body: ProjectIn, candidate: str = Depends(get_current_candidate)):
     if body.category not in _CATEGORIES:
         raise HTTPException(status_code=422, detail="category must be academic, personal or team")
     with Session(engine) as session:
@@ -676,14 +704,14 @@ async def create_project(body: ProjectIn, candidate: str = Depends(get_current_c
 
 
 @router.get("/api/student/projects/{pid}")
-async def get_project(pid: int, candidate: str = Depends(get_current_candidate)):
+def get_project(pid: int, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         return _project_dict(_owned_project(session, pid, user.id))
 
 
 @router.put("/api/student/projects/{pid}")
-async def update_project(pid: int, body: ProjectPatch, candidate: str = Depends(get_current_candidate)):
+def update_project(pid: int, body: ProjectPatch, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         p = _owned_project(session, pid, user.id)
@@ -724,7 +752,7 @@ async def update_project(pid: int, body: ProjectPatch, candidate: str = Depends(
 
 
 @router.delete("/api/student/projects/{pid}")
-async def delete_project(pid: int, candidate: str = Depends(get_current_candidate)):
+def delete_project(pid: int, candidate: str = Depends(get_current_candidate)):
     from ..services.media_utils import delete_media_file
 
     with Session(engine) as session:
@@ -739,7 +767,7 @@ async def delete_project(pid: int, candidate: str = Depends(get_current_candidat
 
 
 @router.post("/api/student/projects/{pid}/image")
-async def upload_project_image(pid: int, file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+def upload_project_image(pid: int, file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
     from ..services.media_utils import delete_media_file, validate_and_save_image
 
     with Session(engine) as session:
@@ -817,7 +845,7 @@ def save_project_attachment(file: UploadFile) -> str:
 
 
 @router.post("/api/student/projects/{pid}/attachment")
-async def upload_project_attachment(pid: int, file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+def upload_project_attachment(pid: int, file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
     from ..services.media_utils import delete_media_file
 
     with Session(engine) as session:
@@ -837,7 +865,7 @@ async def upload_project_attachment(pid: int, file: UploadFile = File(...), cand
 
 
 @router.post("/api/student/projects/{pid}/submit")
-async def submit_project(pid: int, candidate: str = Depends(get_current_candidate)):
+def submit_project(pid: int, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         p = _owned_project(session, pid, user.id)
@@ -859,7 +887,7 @@ async def submit_project(pid: int, candidate: str = Depends(get_current_candidat
 
 
 @router.get("/api/student/projects/{pid}/status")
-async def project_status(pid: int, candidate: str = Depends(get_current_candidate)):
+def project_status(pid: int, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         p = _owned_project(session, pid, user.id)
@@ -892,16 +920,95 @@ def _same_city(a: str, b: str) -> bool:
     return bool(a and b and (a in b or b in a))
 
 
+def _ids(csv: Optional[str]) -> set:
+    return {int(x) for x in (csv or "").split(",") if x.strip().lstrip("-").isdigit()}
+
+
+def _core(session: Session, candidate: str, *, projects: bool = False, ext_saved: bool = False):
+    """ONE round trip: candidate id + profile + saved job ids (+ project count,
+    + saved live-job ids). Returns NS(user, profile, saved, n_projects, ext_saved)."""
+    from types import SimpleNamespace
+    from sqlalchemy import String, cast, func, select as sa_select
+    from ..db import SavedExternalJob
+
+    cols = [CandidateUser.id, CandidateUser.username, CandidateUser.status, CandidateProfile,
+            sa_select(func.aggregate_strings(cast(SavedJob.job_id, String), ","))
+            .where(SavedJob.candidate_id == CandidateUser.id).scalar_subquery()]
+    if projects:
+        cols.append(sa_select(func.count(StudentProject.id)).where(StudentProject.candidate_id == CandidateUser.id).scalar_subquery())
+    if ext_saved:
+        cols.append(sa_select(func.aggregate_strings(cast(SavedExternalJob.external_job_id, String), ","))
+                    .where(SavedExternalJob.candidate_id == CandidateUser.id).scalar_subquery())
+    row = session.execute(sa_select(*cols).outerjoin(CandidateProfile, CandidateProfile.candidate_id == CandidateUser.id)
+                          .where(CandidateUser.username == candidate)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    user = SimpleNamespace(id=row[0], username=row[1], status=row[2])
+    profile = row[3] if row[3] is not None else _profile(session, row[0])
+    i = 5
+    n_projects = None
+    if projects:
+        n_projects = int(row[i] or 0)
+        i += 1
+    ext = _ids(row[i]) if ext_saved else set()
+    return SimpleNamespace(user=user, profile=profile, saved=_ids(row[4]), n_projects=n_projects, ext_saved=ext)
+
+
 def _candidate_context(session: Session, candidate: str):
-    user = _user(session, candidate)
-    profile = _profile(session, user.id)
-    apps = {a.job_id: a for a in session.exec(select(Application).where(Application.candidate_id == user.id)).all()}
-    saved = {s.job_id for s in session.exec(select(SavedJob).where(SavedJob.candidate_id == user.id)).all()}
-    return user, profile, apps, saved
+    """(user, profile, {job_id: Application}, saved job ids) in two round trips."""
+    core = _core(session, candidate)
+    apps = {a.job_id: a for a in session.exec(select(Application).where(Application.candidate_id == core.user.id)).all()}
+    return core.user, core.profile, apps, core.saved
+
+
+def _apps_bundle(session: Session, cid: int, limit: int = 300):
+    """ONE round trip: the candidate's applications with their job, live offer
+    (latest non-draft/withdrawn) and upcoming scheduled interviews.
+    Returns (apps newest first, {app_id: Job}, {app_id: Offer}, upcoming list)."""
+    from sqlalchemy import and_
+
+    since = utc_now() - timedelta(hours=2)
+    q = (select(Application, Job, Offer, ScheduledInterview)
+         .outerjoin(Job, Job.id == Application.job_id)
+         .outerjoin(Offer, and_(Offer.application_id == Application.id, Offer.status.notin_(["draft", "withdrawn"])))
+         .outerjoin(ScheduledInterview, and_(ScheduledInterview.application_id == Application.id,
+                                             ScheduledInterview.candidate_id == cid,
+                                             ScheduledInterview.status == "scheduled",
+                                             ScheduledInterview.starts_at >= since))
+         .where(Application.candidate_id == cid))
+    apps: Dict[int, Application] = {}
+    jobs: Dict[int, Job] = {}
+    offers: Dict[int, Offer] = {}
+    ivs: Dict[int, tuple] = {}
+    for a, job, off, si in session.exec(q).all():
+        apps[a.id] = a
+        if job is not None:
+            jobs[a.id] = job
+        if off is not None:
+            cur = offers.get(a.id)
+            if cur is None or (off.created_at, off.id) > (cur.created_at, cur.id):
+                offers[a.id] = off
+        if si is not None and a.status != "rejected":   # a rejected application has no "upcoming" round
+            ivs[si.id] = (si, job)
+    ordered = sorted(apps.values(), key=lambda a: (a.applied_at, a.id), reverse=True)[:limit]
+    upcoming = []
+    for si, job in sorted(ivs.values(), key=lambda t: (t[0].starts_at, t[0].id))[:20]:
+        name, logo = _Companies().of(job)
+        upcoming.append(_interview_dict(si, job, name, logo))
+    return ordered, jobs, offers, upcoming
+
+
+def _interview_dict(si: ScheduledInterview, job: Optional[Job], name: str, logo: Optional[str]) -> dict:
+    return {
+        "id": si.id, "application_id": si.application_id, "job_id": si.job_id, "role": job.title if job else "",
+        "company": name, "company_logo": logo, "round_name": si.round_name, "starts_at": _iso(si.starts_at),
+        "ends_at": _iso(si.starts_at + timedelta(minutes=si.duration_min or 60)), "duration_min": si.duration_min,
+        "mode": si.mode, "meeting_link": si.meeting_link, "location": si.location,
+    }
 
 
 @router.get("/api/student/opportunities")
-async def opportunities(
+def opportunities(
     q: Optional[str] = Query(None, max_length=120),
     location: Optional[str] = Query(None, max_length=80),
     type: Optional[str] = Query(None, max_length=20, description="internship|full-time|part-time|onsite|remote|hybrid"),
@@ -921,13 +1028,17 @@ async def opportunities(
     from ..services.distance import distance_or_none
     from .live_data import best_per_key, external_card, student_state, visible_jobs_stmt
 
+    from ..services.hot_data import open_jobs, visible_external_jobs
+
     with Session(engine) as session:
-        user, profile, apps, saved = _candidate_context(session, candidate)
+        core = _core(session, candidate, ext_saved=True)                      # 1 query
+        user, profile, saved = core.user, core.profile, core.saved
+        apps = {a.job_id: a for a in session.exec(select(Application).where(Application.candidate_id == user.id)).all()}  # 1 query
         pskills = profile_skills(profile)
         pbranch = branch_id(profile.branch)
         privacy = _privacy(profile)
         companies = _Companies(session)
-        jobs = session.exec(select(Job).where(Job.status == "open").order_by(Job.created_at.desc())).all()[:MAX_JOBS_SCANNED]
+        jobs = open_jobs()[:MAX_JOBS_SCANNED]                                 # cached board
 
         ql = (q or "").strip().lower()
         jt = _norm_type(job_type)
@@ -973,8 +1084,15 @@ async def opportunities(
             rows = []
 
         # Live listings from official company boards / job APIs (apply on the company site).
-        ext_saved, ext_applied, _clicked = student_state(session, user.id)
-        ext_all = best_per_key(session.exec(visible_jobs_stmt()).all()) if origin != "corelink" else []
+        ext_all = best_per_key(visible_external_jobs()) if origin != "corelink" else []   # cached
+        ext_saved, ext_applied = core.ext_saved, {}
+        if ext_all:
+            from ..db import ExternalApplicationLog
+            for ext_id, created in session.exec(select(ExternalApplicationLog.external_job_id, ExternalApplicationLog.created_at)
+                                                .where(ExternalApplicationLog.candidate_id == user.id,
+                                                       ExternalApplicationLog.action == "applied")).all():   # 1 query
+                if ext_id not in ext_applied or created > ext_applied[ext_id]:
+                    ext_applied[ext_id] = created
         ext_rows = []
         for e in ext_all:
             if ql:
@@ -1059,11 +1177,19 @@ async def opportunities(
 
 
 @router.get("/api/student/opportunities/{job_id}")
-async def opportunity_detail(job_id: int, candidate: str = Depends(get_current_candidate)):
+def opportunity_detail(job_id: int, candidate: str = Depends(get_current_candidate)):
+    from types import SimpleNamespace
+
     with Session(engine) as session:
-        user, profile, apps, saved = _candidate_context(session, candidate)
-        job = session.get(Job, job_id)
-        app_row = apps.get(job_id)
+        core = _core(session, candidate)                                                       # 1 query
+        profile, saved = core.profile, core.saved
+        found = session.exec(select(Job, CompanyProfile.about, CompanyProfile.tagline, CompanyProfile.website)
+                             .outerjoin(CompanyProfile, CompanyProfile.owner_recruiter_id == Job.recruiter_id)
+                             .where(Job.id == job_id)).first()                                  # 1 query
+        job = found[0] if found else None
+        cp = SimpleNamespace(about=found[1], tagline=found[2], website=found[3]) if found and (found[1] or found[2] or found[3]) else None
+        app_row = session.exec(select(Application).where(Application.candidate_id == core.user.id, Application.job_id == job_id)
+                               .order_by(Application.applied_at.desc())).first() if job else None   # 1 query
         # Closed jobs stay visible to students who applied or saved them.
         if not job or (job.status != "open" and not app_row and job_id not in saved):
             raise HTTPException(status_code=404, detail="Job not found or closed")
@@ -1071,7 +1197,6 @@ async def opportunity_detail(job_id: int, candidate: str = Depends(get_current_c
         js = job_skills(job)
         card = _job_card(job, companies, match=match_score(job, js, profile_skills(profile), branch_id(profile.branch)),
                          saved=job_id in saved, application=app_row)
-        cp = session.exec(select(CompanyProfile).where(CompanyProfile.owner_recruiter_id == job.recruiter_id)).first()
         ps = {s.lower() for s in profile_skills(profile)}
         card.update({
             "description": job.description,
@@ -1090,11 +1215,9 @@ async def opportunity_detail(job_id: int, candidate: str = Depends(get_current_c
 def _saved_list(session: Session, cid: int) -> List[dict]:
     companies = _Companies(session)
     out = []
-    rows = session.exec(select(SavedJob).where(SavedJob.candidate_id == cid).order_by(SavedJob.created_at.desc())).all()[:MAX_SAVED]
-    for s in rows:
-        job = session.get(Job, s.job_id)
-        if not job:
-            continue
+    rows = session.exec(select(SavedJob, Job).join(Job, Job.id == SavedJob.job_id)
+                        .where(SavedJob.candidate_id == cid).order_by(SavedJob.created_at.desc()).limit(MAX_SAVED)).all()
+    for s, job in rows:
         name, logo = companies.of(job)
         out.append({
             "job_id": job.id, "title": job.title, "company": name, "company_logo": logo,
@@ -1104,10 +1227,9 @@ def _saved_list(session: Session, cid: int) -> List[dict]:
     from ..db import ExternalJob, SavedExternalJob
     from ..services.live_sources import PROVIDERS
 
-    for s in session.exec(select(SavedExternalJob).where(SavedExternalJob.candidate_id == cid).order_by(SavedExternalJob.created_at.desc())).all()[:MAX_SAVED]:
-        e = session.get(ExternalJob, s.external_job_id)
-        if not e:
-            continue
+    for s, e in session.exec(select(SavedExternalJob, ExternalJob).join(ExternalJob, ExternalJob.id == SavedExternalJob.external_job_id)
+                             .where(SavedExternalJob.candidate_id == cid)
+                             .order_by(SavedExternalJob.created_at.desc()).limit(MAX_SAVED)).all():
         out.append({
             "job_id": f"ext-{e.id}", "external_job_id": e.id, "external": True, "title": e.title, "company": e.company_name,
             "company_logo": None, "location": e.location_text, "branch": e.branch, "job_type": e.job_type,
@@ -1127,7 +1249,7 @@ def _ext_id(value) -> Optional[int]:
 
 
 @router.get("/api/student/saved-jobs")
-async def saved_jobs(candidate: str = Depends(get_current_candidate)):
+def saved_jobs(candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         items = _saved_list(session, user.id)
@@ -1140,7 +1262,7 @@ class SaveJobIn(BaseModel):
 
 
 @router.post("/api/student/saved-jobs", status_code=201)
-async def save_job(body: SaveJobIn, candidate: str = Depends(get_current_candidate)):
+def save_job(body: SaveJobIn, candidate: str = Depends(get_current_candidate)):
     ext = body.external_job_id or _ext_id(body.job_id)
     if ext is not None:
         return _save_external(candidate, ext)
@@ -1181,7 +1303,7 @@ def _save_external(candidate: str, ext: int) -> dict:
 
 
 @router.delete("/api/student/saved-jobs/{job_id}")
-async def unsave_job(job_id: str, candidate: str = Depends(get_current_candidate)):
+def unsave_job(job_id: str, candidate: str = Depends(get_current_candidate)):
     ext = _ext_id(job_id)
     if ext is not None:
         from ..db import SavedExternalJob
@@ -1205,13 +1327,15 @@ async def unsave_job(job_id: str, candidate: str = Depends(get_current_candidate
 
 
 @router.get("/api/student/companies")
-async def companies_hiring(candidate: str = Depends(get_current_candidate)):
+def companies_hiring(candidate: str = Depends(get_current_candidate)):
     """Companies with open jobs on the platform (for 'Practice by Company')."""
     with Session(engine) as session:
+        from ..services.hot_data import open_jobs
+
         _user(session, candidate)
         companies = _Companies(session)
         by: Dict[str, dict] = {}
-        for job in session.exec(select(Job).where(Job.status == "open").order_by(Job.created_at.desc())).all()[:MAX_JOBS_SCANNED]:
+        for job in open_jobs()[:MAX_JOBS_SCANNED]:
             name, logo = companies.of(job)
             c = by.setdefault(name, {"name": name, "logo": logo, "jobs": []})
             if len(c["jobs"]) < 6:
@@ -1222,31 +1346,33 @@ async def companies_hiring(candidate: str = Depends(get_current_candidate)):
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
 @router.get("/api/student/dashboard")
-async def dashboard(candidate: str = Depends(get_current_candidate)):
+def dashboard(candidate: str = Depends(get_current_candidate)):
     from .candidate_profile import profile_completion
 
+    from ..services.hot_data import open_jobs
+
     with Session(engine) as session:
-        user, profile, apps, saved = _candidate_context(session, candidate)
+        core = _core(session, candidate, projects=True)                     # 1 query
+        user, profile, saved, n_projects = core.user, core.profile, core.saved, core.n_projects
+        all_apps, app_jobs, offers, upcoming = _apps_bundle(session, user.id)   # 1 query
+        applied_jobs = {a.job_id for a in all_apps}
         pskills = profile_skills(profile)
         pbranch = branch_id(profile.branch)
         companies = _Companies(session)
-        jobs = session.exec(select(Job).where(Job.status == "open").order_by(Job.created_at.desc())).all()[:MAX_JOBS_SCANNED]
+        jobs = open_jobs()[:MAX_JOBS_SCANNED]                               # cached board
         cards = [
             _job_card(j, companies, match=match_score(j, job_skills(j), pskills, pbranch), saved=j.id in saved, application=None)
-            for j in jobs if j.id not in apps
+            for j in jobs if j.id not in applied_jobs
         ]
         cards.sort(key=lambda c: (c["match"], c["posted_at"] or ""), reverse=True)
-        n_projects = len(session.exec(select(StudentProject.id).where(StudentProject.candidate_id == user.id)).all())
         completion = profile_completion(profile, bool(profile.resume_id), n_projects)
-        recent = sorted(apps.values(), key=lambda a: a.applied_at, reverse=True)[:5]
-        offers = {o.application_id: o for o in session.exec(select(Offer).where(Offer.candidate_id == user.id)).all()}
-        upcoming = _upcoming_interviews(session, user.id)
+        recent = all_apps[:5]
         up_by_app = {}
         for u in upcoming:
             up_by_app.setdefault(u["application_id"], u)
         recent_rows = []
         for a in recent:
-            job = session.get(Job, a.job_id)
+            job = app_jobs.get(a.id)
             name, logo = companies.of(job)
             recent_rows.append({
                 "id": a.id, "job_id": a.job_id, "role": job.title if job else "Job", "company": name, "company_logo": logo,
@@ -1261,7 +1387,7 @@ async def dashboard(candidate: str = Depends(get_current_candidate)):
                 "resume_uploaded": bool(profile.resume_id),
                 "projects": n_projects,
                 "projects_target": 5,
-                "applications": len(apps),
+                "applications": len(all_apps),
                 "applications_target": 10,
                 "saved_jobs": len(saved),
             },
@@ -1292,23 +1418,18 @@ def _upcoming_interviews(session: Session, cid: int) -> List[dict]:
     companies = _Companies(session)
     since = utc_now() - timedelta(hours=2)
     rows = session.exec(
-        select(ScheduledInterview)
-        .where(ScheduledInterview.candidate_id == cid, ScheduledInterview.status == "scheduled", ScheduledInterview.starts_at >= since)
-        .order_by(ScheduledInterview.starts_at)
-    ).all()[:20]
+        select(ScheduledInterview, Job)
+        .join(Application, Application.id == ScheduledInterview.application_id)
+        .outerjoin(Job, Job.id == ScheduledInterview.job_id)
+        .where(ScheduledInterview.candidate_id == cid, Application.candidate_id == cid, Application.status != "rejected",
+               ScheduledInterview.status == "scheduled", ScheduledInterview.starts_at >= since)
+        .order_by(ScheduledInterview.starts_at, ScheduledInterview.id)
+        .limit(20)
+    ).all()
     out = []
-    for si in rows:
-        app_row = session.get(Application, si.application_id)
-        if not app_row or app_row.candidate_id != cid:
-            continue
-        job = session.get(Job, si.job_id)
+    for si, job in rows:
         name, logo = companies.of(job)
-        out.append({
-            "id": si.id, "application_id": si.application_id, "job_id": si.job_id, "role": job.title if job else "",
-            "company": name, "company_logo": logo, "round_name": si.round_name, "starts_at": _iso(si.starts_at),
-            "ends_at": _iso(si.starts_at + timedelta(minutes=si.duration_min or 60)), "duration_min": si.duration_min,
-            "mode": si.mode, "meeting_link": si.meeting_link, "location": si.location,
-        })
+        out.append(_interview_dict(si, job, name, logo))
     return out
 
 
@@ -1331,24 +1452,17 @@ def _next_step(a: Application, offer: Optional[Offer], upcoming: Optional[dict],
 
 
 @router.get("/api/student/applications/overview")
-async def applications_overview(candidate: str = Depends(get_current_candidate)):
+def applications_overview(candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
-        user = _user(session, candidate)
+        user = _user(session, candidate)                                    # cached id, no query
         companies = _Companies(session)
-        apps = session.exec(select(Application).where(Application.candidate_id == user.id).order_by(Application.applied_at.desc())).all()[:300]
-        offers_all = session.exec(select(Offer).where(Offer.candidate_id == user.id).order_by(Offer.created_at.desc())).all()
-        offers = {}
-        for o in offers_all:
-            if o.status in {"draft", "withdrawn"}:
-                continue
-            offers.setdefault(o.application_id, o)
-        upcoming = _upcoming_interviews(session, user.id)
+        apps, app_jobs, offers, upcoming = _apps_bundle(session, user.id)  # 1 query
         up_by_app = {}
         for u in upcoming:
             up_by_app.setdefault(u["application_id"], u)
         rows = []
         for a in apps:
-            job = session.get(Job, a.job_id)
+            job = app_jobs.get(a.id)
             name, logo = companies.of(job)
             off = offers.get(a.id)
             st = display_status(a, off, up_by_app.get(a.id))
@@ -1408,8 +1522,10 @@ def _external_applications(session: Session, cid: int) -> List[dict]:
         else:
             clicks[l.external_job_id] += 1
     out = []
-    for ext_id, l in list(applied.items())[:300]:
-        e = session.get(ExternalJob, ext_id)
+    wanted = list(applied.items())[:300]
+    ext_rows = {e.id: e for e in session.exec(select(ExternalJob).where(ExternalJob.id.in_([k for k, _ in wanted] or [-1]))).all()} if wanted else {}
+    for ext_id, l in wanted:
+        e = ext_rows.get(ext_id)
         if not e:
             continue
         active = e.status == "active"
@@ -1429,7 +1545,7 @@ class OfferResponse(BaseModel):
 
 
 @router.post("/api/student/offers/{offer_id}/respond")
-async def respond_offer(offer_id: int, body: OfferResponse, candidate: str = Depends(get_current_candidate)):
+def respond_offer(offer_id: int, body: OfferResponse, candidate: str = Depends(get_current_candidate)):
     from ..services import email_templates
     from ..services.email_delivery import queue_email
     from ..services.audit import record_audit_event
@@ -1485,7 +1601,7 @@ class NewsletterIn(BaseModel):
 
 
 @router.post("/api/student/newsletter")
-async def newsletter(body: NewsletterIn, candidate: str = Depends(get_current_candidate)):
+def newsletter(body: NewsletterIn, candidate: str = Depends(get_current_candidate)):
     email = body.email.strip().lower()
     if not _STRICT_EMAIL.match(email):
         raise HTTPException(status_code=422, detail="Enter a valid email address")
@@ -1502,11 +1618,11 @@ async def newsletter(body: NewsletterIn, candidate: str = Depends(get_current_ca
 # ── Data export & account deletion ───────────────────────────────────────────
 
 @router.get("/api/student/export")
-async def export_data(candidate: str = Depends(get_current_candidate)):
+def export_data(candidate: str = Depends(get_current_candidate)):
     from .candidate_profile import _profile_to_dict
 
     with Session(engine) as session:
-        user = _user(session, candidate)
+        user = _user_row(session, candidate)
         profile = _profile(session, user.id)
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         companies = _Companies(session)
@@ -1546,14 +1662,14 @@ class DeleteAccountIn(BaseModel):
 
 
 @router.delete("/api/student/account")
-async def delete_account(body: DeleteAccountIn = Body(...), candidate: str = Depends(get_current_candidate)):
+def delete_account(body: DeleteAccountIn = Body(...), candidate: str = Depends(get_current_candidate)):
     from ..services.media_utils import delete_media_file
     from ..services.audit import record_audit_event
 
     if (body.confirm or "").strip() != "DELETE":
         raise HTTPException(status_code=400, detail="Type DELETE to confirm account deletion")
     with Session(engine) as session:
-        user = _user(session, candidate)
+        user = _user_row(session, candidate)
         cid = user.id
         app_ids = [a.id for a in session.exec(select(Application).where(Application.candidate_id == cid)).all()]
         media = []
@@ -1600,7 +1716,7 @@ async def delete_account(body: DeleteAccountIn = Body(...), candidate: str = Dep
 
 
 @router.get("/api/student/resume/file")
-async def resume_file(candidate: str = Depends(get_current_candidate)):
+def resume_file(candidate: str = Depends(get_current_candidate)):
     """Stream the student's own stored resume file (for the 'View' button)."""
     from fastapi.responses import FileResponse
     from ..resume_utils import RESUME_DIR

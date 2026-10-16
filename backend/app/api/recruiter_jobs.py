@@ -114,7 +114,7 @@ def _validate_v2_fields(job_type, experience_level, openings, eligibility):
 
 
 @router.post("")
-async def create_job(
+def create_job(
     title: str = Form(...),
     description: str = Form(...),
     branch: Optional[str] = Form(None),
@@ -180,7 +180,7 @@ async def create_job(
 
 
 @router.get("")
-async def list_my_jobs(recruiter: str = Depends(get_current_recruiter)):
+def list_my_jobs(recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         user = _get_recruiter_user(session, recruiter)
         jobs = session.exec(
@@ -190,7 +190,7 @@ async def list_my_jobs(recruiter: str = Depends(get_current_recruiter)):
 
 
 @router.put("/{job_id}")
-async def update_job(
+def update_job(
     job_id: int,
     title: str = Form(None),
     description: str = Form(None),
@@ -261,7 +261,7 @@ async def update_job(
 
 
 @router.delete("/{job_id}")
-async def delete_job(job_id: int, recruiter: str = Depends(get_current_recruiter)):
+def delete_job(job_id: int, recruiter: str = Depends(get_current_recruiter)):
     with Session(engine) as session:
         user = _get_recruiter_user(session, recruiter)
         job = _get_owned_job_or_403(session, job_id, user.id)
@@ -275,7 +275,7 @@ async def delete_job(job_id: int, recruiter: str = Depends(get_current_recruiter
 
 
 @router.get("/{job_id}/applicants")
-async def list_applicants(
+def list_applicants(
     job_id: int,
     recruiter: str = Depends(get_current_recruiter),
 ):
@@ -341,7 +341,7 @@ async def list_applicants(
         }
 
 @router.put("/{job_id}/applicants/{application_id}/status")
-async def update_applicant_status(
+def update_applicant_status(
     job_id: int,
     application_id: int,
     status: str = Form(...),
@@ -389,7 +389,7 @@ async def update_applicant_status(
 
 
 @router.post("/{job_id}/applicants/{application_id}/confirm-decision")
-async def confirm_recruiter_decision(
+def confirm_recruiter_decision(
     job_id: int,
     application_id: int,
     decision: str = Form(...),  # "shortlisted" | "rejected" | "overridden"
@@ -448,7 +448,7 @@ async def confirm_recruiter_decision(
         }
 
 @router.post("/{job_id}/applicants/{application_id}/evaluate-repo")
-async def evaluate_applicant_repo(
+def evaluate_applicant_repo(
     job_id: int,
     application_id: int,
     recruiter: str = Depends(get_current_recruiter),
@@ -500,7 +500,7 @@ async def evaluate_applicant_repo(
 
 
 @router.post("/{job_id}/applicants/{application_id}/unlock-interview")
-async def unlock_applicant_interview(
+def unlock_applicant_interview(
     job_id: int,
     application_id: int,
     notes: str = Form(""),
@@ -563,7 +563,7 @@ async def unlock_applicant_interview(
         }
 
 @router.post("/{job_id}/applicants/{application_id}/finalize")
-async def finalize_applicant(
+def finalize_applicant(
     job_id: int,
     application_id: int,
     recruiter: str = Depends(get_current_recruiter),
@@ -608,7 +608,7 @@ class ApplicationStatusUpdate(BaseModel):
 
 
 @router.post("/applications/{application_id}/status")
-async def update_application_status_direct(
+def update_application_status_direct(
     application_id: int,
     payload: ApplicationStatusUpdate,
     recruiter: str = Depends(get_current_recruiter),
@@ -653,7 +653,7 @@ async def update_application_status_direct(
 
 
 @router.post("/{job_id}/repo-verify")
-async def run_repo_verification_batch(
+def run_repo_verification_batch(
     job_id: int,
     slot_count: Optional[int] = None,
     recruiter: str = Depends(get_current_recruiter),
@@ -755,7 +755,7 @@ async def run_repo_verification_batch(
 
 
 @router.post("/{job_id}/schedule-interviews")
-async def schedule_interviews_batch(
+def schedule_interviews_batch(
     job_id: int,
     batch_size: int = 5,
     recruiter: str = Depends(get_current_recruiter),
@@ -883,7 +883,7 @@ async def schedule_interviews_batch(
 
 
 @router.post("/{job_id}/final-shortlist")
-async def generate_final_shortlist(
+def generate_final_shortlist(
     job_id: int,
     slot_count: Optional[int] = None,
     recruiter: str = Depends(get_current_recruiter),

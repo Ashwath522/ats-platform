@@ -3,6 +3,8 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { Home, Users, Building2, Briefcase, FileText, CalendarDays, Handshake, ShieldCheck, BarChart3, Settings, ScrollText, Radio } from 'lucide-react'
 import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
+import { useApi } from '../../ui/useApi.js'
+import { ADMIN_ROUTES, usePortalPrefetch } from '../prefetch.js'
 
 export const ADMIN_NAV = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: Home },
@@ -29,9 +31,12 @@ const TABS = [
 export default function AdminShell() {
   const { adminToken, adminUsername, logoutAdmin } = useAuth()
   const navigate = useNavigate()
+  const api = useApi('admin')
+  const prefetch = usePortalPrefetch(api, ADMIN_ROUTES)
   if (!adminToken) return <Navigate to="/admin/login" replace />
   return (
     <PortalLayout
+      prefetch={prefetch}
       role="admin"
       brandSub="Admin Dashboard"
       nav={ADMIN_NAV}

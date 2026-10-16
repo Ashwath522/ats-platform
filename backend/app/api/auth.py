@@ -7,11 +7,11 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
-from ..auth import create_access_token, get_current_admin, hash_password, verify_password
+from ..auth import create_access_token, get_current_admin, hash_password, record_login, verify_password
 from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine, utc_now
 from ..rate_limit import limiter
 from ..services import email_templates
@@ -166,7 +166,7 @@ def _token_response(user: User) -> dict:
 
 @router.post("/api/auth/register")
 @limiter.limit("20/minute")
-async def register_candidate(request: Request, name: str = Form(""), email: str = Form(...), password: str = Form(...)):
+def register_candidate(request: Request, name: str = Form(""), email: str = Form(...), password: str = Form(...)):
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     with Session(engine) as session:
@@ -187,7 +187,7 @@ async def register_candidate(request: Request, name: str = Form(""), email: str 
 
 @router.post("/api/auth/verify-otp")
 @limiter.limit("20/minute")
-async def verify_signup_otp(request: Request, email: str = Form(...), otp: str = Form(...)):
+def verify_signup_otp(request: Request, email: str = Form(...), otp: str = Form(...)):
     normalized_email = email.strip().lower()
     with Session(engine) as session:
         token = session.exec(
@@ -216,9 +216,9 @@ async def verify_signup_otp(request: Request, email: str = Form(...), otp: str =
 
 @router.post("/api/auth/login")
 @limiter.limit("10/minute")
-async def login(request: Request, email: str = Form(...), password: str = Form(...)):
+def login(request: Request, background: BackgroundTasks, email: str = Form(...), password: str = Form(...)):
     normalized_email = email.strip().lower()
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         user = session.exec(select(User).where(User.email == normalized_email)).first()
         if not user:
             legacy = session.exec(select(RecruiterUser).where(RecruiterUser.username == normalized_email)).first()
@@ -239,16 +239,14 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
             raise HTTPException(status_code=403, detail="This account is suspended")
         if user.role == "candidate" and not user.email_verified:
             raise HTTPException(status_code=403, detail="Email verification required")
-        user.last_login_at = utc_now()
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return _token_response(user)
+    # last_login_at (+ bcrypt cost upgrade) is written after the response.
+    background.add_task(record_login, User, user.id, password, user.password_hash)
+    return _token_response(user)
 
 
 @router.post("/api/auth/password-reset/request")
 @limiter.limit("10/minute")
-async def request_password_reset(request: Request, email: str = Form(...)):
+def request_password_reset(request: Request, email: str = Form(...)):
     normalized_email = email.strip().lower()
     token = None
     user_name = None
@@ -274,7 +272,7 @@ async def request_password_reset(request: Request, email: str = Form(...)):
 
 @router.post("/api/auth/password-reset/confirm")
 @limiter.limit("10/minute")
-async def confirm_password_reset(
+def confirm_password_reset(
     request: Request,
     email: str = Form(...),
     token: str = Form(...),
@@ -314,12 +312,12 @@ async def confirm_password_reset(
 
 @router.post("/api/recruiter/auth/login")
 @limiter.limit("10/minute")
-async def recruiter_login(request: Request, username: str = Form(...), password: str = Form(...)):
-    return await login(request=request, email=username, password=password)
+def recruiter_login(request: Request, background: BackgroundTasks, username: str = Form(...), password: str = Form(...)):
+    return login(request=request, background=background, email=username, password=password)
 
 
 @router.post("/api/recruiter/auth/register")
-async def recruiter_register_disabled():
+def recruiter_register_disabled():
     raise HTTPException(status_code=403, detail="Recruiter accounts require admin approval")
 
 
@@ -496,7 +494,7 @@ def _serialize_recruiter_request(item: RecruiterRequest) -> dict:
 
 
 @router.get("/api/admin/recruiter-requests")
-async def list_recruiter_requests(admin: User = Depends(get_current_admin)):
+def list_recruiter_requests(admin: User = Depends(get_current_admin)):
     with Session(engine) as session:
         requests = session.exec(
             select(RecruiterRequest)
@@ -529,7 +527,7 @@ async def reverify_recruiter_request(request_id: int, admin: User = Depends(get_
 
 
 @router.post("/api/admin/recruiter-requests/{request_id}/approve")
-async def approve_recruiter_request(request_id: int, admin: User = Depends(get_current_admin)):
+def approve_recruiter_request(request_id: int, admin: User = Depends(get_current_admin)):
     alphabet = string.ascii_letters + string.digits
     generated_password = "".join(secrets.choice(alphabet) for _ in range(14))
     with Session(engine) as session:
@@ -581,7 +579,7 @@ async def approve_recruiter_request(request_id: int, admin: User = Depends(get_c
 
 
 @router.post("/api/admin/recruiter-requests/{request_id}/reject")
-async def reject_recruiter_request(
+def reject_recruiter_request(
     request_id: int,
     reason: Optional[str] = Form(None),
     admin: User = Depends(get_current_admin),

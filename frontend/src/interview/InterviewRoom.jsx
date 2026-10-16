@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Mic, MicOff, Keyboard, RotateCcw, PhoneOff, Check, Volume2, ShieldCheck, Camera, ChevronLeft, Send, Loader2, Sparkles, Captions } from 'lucide-react'
+import { Mic, MicOff, Keyboard, RotateCcw, PhoneOff, Check, Volume2, ShieldCheck, ShieldAlert, Camera, ChevronLeft, Send, Loader2, Sparkles, Captions, Maximize } from 'lucide-react'
 import { useAuth, createAuthedFetch } from '../auth.jsx'
 import AvatarCharacter from './AvatarCharacter.jsx'
 import { AriaPerformer } from './performer.js'
 import { FillerPicker } from './fillers.js'
 import { SpeechQueue, SentenceSplitter, Listener, createLevelMeter, sttSupported, ttsSupported, pickVoice, unlockWebSpeech } from './speech.js'
-import { Proctor } from './proctor.js'
+import { Proctor, isMobileDevice } from './proctor.js'
 import { haptic } from '../lib/platform.js'
 import './InterviewRoom.css'
 
@@ -60,7 +60,7 @@ function practiceOptions(search) {
  * Live spoken AI interview.
  *  - default: the application interview (/candidate/interview/:appId) — scored for the recruiter, score never shown.
  *  - `practice`: a private practice session (/candidate/practice?kind=technical&topic=…) — no application,
- *    no proctoring, and the student sees their own score + feedback at the end.
+ *    no stored proctoring evidence (live on-device alert counts only), and the student sees their own score + feedback at the end.
  */
 export default function InterviewRoom({ practice = false }) {
   const { appId } = useParams()
@@ -96,6 +96,9 @@ export default function InterviewRoom({ practice = false }) {
   const [nudge, setNudge] = useState(false)
   const [speakerTested, setSpeakerTested] = useState(false)
   const [result, setResult] = useState(null) // practice evaluation
+  const [proctorLive, setProctorLive] = useState(null) // { status, alerts, counts }
+  const [proctorNote, setProctorNote] = useState(null) // transient notice for the candidate
+  const [fsLeft, setFsLeft] = useState(false)
 
   const meterRef0 = useRef(null)
   const performer = useMemo(() => new AriaPerformer({ getLevel: () => (meterRef0.current ? meterRef0.current.level() : 0) }), [])
@@ -112,11 +115,13 @@ export default function InterviewRoom({ practice = false }) {
   const sessionPromise = useRef(null)
   const latencies = useRef([])
   const pendingClientMeta = useRef({})
+  const lastSampleRef = useRef(null) // previous turn's latency sample → reported to the server telemetry
   const doneRef = useRef(false)
   const busyRef = useRef(false)
   const wakeLock = useRef(null)
   const startedAt = useRef(0)
   const sessionRef = useRef(null)
+  const noteTimer = useRef(null)
 
   // ── 1. Create the session immediately (questions planned while the
   //       candidate reads the consent screen → no wait when they start).
@@ -183,6 +188,8 @@ export default function InterviewRoom({ practice = false }) {
     writePref('aria_expressive', expressive)
   }, [expressive, performer])
   useEffect(() => { writePref('aria_captions', showCaptions) }, [showCaptions])
+  // Looking down at the keyboard while typing is not "looking away".
+  useEffect(() => { proctorRef.current && proctorRef.current.setTyping(typing) }, [typing])
 
   // ── Cleanup on unmount (re-arm on mount: StrictMode mounts twice in dev)
   useEffect(() => {
@@ -192,6 +199,7 @@ export default function InterviewRoom({ practice = false }) {
     listenerRef.current && listenerRef.current.stop()
     queueRef.current && queueRef.current.cancel()
     proctorRef.current && proctorRef.current.stop()
+    clearTimeout(noteTimer.current)
     meterRef.current && meterRef.current.close()
     streamRef.current && streamRef.current.getTracks().forEach((t) => t.stop())
     wakeLock.current && wakeLock.current.release && wakeLock.current.release().catch(() => {})
@@ -302,10 +310,20 @@ export default function InterviewRoom({ practice = false }) {
       setTyping(true)
       return
     }
+    let warmSent = false
     const l = new Listener({
       lang: 'en-US',
       getLevel: () => (meterRef.current ? meterRef.current.level() : 0),
-      onInterim: (t) => { setHeard(t); performer.heard(t) },
+      onInterim: (t) => {
+        setHeard(t)
+        performer.heard(t)
+        // First words of the answer: refresh the server's LLM keep-alive so the
+        // reply after a long answer doesn't pay a cold connection (fire-and-forget).
+        if (!warmSent && sessionRef.current) {
+          warmSent = true
+          api(`/api/interview/sessions/${sessionRef.current.session_id}/warm`, { method: 'POST' }).catch(() => {})
+        }
+      },
       onLongSilence: () => setNudge(true),
       onError: (code) => {
         setVoiceOk(false)
@@ -403,7 +421,12 @@ export default function InterviewRoom({ practice = false }) {
         body: JSON.stringify({
           answer,
           filler_spoken: ack ? ack.text : null,
-          client: { ...pendingClientMeta.current, prev_tts_first_audio_ms: prevFirstAudio },
+          client: {
+            ...pendingClientMeta.current,
+            prev_tts_first_audio_ms: prevFirstAudio,
+            prev_answer_to_voice_ms: lastSampleRef.current ? lastSampleRef.current.answer_to_voice_ms : undefined,
+            prev_first_token_ms: lastSampleRef.current ? lastSampleRef.current.first_token_ms : undefined,
+          },
         }),
       })
       if (!res.ok) {
@@ -424,6 +447,7 @@ export default function InterviewRoom({ practice = false }) {
           split.push(evt.v)
         } else if (evt.t === 'end') {
           endEvt = evt
+          split.flush() // speak the last sentence now, not when the stream closes
         }
       })
       split.flush()
@@ -434,6 +458,7 @@ export default function InterviewRoom({ practice = false }) {
       sample.server_ms = endEvt && endEvt.server_ms
       sample.provider = endEvt && endEvt.provider
       latencies.current.push(sample)
+      lastSampleRef.current = sample
       if (debug) window.__ivLat = latencies.current
       pendingClientMeta.current = {}
       setLog((l) => [...l, { role: 'interviewer', text: full.trim() }])
@@ -458,19 +483,51 @@ export default function InterviewRoom({ practice = false }) {
     }
   }
 
+  function startProctor(s) {
+    if (proctorRef.current) return
+    const p = new Proctor({
+      getVideo: () => videoRef.current, // the <video> remounts between check → live
+      getStream: () => streamRef.current,
+      sessionId: s.session_id,
+      api,
+      practice,
+      onUpdate: (st) => {
+        setProctorLive(st)
+      },
+      onNotice: (n) => {
+        setProctorNote(n)
+        if (n.type === 'fullscreen_exit') setFsLeft(true)
+        clearTimeout(noteTimer.current)
+        noteTimer.current = setTimeout(() => setProctorNote(null), 6000)
+      },
+    })
+    proctorRef.current = p
+    p.setTyping(typing)
+    p.start()
+  }
+
+  function returnToFullscreen() {
+    setFsLeft(false)
+    proctorRef.current && proctorRef.current.enterFullscreen()
+  }
+
   async function begin() {
     meterRef.current && meterRef.current.resume()
     unlockWebSpeech() // synchronously inside the tap (iOS autoplay rule)
+    // Real interviews go full screen on desktop (inside the tap); leaving it is logged.
+    let fs = null
+    if (!practice && !isMobileDevice() && document.fullscreenEnabled && !document.fullscreenElement) {
+      fs = document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => null)
+    }
     try {
       const s = session || (await sessionPromise.current)
       if (!s) return
       setPhase('live')
       startedAt.current = Date.now()
       try { wakeLock.current = await navigator.wakeLock?.request('screen') } catch (e) { /* optional */ }
-      if (!practice && videoRef.current && streamRef.current) {
-        proctorRef.current = new Proctor(videoRef.current)
-        proctorRef.current.start()
-      }
+      await fs
+      // Practice: live on-device counts only (nothing uploaded). Real: evidence snapshots + event log.
+      startProctor(s)
       const opening = s.greeting || 'Welcome back.'
       setLog([{ role: 'interviewer', text: opening }])
       await speakAll(opening)
@@ -485,7 +542,10 @@ export default function InterviewRoom({ practice = false }) {
     doneRef.current = true
     listenerRef.current && listenerRef.current.stop()
     setPhase('finishing')
-    const proctoring = proctorRef.current ? proctorRef.current.summary() : { risk_score: 0, risk_level: 'low', proctoring_status: 'off' }
+    if (proctorRef.current && !practice) {
+      try { await proctorRef.current.finalize() } catch (e) { /* never block submission */ }
+    }
+    const proctoring = proctorRef.current && !practice ? proctorRef.current.summary() : { risk_score: 0, risk_level: 'low', proctoring_status: practice ? 'practice_local' : 'off' }
     proctorRef.current && proctorRef.current.stop()
     try {
       const res = await api(`/api/interview/sessions/${sessionRef.current.session_id}/finish`, {
@@ -555,6 +615,14 @@ export default function InterviewRoom({ practice = false }) {
           {phase === 'live' && <span>Question {Math.min(qIndex + 1, total)} of {total} · {mm}:{ss}</span>}
         </div>
         <div className="iv-top-right">
+          {phase === 'live' && proctorLive && (
+            <span className={`iv-proctor iv-proctor-${proctorLive.status}`} title={practice ? 'Practice integrity check — on this device only, nothing is saved' : `Proctoring ${proctorLive.status} (on-device)`}>
+              {proctorLive.alerts > 0 ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}
+              {practice
+                ? <>{proctorLive.alerts}<span className="iv-proctor-txt"> alert{proctorLive.alerts === 1 ? '' : 's'}</span></>
+                : <span className="iv-proctor-txt">{proctorLive.status === 'limited' ? 'Limited' : 'Proctored'}</span>}
+            </span>
+          )}
           {phase === 'live' && (practice ? <span className="iv-rec iv-practice">PRACTICE</span> : <span className="iv-rec"><i /> REC</span>)}
         </div>
         {phase === 'live' && <div className="iv-progress"><div style={{ width: `${progress}%` }} /></div>}
@@ -574,13 +642,15 @@ export default function InterviewRoom({ practice = false }) {
           <ul className="iv-points">
             <li><Mic size={18} /> <span><b>Voice conversation.</b> Your answers are transcribed on the fly. You can switch to typing any time.</span></li>
             <li><ShieldCheck size={18} /> <span><b>Private practice.</b> This session is only for you — it is never shared with recruiters or linked to an application.</span></li>
+            <li><Camera size={18} /> <span><b>Practice integrity check.</b> On-device checks show you live alerts (looking away, tab switches…) so real interviews feel familiar. No snapshots or events are saved.</span></li>
             <li><Check size={18} /> <span><b>Instant feedback.</b> You get a score, strengths and areas to improve at the end. Your history is in AI Interview → Performance.</span></li>
           </ul>
           ) : (
           <ul className="iv-points">
             <li><Mic size={18} /> <span><b>Voice conversation.</b> Your answers are transcribed on the fly. You can switch to typing any time.</span></li>
-            <li><Camera size={18} /> <span><b>Camera on.</b> On-device checks only look for face presence, extra people and tab switching.</span></li>
-            <li><ShieldCheck size={18} /> <span><b>Human review.</b> A recruiter reviews every AI evaluation. Raw transcripts are purged after 30 days; you can request deletion any time.</span></li>
+            <li><Camera size={18} /> <span><b>Camera on, checked on your device.</b> Your video is analysed in this browser and never uploaded. It checks for your face being in view, other people, looking away for a long time, phones/books/second screens and a dark or covered camera, plus leaving the tab or full screen and pasting into answers. Ordinary glances are fine.</span></li>
+            <li><ShieldAlert size={18} /> <span><b>Evidence snapshots.</b> One still photo is taken at the start (to confirm it's you) and only when a possible rule break is detected — at most 30, each with the time and reason. Only the hiring company and CoreLink admins can see them, and they are deleted after 90 days.</span></li>
+            <li><ShieldCheck size={18} /> <span><b>Human review.</b> A recruiter reviews every AI evaluation — an alert is never an automatic rejection. Raw transcripts are purged after 30 days; you can request deletion of transcripts and snapshots any time.</span></li>
           </ul>
           )}
           <label className="iv-consent">
@@ -689,6 +759,12 @@ export default function InterviewRoom({ practice = false }) {
             </div>
           )}
           {mediaError && <div className="iv-alert iv-alert-float">{mediaError}</div>}
+          {proctorNote && !mediaError && (
+            <div className={`iv-proctor-note iv-proctor-note-${proctorNote.severity}`} role="status">
+              <ShieldAlert size={16} /> <span className="iv-proctor-note-txt">{proctorNote.text}{practice ? ' (practice — not saved)' : ''}</span>
+              {fsLeft && !practice && <button type="button" onClick={returnToFullscreen}><Maximize size={14} /> Return to full screen</button>}
+            </div>
+          )}
 
           <nav className="iv-controls">
             <button onClick={repeatQuestion} disabled={avatarState !== 'listening'} aria-label="Repeat question">
@@ -747,7 +823,7 @@ export default function InterviewRoom({ practice = false }) {
   )
 }
 
-const DIM_LABELS = { technical_depth: 'Technical knowledge', problem_solving: 'Problem solving', communication: 'Communication', ownership_impact: 'Confidence & impact', role_fit: 'Role fit' }
+const DIM_LABELS = { technical_depth: 'Technical depth', correctness: 'Correctness', problem_solving: 'Problem solving', communication: 'Communication', ownership_impact: 'Project ownership', role_fit: 'Role fit' }
 
 /** Score + coaching shown at the end of a practice session (never shown for real interviews). */
 function PracticeResult({ result, onAgain, onBack }) {

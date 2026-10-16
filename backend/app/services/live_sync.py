@@ -740,12 +740,22 @@ def status_snapshot(history: int = 30) -> dict:
     settings = load_settings()
     out = []
     with Session(engine) as s:
-        job_counts = dict(s.exec(select(ExternalJob.source, func.count()).where(ExternalJob.status == "active").group_by(ExternalJob.source)).all())
-        exp_counts = dict(s.exec(select(ExternalJob.source, func.count()).where(ExternalJob.status == "expired").group_by(ExternalJob.source)).all())
-        res_counts = dict(s.exec(select(LiveResource.source, func.count()).where(LiveResource.status == "active").group_by(LiveResource.source)).all())
+        # 5 queries in total (was 2 per provider + 8): counts grouped by
+        # (source, status) and the latest / latest-successful run per source.
+        job_by = {(src, st): n for src, st, n in s.exec(select(ExternalJob.source, ExternalJob.status, func.count())
+                                                         .group_by(ExternalJob.source, ExternalJob.status)).all()}
+        res_by = {(src, st): n for src, st, n in s.exec(select(LiveResource.source, LiveResource.status, func.count())
+                                                         .group_by(LiveResource.source, LiveResource.status)).all()}
+        last_by = {r.source: r for r in s.exec(select(SyncRun).where(SyncRun.id.in_(
+            select(func.max(SyncRun.id)).group_by(SyncRun.source)))).all()}
+        ok_by = {r.source: r for r in s.exec(select(SyncRun).where(SyncRun.id.in_(
+            select(func.max(SyncRun.id)).where(SyncRun.status.in_(["ok", "partial"])).group_by(SyncRun.source)))).all()}
+        job_counts = {src: n for (src, st), n in job_by.items() if st == "active"}
+        exp_counts = {src: n for (src, st), n in job_by.items() if st == "expired"}
+        res_counts = {src: n for (src, st), n in res_by.items() if st == "active"}
         for name, p in PROVIDERS.items():
-            last = s.exec(select(SyncRun).where(SyncRun.source == name).order_by(SyncRun.started_at.desc())).first()
-            last_ok = s.exec(select(SyncRun).where(SyncRun.source == name, SyncRun.status.in_(["ok", "partial"])).order_by(SyncRun.started_at.desc())).first()
+            last = last_by.get(name)
+            last_ok = ok_by.get(name)
             configured = p.configured(settings)
             out.append({
                 "source": name, "kind": p.kind, "label": p.label, "enabled": settings["enabled"].get(name, True),
@@ -756,12 +766,13 @@ def status_snapshot(history: int = 30) -> dict:
                 "last_run": run_dict(last) if last else None, "last_success": run_dict(last_ok) if last_ok else None,
             })
         runs = [run_dict(r) for r in s.exec(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(history)).all()]
+        jsum = lambda st: sum(n for (_, x), n in job_by.items() if x == st)  # noqa: E731
         totals = {
-            "active_jobs": s.exec(select(func.count()).select_from(ExternalJob).where(ExternalJob.status == "active")).one(),
-            "expired_jobs": s.exec(select(func.count()).select_from(ExternalJob).where(ExternalJob.status == "expired")).one(),
-            "hidden_jobs": s.exec(select(func.count()).select_from(ExternalJob).where(ExternalJob.status == "hidden")).one(),
-            "resources": s.exec(select(func.count()).select_from(LiveResource).where(LiveResource.status == "active")).one(),
-            "admin_notes": s.exec(select(func.count()).select_from(LiveResource).where(LiveResource.source == "admin")).one(),
+            "active_jobs": jsum("active"),
+            "expired_jobs": jsum("expired"),
+            "hidden_jobs": jsum("hidden"),
+            "resources": sum(n for (_, x), n in res_by.items() if x == "active"),
+            "admin_notes": sum(n for (src, _), n in res_by.items() if src == "admin"),
         }
     keys = {k: bool((os.environ.get(k) or "").strip()) for k in
             ("ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JOOBLE_API_KEY", "YOUTUBE_API_KEY", "LIVE_SYNC_TOKEN")}

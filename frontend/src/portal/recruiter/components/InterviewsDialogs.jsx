@@ -6,6 +6,7 @@ import {
 } from '../../../ui/index.jsx'
 import { useApi, useQuery } from '../../../ui/useApi.js'
 import { BranchTag, H, ModeBadge, Stars, fmtD, fmtDT, fmtRange, inputDate, inputTime, roundColor, toIso } from './HiringCommon.jsx'
+import ProctoringReview from '../../shared/ProctoringReview.jsx'
 
 export const REC_LABEL = { strong_hire: 'Strong hire', hire: 'Hire', no_hire: 'No hire' }
 export const REC_TONE = { strong_hire: 'green', hire: 'blue', no_hire: 'red' }
@@ -218,6 +219,7 @@ export function InterviewsDetailsModal({ iv, rounds, onClose, onAction }) {
           {isAi && d.risk_level && <><dt>Integrity risk</dt><dd><StatusPill status={d.risk_level === 'high' ? 'high_risk' : d.risk_level === 'medium' ? 'review' : 'active'} label={d.risk_level} /></dd></>}
         </dl>
         {isAi && <Alert>AI interview results are read-only here. Review the transcript and evidence from the application.</Alert>}
+        {isAi && d.application_id && <ProctoringReview role="recruiter" applicationId={d.application_id} />}
         {!isAi && d.feedback && (
           <div className="hr-fb">
             <div className="cl-row" style={{ justifyContent: 'space-between' }}><strong className="hr-ink">Feedback</strong><Badge tone={REC_TONE[d.feedback.recommendation]}>{REC_LABEL[d.feedback.recommendation]}</Badge></div>

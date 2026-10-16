@@ -15,10 +15,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db, engine
+from . import perf
+from .db_pool import DisconnectRetryMiddleware, tune_engine
+from .db_indexes import ensure_indexes
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
+
+# Round-trip budget tuning for a far-away Postgres + per-request query counter
+# (counter is a no-op unless PERF_LOG=1 or a test is counting).
+tune_engine(engine)
+perf.install(engine)
 from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, recruiter_profile, admin, interview
 from .api import student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data, google_auth
+from .api import proctoring
 from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
@@ -28,12 +38,17 @@ logger = logging.getLogger("ats-platform")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    ensure_indexes(engine)  # idempotent CREATE INDEX IF NOT EXISTS (1 query when nothing is missing)
     auth.ensure_admin_user()
     try:
         from .services.live_sync import mark_interrupted_runs
         mark_interrupted_runs()
     except Exception:  # never block startup on bookkeeping
         logger.exception("[STARTUP] could not reset interrupted live-sync runs")
+    try:  # proctoring evidence retention (PROCTOR_RETENTION_DAYS, default 90)
+        proctoring.purge_old_proctor_evidence()
+    except Exception:
+        logger.exception("[STARTUP] proctoring retention sweep failed")
 
     # Log database configuration
     db_type = "PostgreSQL" if "postgres" in engine.url.drivername else "SQLite"
@@ -79,11 +94,23 @@ allow_origins = ["*"] if _cors_origins_env.strip() == "*" else [
     o.strip() for o in _cors_origins_env.split(",") if o.strip()
 ]
 
+# JSON payloads (job lists, pipelines, dashboards) compress 5-10x. Streaming
+# interview turns (ndjson) must stay unbuffered, so they are excluded.
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1024,
+    exclude_content_types=DEFAULT_EXCLUDED_CONTENT_TYPES + ("application/x-ndjson", "application/pdf"),
+)
+app.add_middleware(DisconnectRetryMiddleware)
+if perf.perf_enabled():
+    app.add_middleware(perf.PerfMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Query-Count", "X-DB-Checkouts", "Server-Timing"],
 )
 
 app.state.limiter = limiter
@@ -115,7 +142,7 @@ app.include_router(recruiter_profile.router)
 app.include_router(admin.router)
 app.include_router(interview.router)
 app.include_router(google_auth.router)
-for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data):
+for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data, proctoring):
     app.include_router(_r.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix
@@ -163,9 +190,6 @@ async def health_check(deep: int = 0):
     import httpx
     from sqlmodel import text, Session
     from .db import engine, utc_now
-    from .services.groq_client import GroqClient
-    from .services.gemini_client import GeminiClient
-
     db_healthy = False
     db_error = None
     try:
@@ -178,37 +202,22 @@ async def health_check(deep: int = 0):
     # Check AI Providers
     ai_status = {}
 
-    # Groq
-    groq_key = os.environ.get("GROQ_API_KEY", "")
-    if groq_key:
-        try:
-            gc = GroqClient(groq_key)
-            test_res = gc.test_connection()
-            ai_status["groq"] = {
-                "configured": True,
-                "reachable": test_res.get("success", False) if isinstance(test_res, dict) else bool(test_res),
-                "model": test_res.get("model") if isinstance(test_res, dict) else None,
-            }
-        except Exception as e:
-            ai_status["groq"] = {"configured": True, "reachable": False, "error": str(e)}
-    else:
-        ai_status["groq"] = {"configured": False, "reachable": False}
+    # Groq / Gemini / OpenRouter: probe with the SAME base URL, key and model
+    # names the AI interviewer uses (async, parallel, 4 s budget). The old SDK
+    # checks blocked the event loop (sync calls + retries) and swallowed the
+    # error, so a failing provider only showed "reachable: false".
+    # deep=2 also sends a 1-token chat completion to the fast model.
+    from .services import llm_stream
 
-    # Gemini
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if gemini_key:
-        try:
-            gmc = GeminiClient(gemini_key)
-            test_res = gmc.test_connection()
-            ai_status["gemini"] = {
-                "configured": True,
-                "reachable": test_res.get("success", False) if isinstance(test_res, dict) else bool(test_res),
-                "model": test_res.get("model") if isinstance(test_res, dict) else None,
-            }
-        except Exception as e:
-            ai_status["gemini"] = {"configured": True, "reachable": False, "error": str(e)}
-    else:
-        ai_status["gemini"] = {"configured": False, "reachable": False}
+    try:
+        probes = await llm_stream.probe_providers(chat=deep >= 2, timeout=4.0)
+    except Exception as exc:  # pragma: no cover
+        probes = {}
+        logger.warning("[HEALTH] LLM probe failed: %s", exc)
+    for name in ("groq", "gemini", "openrouter"):
+        ai_status[name] = probes.get(name) or {"configured": False, "reachable": False}
+    if "custom" in probes:
+        ai_status["custom"] = probes["custom"]
 
     # Ollama
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -236,5 +245,6 @@ async def health_check(deep: int = 0):
             "error": db_error,
         },
         "ai_providers": ai_status,
+        "interview_llm_order": [p.name for p in llm_stream.configured_providers()],
     }
     return JSONResponse(status_code=status_code, content=payload)

@@ -16,6 +16,7 @@ Formula: 0.70 * semantic + 0.25 * skill_coverage + 0.05 * exp_fit
 Score calibration: strong raw combined scores are nudged toward the 75–90 range
 that commercial ATS tools typically report, while keeping perfect matches at 100.
 """
+import functools
 import re
 import math
 from typing import Dict, List, Optional, Set
@@ -26,6 +27,11 @@ from .skills_vocab import KNOWN_SKILLS, SKILL_ALIASES, BRANCH_SKILLS
 # ---------------------------------------------------------------------------
 # Skill extraction helpers
 # ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=8192)
+def _term_re(term_lower: str):
+    return re.compile(r"(?<!\w)" + re.escape(term_lower) + r"(?!\w)")
+
 
 def _extract_skills_present(text: str, branch: Optional[str] = None) -> List[str]:
     """Which known skills literally appear in this text (case-insensitive, word-boundary safe)."""
@@ -38,32 +44,26 @@ def _extract_skills_present(text: str, branch: Optional[str] = None) -> List[str
         active_skills = list(BRANCH_SKILLS[branch])
 
     # Dynamic Vocabulary Promotion (seen in 3+ resumes)
+    # (cached in process; cleared whenever DiscoveredSkill is written - this
+    # used to be one DB session + query per call, i.e. per job card)
     try:
-        from ..db import engine, DiscoveredSkill
-        from sqlmodel import Session, select
-        with Session(engine) as session:
-            promoted = session.exec(
-                select(DiscoveredSkill)
-                .where(DiscoveredSkill.occurrence_count >= 3)
-            ).all()
-            for ds in promoted:
-                if not branch or not ds.branch or ds.branch == branch:
-                    if ds.term not in active_skills:
-                        active_skills.append(ds.term)
+        from .hot_data import promoted_skills
+        for term, ds_branch in promoted_skills():
+            if not branch or not ds_branch or ds_branch == branch:
+                if term not in active_skills:
+                    active_skills.append(term)
     except Exception:
         pass
 
     for skill in active_skills:
-        pattern = r"(?<!\w)" + re.escape(skill.lower()) + r"(?!\w)"
-        if re.search(pattern, text_lower):
+        if _term_re(skill.lower()).search(text_lower):
             found.add(skill)
 
     # Filter aliases to match only canonical terms in the active branch
     active_set = set(active_skills)
     for alias, canonical in SKILL_ALIASES.items():
         if canonical in active_set:
-            pattern = r"(?<!\w)" + re.escape(alias.lower()) + r"(?!\w)"
-            if re.search(pattern, text_lower):
+            if _term_re(alias.lower()).search(text_lower):
                 found.add(canonical)
 
     return sorted(found)

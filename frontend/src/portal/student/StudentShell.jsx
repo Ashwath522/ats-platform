@@ -5,6 +5,7 @@ import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
 import { useApi } from '../../ui/useApi.js'
 import { getBranch } from '../../branding/branches.js'
+import { STUDENT_ROUTES, usePortalPrefetch } from '../prefetch.js'
 
 export const STUDENT_NAV = [
   { to: '/candidate/feed', label: 'Home', icon: Home },
@@ -36,6 +37,7 @@ export default function StudentShell() {
   const { candidateToken, candidateUsername, logoutCandidate } = useAuth()
   const api = useApi('candidate')
   const navigate = useNavigate()
+  const prefetch = usePortalPrefetch(api, STUDENT_ROUTES, { idleData: ['/candidate/opportunities', '/candidate/applications'] })
   const [profile, setProfile] = useState(null)
 
   const reload = useCallback(() => api.get('/api/candidate/profile').then((p) => { setProfile(p); return p }).catch(() => null), [api])
@@ -51,6 +53,7 @@ export default function StudentShell() {
   return (
     <StudentCtx.Provider value={value}>
       <PortalLayout
+        prefetch={prefetch}
         role="candidate"
         nav={STUDENT_NAV}
         bottomNav={[{ to: '/candidate/settings', label: 'Settings', icon: Settings }]}

@@ -1,3 +1,5 @@
+import { createTask } from './mp-loader'
+
 export interface DetectedObject {
   label: string;
   score: number; // confidence 0-1
@@ -16,18 +18,14 @@ export class ObjectDetector {
   async initialize(): Promise<void> {
     if (typeof window === 'undefined') return;
     try {
-      // @ts-expect-error - MediaPipe is loaded dynamically from a CDN and the package exposes no local TS declarations.
-      const vision = await import(/* turbopackIgnore: true */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/+esm");
-      const filesetResolver = await vision.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-      );
-      this.objectDetector = await vision.ObjectDetector.createFromOptions(filesetResolver, {
+      this.objectDetector = await createTask('ObjectDetector', {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite",
-          delegate: "GPU"
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite"
         },
         runningMode: "IMAGE",
-        scoreThreshold: 0.3
+        scoreThreshold: 0.3,
+        maxResults: 8,
+        categoryAllowlist: ["person", "cell phone", "book", "laptop", "tv"]
       });
       this.initialized = true;
       console.log('ObjectDetector (MediaPipe EfficientDet-Lite0) initialized successfully');

@@ -21,17 +21,17 @@ router = APIRouter(prefix="/api/candidate", tags=["candidate"])
 
 
 @router.get("/branches")
-async def candidate_branches():
+def candidate_branches():
     return list_branches()
 
 
 @router.get("/roles")
-async def candidate_roles(branch: Optional[str] = None):
+def candidate_roles(branch: Optional[str] = None):
     return list_roles(branch)
 
 
 @router.post("/ats-score")
-async def generic_ats_score(
+def generic_ats_score(
     file: UploadFile = File(...),
     job_description: str = Form(""),
     role_id: str = Form(""),
@@ -70,7 +70,7 @@ async def generic_ats_score(
 
 
 @router.get("/companies")
-async def candidate_companies():
+def candidate_companies():
     """FLOW 2: Candidate wants to check ATS against a SPECIFIC company's JD."""
     with Session(engine) as session:
         companies = session.exec(select(Company).order_by(Company.created_at.desc())).all()
@@ -91,7 +91,7 @@ async def candidate_companies():
 
 
 @router.post("/ats-score-for-company")
-async def company_specific_ats_score(
+def company_specific_ats_score(
     file: UploadFile = File(...),
     company_id: int = Form(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
@@ -128,7 +128,7 @@ async def company_specific_ats_score(
 
 
 @router.post("/ats-score-existing-resume-for-company")
-async def company_score_existing_resume(resume_id: str = Form(...), company_id: int = Form(...)):
+def company_score_existing_resume(resume_id: str = Form(...), company_id: int = Form(...)):
     resume_doc = vector_store.get_document("resumes", resume_id)
     if not resume_doc:
         raise HTTPException(status_code=404, detail="Resume not found. Run ATS scoring first.")
@@ -154,7 +154,7 @@ async def company_score_existing_resume(resume_id: str = Form(...), company_id: 
 
 
 @router.post("/ats-score-existing-resume")
-async def score_existing_resume(
+def score_existing_resume(
     resume_id: str = Form(...),
     role_id: str = Form(""),
     company_id: Optional[int] = Form(None),
@@ -204,7 +204,7 @@ async def score_existing_resume(
 
 
 @router.post("/deep-analysis")
-async def deep_analysis(
+def deep_analysis(
     resume_id: str = Form(...),
     role_id: str = Form(""),
     company_id: Optional[int] = Form(None),
@@ -249,7 +249,7 @@ async def deep_analysis(
 
 
 @router.post("/resume-suggestions")
-async def resume_suggestions(
+def resume_suggestions(
     resume_id: str = Form(...),
     role_id: str = Form(""),
     company_id: Optional[int] = Form(None),
@@ -306,7 +306,7 @@ async def resume_suggestions(
         return result
 
 @router.post("/score-project")
-async def score_project(
+def score_project(
     file: UploadFile = File(...),
     job_description: str = Form(""),
     role_id: str = Form(""),
@@ -483,7 +483,7 @@ def can_take_interview(app_record: Application) -> dict:
 
 
 @router.get("/applications/{app_id}/interview_access")
-async def check_interview_access(app_id: int):
+def check_interview_access(app_id: int):
     with Session(engine) as session:
         app_record = session.get(Application, app_id)
         if not app_record:
@@ -500,7 +500,7 @@ async def check_interview_access(app_id: int):
 
 
 @router.post("/applications/{app_id}/submit_interview")
-async def submit_interview_results(
+def submit_interview_results(
     app_id: int,
     payload: dict,
     candidate: str = Depends(get_current_candidate),
@@ -570,7 +570,7 @@ async def submit_interview_results(
 
 
 @router.post("/applications/{app_id}/request-data-deletion")
-async def request_interview_data_deletion(
+def request_interview_data_deletion(
     app_id: int,
     candidate: str = Depends(get_current_candidate)
 ):
@@ -594,6 +594,8 @@ async def request_interview_data_deletion(
         app_record.interview_evidence_url = "[Deleted upon candidate request]"
         app_record.interview_transcript_json = "[]"
         session.add(app_record)
+        from .proctoring import delete_application_evidence
+        delete_application_evidence(session, app_id)  # proctoring snapshots + event log
         session.commit()
         session.refresh(app_record)
 

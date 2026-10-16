@@ -105,8 +105,10 @@ def test_streaming_llm_reply_and_llm_eval(client, monkeypatch):
 
     async def fake_plan(messages, **kw):
         if "hiring panel" in messages[0]["content"]:
-            return {"overall_score": 82, "recommendation": "advance", "summary": "Solid.", "strengths": ["Caching"],
-                    "concerns": [], "per_question": [{"index": 0, "score": 8, "evidence": "Redis"}], "_provider": "custom", "_model": "smart"}
+            ev = {"score": 8, "evidence": "reduced latency by 80%"}
+            return {"rubric": {k: dict(ev) for k in ai.RUBRIC_WEIGHTS}, "hire_recommendation": "hire", "summary": "Solid.",
+                    "strengths": ["Caching"], "improvements": [], "per_question": [{"index": 0, "score": 8, "evidence": "Redis cache"}],
+                    "_provider": "custom", "_model": "smart"}
         return {"questions": [{"kind": "intro", "q": f"Question number {i} about your Redis and FastAPI work?"} for i in range(5)], "_provider": "custom"}
 
     async def fake_stream(messages, result=None, **kw):
@@ -130,8 +132,14 @@ def test_streaming_llm_reply_and_llm_eval(client, monkeypatch):
     assert res.status_code == 200
     with Session(engine) as s:
         appl = s.get(Application, app_id)
-        assert appl.interview_eval_score == 82
-        assert appl.interview_recommendation.startswith("ADVANCE")
+        # Overall is derived from the rubric, not taken from the model: one short
+        # answer (21 words, 1 of 5 questions) caps every dimension at 3/10 and
+        # the coverage factor (0.5 + 0.5 * 1/5) reduces it further → 18.
+        assert appl.interview_eval_score == 18
+        assert appl.interview_recommendation.startswith("DECLINE")
+        assert "scored by custom/smart" in appl.interview_recommendation
+        ev = json.loads(s.get(InterviewSession, body["session_id"]).eval_json)
+        assert ev["method"] == "llm" and ev["rubric"]["correctness"]["evidence_verified"] is True
 
 
 def test_interview_requires_owner_and_unlock(client, monkeypatch):

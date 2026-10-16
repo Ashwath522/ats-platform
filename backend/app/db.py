@@ -413,6 +413,44 @@ class InterviewSession(SQLModel, table=True):
     completed_at: Optional[datetime] = None
 
 
+class ProctorSnapshot(SQLModel, table=True):
+    """Evidence JPEG captured on-device when a possible rule break is detected
+    during a real (non-practice) AI interview, plus one baseline identity
+    frame at the start. Bytes live in the DB (like MediaBlob) so they survive
+    restarts on free-tier hosts; size is capped (≤150 KB, ≤32 per session) and
+    rows are purged after PROCTOR_RETENTION_DAYS."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="interviewsession.id", index=True)
+    application_id: Optional[int] = Field(default=None, index=True)
+    candidate_id: int = Field(index=True)
+    job_id: Optional[int] = Field(default=None, index=True)
+    kind: str = Field(default="event")          # baseline | event
+    event_type: str = Field(default="baseline", index=True)
+    severity: str = Field(default="info")       # info | medium | high
+    label: Optional[str] = None
+    client_ts: Optional[datetime] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    size_bytes: int = 0
+    content_type: str = "image/jpeg"
+    data: bytes = Field(default=b"")
+    created_at: datetime = Field(default_factory=utc_now, index=True)
+
+
+class ProctorEvent(SQLModel, table=True):
+    """Timeline of on-device proctoring events for a real AI interview."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="interviewsession.id", index=True)
+    application_id: Optional[int] = Field(default=None, index=True)
+    candidate_id: int = Field(index=True)
+    event_type: str = Field(index=True)
+    severity: str = "low"                        # low | medium | high
+    client_ts: Optional[datetime] = None
+    details_json: Optional[str] = None
+    snapshot_id: Optional[int] = None
+    created_at: datetime = Field(default_factory=utc_now, index=True)
+
+
 # ─── v2 portal models (student / recruiter / admin redesign) ─────────────────
 
 class StudentProject(SQLModel, table=True):

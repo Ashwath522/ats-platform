@@ -229,3 +229,26 @@
 .iv-actions { display: flex; gap: 10px; width: 100%; max-width: 440px; margin-top: 8px; }
 .iv-actions > * { flex: 1; }
 @media (max-width: 520px) { .iv-actions { flex-direction: column; } }
+
+/* ── proctoring (status chip + candidate notices) ── */
+.iv-top-right { display: inline-flex; align-items: center; gap: 6px; }
+.iv-proctor { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 5px 9px; border-radius: 999px; color: #a7f3d0; background: rgba(45, 212, 191, 0.14); white-space: nowrap; }
+.iv-proctor-limited, .iv-proctor-starting { color: #fde68a; background: rgba(245, 165, 36, 0.16); }
+.iv-proctor-note { position: absolute; left: 50%; transform: translateX(-50%); top: 12px; z-index: 6; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  max-width: min(560px, calc(100% - 32px)); padding: 9px 14px; border-radius: 12px; font-size: 13px; line-height: 1.35;
+  background: rgba(15, 39, 64, 0.94); border: 1px solid rgba(245, 165, 36, 0.45); color: var(--iv-ink); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+.iv-proctor-note-high { border-color: rgba(239, 68, 68, 0.6); }
+.iv-proctor-note svg { color: var(--iv-accent); flex: none; }
+.iv-proctor-note button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 5px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--iv-accent); color: #1f1300; }
+.iv-proctor-note button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 520px) { .iv-proctor-note { left: 10px; right: 92px; transform: none; max-width: none; justify-content: flex-start; font-size: 12.5px; } }
+@media (min-width: 700px) { .iv-proctor-note { max-width: min(520px, calc(100% - 340px)); } }
+.iv-proctor-note { flex-wrap: nowrap; }
+.iv-proctor-note-txt { flex: 1 1 auto; min-width: 0; }
+.iv-proctor-note button { flex: none; }
+@media (max-width: 520px) {
+  .iv-proctor { padding: 5px 7px; }
+  .iv-proctor-txt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .iv-proctor-note { align-items: flex-start; }
+  .iv-proctor-note button { align-self: center; }
+}

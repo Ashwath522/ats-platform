@@ -4,6 +4,7 @@ import { Home, Users, PlusSquare, Briefcase, UserCheck, FileCheck2, Bookmark, Ca
 import PortalLayout from '../../ui/PortalLayout.jsx'
 import { useAuth } from '../../auth.jsx'
 import { useApi } from '../../ui/useApi.js'
+import { RECRUITER_ROUTES, usePortalPrefetch } from '../prefetch.js'
 
 export const RECRUITER_NAV = [
   { to: '/recruiter/dashboard', label: 'Dashboard', icon: Home },
@@ -35,6 +36,7 @@ export default function RecruiterShell() {
   const { recruiterToken, recruiterUsername, logoutRecruiter } = useAuth()
   const api = useApi('recruiter')
   const navigate = useNavigate()
+  const prefetch = usePortalPrefetch(api, RECRUITER_ROUTES, { idleData: ['/recruiter/applications'] })
   const [company, setCompany] = useState(null)
   const [me, setMe] = useState(null)
 
@@ -54,6 +56,7 @@ export default function RecruiterShell() {
   return (
     <RecruiterCtx.Provider value={{ me, company, setCompany, reload, companyName }}>
       <PortalLayout
+        prefetch={prefetch}
         role="recruiter"
         brandSub="for Recruiters"
         nav={RECRUITER_NAV}

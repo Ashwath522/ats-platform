@@ -5,33 +5,38 @@ Flow
 ----
 1. ``POST /api/interview/applications/{app_id}/session`` – called as soon as the
    candidate opens the interview (while they read consent / test their mic), so
-   question planning + LLM connection warm-up happen *before* the interview
-   starts. Returns the spoken greeting + first question.
+   question planning (smart model) + LLM connection warm-up happen *before* the
+   interview starts. Returns the spoken greeting + first question.
 2. ``POST /api/interview/sessions/{sid}/turn`` – candidate's answer in, the
    interviewer's reply streamed back as NDJSON lines:
        {"t":"meta","action":"follow_up","q_index":1,"total":5}
        {"t":"d","v":"Got it, the caching layer "}      (text deltas)
        {"t":"end","done":false,"q_index":1,"provider":"groq","ttft_ms":180,...}
-   The client speaks each sentence as soon as it is complete.
+   The client speaks each sentence as soon as it is complete. The hot path does
+   no database reads (session state is cached in-process) and the transcript is
+   written after the reply has streamed.
 3. ``POST /api/interview/sessions/{sid}/finish`` – server evaluates the
-   transcript (LLM rubric, heuristic fallback), stores the result on the
-   application, writes the audit log and emails the candidate. The candidate
-   never receives the score (no score leakage).
+   transcript (smart-model JSON rubric → validation → one repair round →
+   heuristic fallback), stores the result on the application, writes the audit
+   log and emails the candidate. The candidate never receives the score.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-import re
 import logging
+import os
+import re
 import time
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
-from ..auth import get_current_candidate
+from ..auth import get_current_admin, get_current_candidate
 from ..db import (
     Application,
     CandidateProfile,
@@ -40,18 +45,28 @@ from ..db import (
     InterviewSession,
     Job,
     Resume,
+    StudentProject,
     User,
     engine,
     utc_now,
 )
 from ..services import interview_ai as ai
 from ..services import llm_stream
+from ..services import llm_telemetry
 from ..rate_limit import limiter
 
 logger = logging.getLogger("ats-platform.interview")
 router = APIRouter(prefix="/api/interview", tags=["interview"])
 
 SESSION_RESUME_WINDOW_S = 2 * 60 * 60
+TURN_MAX_TOKENS = 100
+
+
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -78,6 +93,14 @@ def _owned_session(session: Session, sid: int, username: str) -> InterviewSessio
     return s
 
 
+def _jl(raw, default):
+    try:
+        v = json.loads(raw) if raw else default
+        return v if v is not None else default
+    except Exception:
+        return default
+
+
 def _job_context(session: Session, app_record: Application) -> dict:
     job = session.get(Job, app_record.job_id) if app_record.job_id else None
     company = ""
@@ -93,9 +116,10 @@ def _job_context(session: Session, app_record: Application) -> dict:
         skills = _extract_skills_present(f"{jd}\n{reqs}", getattr(job, "branch", None))
     except Exception:
         skills = []
-    if not skills and reqs:
-        skills = [s.strip() for s in reqs.replace(";", ",").split(",") if s.strip()][:8]
-    return {"title": title, "company": company, "jd": f"{jd}\n{reqs}".strip(), "skills": skills}
+    if reqs:
+        listed = [s.strip() for s in reqs.replace(";", ",").replace("\n", ",").split(",") if 1 < len(s.strip()) <= 40]
+        skills = list(dict.fromkeys(skills + listed))[:12]
+    return {"title": title, "company": company, "jd": f"{jd}\n{reqs}".strip(), "skills": skills, "branch": getattr(job, "branch", None)}
 
 
 def _resume_excerpt(session: Session, app_record: Application) -> str:
@@ -113,6 +137,17 @@ def _resume_excerpt(session: Session, app_record: Application) -> str:
         return ""
 
 
+def _candidate_projects(session: Session, candidate_id: int) -> List[dict]:
+    try:
+        rows = session.exec(
+            select(StudentProject).where(StudentProject.candidate_id == candidate_id, StudentProject.status != "draft")
+            .order_by(StudentProject.featured.desc(), StudentProject.created_at.desc()).limit(3)
+        ).all()
+    except Exception:
+        return []
+    return [{"title": p.title, "description": p.description or "", "tools": _jl(p.tools_json, [])} for p in rows]
+
+
 def _first_name(session: Session, cand: CandidateUser) -> str:
     user = session.exec(select(User).where(User.email == cand.username)).first()
     name = (user.name if user and user.name and "@" not in user.name else "") or ""
@@ -125,23 +160,38 @@ def _is_practice(s: InterviewSession) -> bool:
     return (s.mode or "application") == "practice" or s.application_id is None
 
 
-def _practice_meta(s: InterviewSession) -> dict:
-    for item in json.loads(s.latency_json or "[]"):
-        if isinstance(item, dict) and item.get("kind") == "plan" and isinstance(item.get("context"), dict):
-            return item["context"]
+def _plan_entry(s: InterviewSession) -> dict:
+    for item in _jl(s.latency_json, []):
+        if isinstance(item, dict) and item.get("kind") == "plan":
+            return item
     return {}
 
 
+def _practice_meta(s: InterviewSession) -> dict:
+    ctx = _plan_entry(s).get("context")
+    return ctx if isinstance(ctx, dict) else {}
+
+
 def _session_context(session: Session, s: InterviewSession) -> dict:
+    stored = _practice_meta(s)
     if _is_practice(s):
-        meta = _practice_meta(s)
-        title = meta.get("title") or s.practice_topic or "engineering"
-        return {"title": title, "company": meta.get("company") or "", "jd": meta.get("jd") or title, "skills": meta.get("skills") or []}
+        title = stored.get("title") or s.practice_topic or "engineering"
+        return {"title": title, "company": stored.get("company") or "", "jd": stored.get("jd") or title,
+                "skills": stored.get("skills") or [], "branch": stored.get("branch")}
+    if stored.get("title"):
+        return stored  # cached at session creation: no job/skill lookups per turn
     return _job_context(session, session.get(Application, s.application_id))
 
 
 def _load(s: InterviewSession):
-    return json.loads(s.plan_json or "[]"), json.loads(s.transcript_json or "[]")
+    return _jl(s.plan_json, []), _jl(s.transcript_json, [])
+
+
+def _trim_latency(lat: list, keep: int = 60) -> list:
+    """Keep the plan entry (it carries the session context) plus recent samples."""
+    plan = [x for x in lat if isinstance(x, dict) and x.get("kind") == "plan"][:1]
+    rest = [x for x in lat if not (isinstance(x, dict) and x.get("kind") == "plan")]
+    return plan + rest[-(keep - len(plan)):]
 
 
 def _session_payload(s: InterviewSession, greeting_text: str, resumed: bool) -> dict:
@@ -158,12 +208,148 @@ def _session_payload(s: InterviewSession, greeting_text: str, resumed: bool) -> 
     }
 
 
+# ── In-process session state (hot path without DB reads) ─────────────────────
+#
+# The API runs as a single worker on the free tier, so caching the live session
+# in memory is safe and saves several DB round-trips per turn (≈ 50-500 ms on a
+# remote Postgres). Set INTERVIEW_SESSION_CACHE=0 when running several workers.
+
+@dataclass
+class _State:
+    sid: int
+    username: str
+    status: str
+    practice: bool
+    ctx: dict
+    plan: list
+    transcript: list
+    q_idx: int
+    followups: int
+    touched: float = field(default_factory=time.time)
+
+
+_STATES: Dict[int, _State] = {}
+_STATE_TTL_S = 45 * 60
+
+
+def _cache_on() -> bool:
+    return os.environ.get("INTERVIEW_SESSION_CACHE", "1").lower() not in {"0", "false", "no"}
+
+
+def _evict_stale() -> None:
+    now = time.time()
+    for k in [k for k, v in _STATES.items() if now - v.touched > _STATE_TTL_S]:
+        _STATES.pop(k, None)
+
+
+def _state_from_db(sid: int, username: str) -> _State:
+    with Session(engine) as session:
+        s = _owned_session(session, sid, username)
+        ctx = _session_context(session, s)
+        plan, transcript = _load(s)
+        return _State(sid=sid, username=username, status=s.status, practice=_is_practice(s), ctx=ctx, plan=plan,
+                      transcript=transcript, q_idx=s.question_index, followups=s.followups_on_current)
+
+
+async def _get_state(sid: int, username: str) -> _State:
+    st = _STATES.get(sid) if _cache_on() else None
+    if st is not None and st.username == username and time.time() - st.touched < _STATE_TTL_S:
+        st.touched = time.time()
+        return st
+    st = await asyncio.to_thread(_state_from_db, sid, username)
+    if _cache_on():
+        _evict_stale()
+        _STATES[sid] = st
+    return st
+
+
+def _drop_state(sid: int) -> None:
+    _STATES.pop(sid, None)
+
+
+def _persist_turn(sid: int, transcript: list, q_idx: int, followups: int, lat_entry: dict) -> None:
+    with Session(engine) as session:
+        s2 = session.get(InterviewSession, sid)
+        if s2 is None:
+            return
+        s2.transcript_json = json.dumps(transcript)
+        s2.question_index = q_idx
+        s2.followups_on_current = followups
+        lat = _jl(s2.latency_json, [])
+        lat.append(lat_entry)
+        s2.latency_json = json.dumps(_trim_latency(lat))
+        session.add(s2)
+        session.commit()
+
+
+# ── Planning (smart model, cached) ────────────────────────────────────────────
+
+_PLAN_CACHE: Dict[str, tuple] = {}
+_PLAN_TTL_S = 6 * 60 * 60
+
+
+def _plan_key(*parts) -> str:
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def _plan_with_llm(messages: List[dict], n: int, cache_key: Optional[str]) -> tuple:
+    """(plan | None, provider). Smart model first, fast model if it's slow or down."""
+    if not llm_stream.configured_providers():
+        return None, "scripted"
+    if cache_key and cache_key in _PLAN_CACHE and time.time() - _PLAN_CACHE[cache_key][2] < _PLAN_TTL_S:
+        plan, provider, _ts = _PLAN_CACHE[cache_key]
+        return [dict(x) for x in plan], provider
+    budget = _envf("INTERVIEW_PLAN_BUDGET_S", 10.0)
+    t0 = time.perf_counter()
+    plan, provider = None, "scripted"
+    for smart in (True, False):
+        remaining = budget - (time.perf_counter() - t0)
+        if remaining < 1.0:
+            break
+        try:
+            obj = await asyncio.wait_for(
+                llm_stream.complete_json(messages, smart=smart, max_tokens=900, timeout=min(7.0, remaining),
+                                         deadline=remaining, operation="plan" if smart else "plan_fast",
+                                         hedge_after=_envf("INTERVIEW_PLAN_HEDGE_S", 3.5)),
+                timeout=remaining + 0.5,
+            )
+        except Exception as exc:
+            logger.warning("[INTERVIEW] question planning (%s) failed: %s", "smart" if smart else "fast", exc)
+            obj = None
+        plan = ai.parse_plan(obj, n)
+        if plan:
+            provider = f"{(obj or {}).get('_provider', 'llm')}/{(obj or {}).get('_model', '')}".rstrip("/")
+            break
+    if plan and cache_key:
+        _PLAN_CACHE[cache_key] = (plan, provider, time.time())
+        if len(_PLAN_CACHE) > 500:
+            _PLAN_CACHE.pop(next(iter(_PLAN_CACHE)))
+    return plan, provider
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/providers")
 async def providers():
     """Which LLM providers are configured (names only, never keys)."""
     return {"providers": [p.name for p in llm_stream.configured_providers()]}
+
+
+@router.get("/llm/status")
+async def llm_status(probe: int = 0, limit: int = 40, admin: str = Depends(get_current_admin)):
+    """Admin: which provider/model answers interview turns and evaluations,
+    failure reasons (HTTP status, timeout…) and first-token latency. ``probe=1``
+    checks every provider's /models with the real key; ``probe=2`` also sends a
+    1-token chat to the fast model. Keys are never returned."""
+    out = {
+        "order": [p.name for p in llm_stream.configured_providers()],
+        "providers": llm_stream.health_snapshot(),
+        "stats_1h": llm_telemetry.llm_stats(3600),
+        "recent": llm_telemetry.recent_llm_events(max(1, min(limit, 200))),
+    }
+    if probe:
+        out["probe"] = await llm_stream.probe_providers(chat=probe >= 2)
+    return out
 
 
 @router.post("/applications/{app_id}/session")
@@ -198,34 +384,25 @@ async def create_or_resume_session(request: Request, app_id: int, candidate: str
         first = _first_name(session, cand)
         profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == cand.id)).first()
         project_summary = app_record.project_summary or (profile.project_summary if profile else None)
+        cand_skills = [str(x) for x in _jl(profile.skills_json if profile else None, [])][:12]
+        projects = _candidate_projects(session, cand.id)
+        if not ctx.get("branch") and profile and profile.branch:
+            ctx["branch"] = profile.branch
 
-    # Plan questions with the LLM (bounded), warm the connection in parallel.
+    # Plan questions with the smart LLM (bounded, cached), warm the connection in parallel.
     n = ai.DEFAULT_QUESTION_COUNT
     t0 = time.perf_counter()
     warm = asyncio.create_task(llm_stream.warm_up())
-    plan = None
-    provider = "scripted"
-    if llm_stream.configured_providers():
-        try:
-            obj = await asyncio.wait_for(
-                llm_stream.complete_json(
-                    ai.plan_messages(ctx["title"], ctx["company"], ctx["jd"], ctx["skills"], resume_text, project_summary, n),
-                    smart=False,
-                    max_tokens=700,
-                    timeout=8.0,
-                ),
-                timeout=9.0,
-            )
-            plan = ai.parse_plan(obj, n)
-            if plan:
-                provider = (obj or {}).get("_provider", "llm")
-        except Exception as exc:
-            logger.warning("[INTERVIEW] question planning failed: %s", exc)
+    msgs = ai.plan_messages(ctx["title"], ctx["company"], ctx["jd"], ctx["skills"], resume_text, project_summary, n,
+                            branch=ctx.get("branch"), candidate_skills=cand_skills, projects=projects)
+    plan, provider = await _plan_with_llm(msgs, n, _plan_key("app", app_id, msgs[1]["content"]))
     if not plan:
-        plan = ai.fallback_plan(ctx["title"], ctx["skills"], project_summary, n)
+        plan = ai.fallback_plan(ctx["title"], ctx["skills"], project_summary, n, candidate_skills=cand_skills,
+                                project_title=(projects[0]["title"] if projects else None))
     plan_ms = int((time.perf_counter() - t0) * 1000)
     if not warm.done():
         warm.cancel()
+    llm_stream.touch_activity()
 
     greeting_text = ai.greeting(first, ctx["title"], ctx["company"], plan[0]["q"], len(plan))
     transcript = [{"role": "interviewer", "text": greeting_text, "q_index": 0, "kind": "base", "ts": time.time()}]
@@ -240,19 +417,90 @@ async def create_or_resume_session(request: Request, app_id: int, candidate: str
             transcript_json=json.dumps(transcript),
             question_index=0,
             provider=provider,
-            latency_json=json.dumps([{"kind": "plan", "server_ms": plan_ms, "provider": provider}]),
+            latency_json=json.dumps([{"kind": "plan", "server_ms": plan_ms, "provider": provider, "context": ctx}]),
         )
         app_record.interview_status = "in_progress"
         session.add(s)
         session.add(app_record)
         session.commit()
         session.refresh(s)
+        if _cache_on():
+            _STATES[s.id] = _State(sid=s.id, username=candidate, status="active", practice=False, ctx=ctx, plan=plan,
+                                   transcript=list(transcript), q_idx=0, followups=0)
         return _session_payload(s, greeting_text, resumed=False)
+
+
+@router.post("/sessions/{sid}/warm")
+@limiter.limit("30/minute")
+async def warm_session(request: Request, sid: int, candidate: str = Depends(get_current_candidate)):
+    """Called by the client when the candidate starts answering: loads the
+    session into memory and refreshes keep-alive connections to the LLM, so the
+    reply after a long answer doesn't pay a cold TLS handshake."""
+    await _get_state(sid, candidate)
+    llm_stream.touch_activity()
+    asyncio.create_task(llm_stream.warm_up())
+    return {"ok": True}
+
+
+def _turn_counts(transcript: list, q_idx: int) -> dict:
+    on_q = [t for t in transcript if t.get("role") == "interviewer" and t.get("q_index") == q_idx]
+    last_interviewer = next((t for t in reversed(transcript) if t.get("role") == "interviewer"), {})
+    prev_cand = [t for t in transcript if t.get("role") == "candidate"][-1:]
+    return {
+        "retries": sum(1 for t in on_q if t.get("kind") in ai.RETRY_KINDS),
+        "loops": sum(1 for t in on_q if t.get("kind") in ai.LOOP_KINDS),
+        "last_kind": last_interviewer.get("kind"),
+        "recent_non": sum(1 for t in prev_cand if ai.is_non_substantive(t.get("text", ""))),
+        "strikes": sum(1 for t in transcript if t.get("role") == "interviewer" and t.get("kind") == "warn_conduct"),
+    }
+
+
+class _ReplyShaper:
+    """Holds back the first few characters of the stream to (a) detect the
+    model's ``[PROBE]`` tag and (b) trim an opening that repeats the filler the
+    client already spoke. Releases as soon as a decision is possible."""
+
+    def __init__(self, filler: str, watch_probe: bool):
+        self.filler = filler
+        self.watch_probe = watch_probe
+        self.buf: Optional[str] = "" if (filler or watch_probe) else None
+        self.probe = False
+
+    def _ready(self) -> bool:
+        b = self.buf or ""
+        s = b.lstrip()
+        if self.watch_probe and len(s) < 9 and (not s or s[0] in "[(<"):
+            return False
+        if self.filler:
+            if len(b) >= 60:
+                return True
+            m = re.search(r"[.!?…]\s+\S", b)
+            return bool(m and len(b) >= 24)
+        return len(s) >= 1
+
+    def _release(self) -> str:
+        text = self.buf or ""
+        self.buf = None
+        if self.watch_probe:
+            self.probe, text = ai.split_probe_tag(text)
+        if self.filler:
+            text = ai.strip_repeated_filler(text, self.filler)
+        return text
+
+    def feed(self, delta: str) -> str:
+        if self.buf is None:
+            return delta
+        self.buf += delta
+        return self._release() if self._ready() else ""
+
+    def flush(self) -> str:
+        return self._release() if self.buf else ""
 
 
 @router.post("/sessions/{sid}/turn")
 @limiter.limit("40/minute")
 async def interview_turn(request: Request, sid: int, payload: dict = Body(...), candidate: str = Depends(get_current_candidate)):
+    t_req = time.perf_counter()
     answer = str(payload.get("answer") or "").strip()[:4000]
     client_meta = payload.get("client") or {}
     # Short acknowledgement the client already spoke ("Hmm, okay.") while the
@@ -260,39 +508,43 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
     # of the scored transcript text.
     filler = ai.sanitize_filler(payload.get("filler_spoken"))
 
-    with Session(engine) as session:
-        s = _owned_session(session, sid, candidate)
-        if s.status != "active":
-            raise HTTPException(status_code=409, detail="Interview already finished")
-        ctx = _session_context(session, s)
-        is_practice = _is_practice(s)
-        plan, transcript = _load(s)
-        q_idx, followups = s.question_index, s.followups_on_current
+    st = await _get_state(sid, candidate)
+    if st.status != "active":
+        raise HTTPException(status_code=409, detail="Interview already finished")
+    llm_stream.touch_activity()
+    ctx, plan, transcript = st.ctx, st.plan, st.transcript
+    q_idx, followups = st.q_idx, st.followups
+    is_practice = st.practice
 
     total = len(plan)
-    current_q = plan[q_idx]["q"] if q_idx < total else ""
-    last_interviewer = next((t for t in reversed(transcript) if t.get("role") == "interviewer"), {})
-    current_kind = "follow_up" if last_interviewer.get("kind") == "follow_up" else "base"
-    recent_cand = [t for t in transcript if t.get("role") == "candidate"][-1:]
-    recent_non = sum(1 for t in recent_cand if ai.is_non_substantive(t.get("text", "")))
-    strikes = sum(1 for t in transcript if t.get("role") == "interviewer" and t.get("kind") == "warn_conduct")
-
+    cur = plan[q_idx] if q_idx < total else {}
+    current_q = cur.get("q", "")
+    counts = _turn_counts(transcript, q_idx)
     decision = ai.decide_action(
         answer,
         question_index=q_idx,
         total_questions=total,
         followups_on_current=followups,
-        recent_non_answers=recent_non,
-        hostile_strikes=strikes,
-        current_kind=current_kind,
-        question_kind=(plan[q_idx].get("kind", "technical") if q_idx < total else "technical"),
+        recent_non_answers=counts["recent_non"],
+        hostile_strikes=counts["strikes"],
+        current_kind="follow_up" if counts["last_kind"] == "follow_up" else "base",
+        question_kind=cur.get("kind", "technical"),
+        retries_on_current=counts["retries"],
+        loops_on_current=counts["loops"],
+        awaiting_exit_confirm=counts["last_kind"] == "confirm_exit",
+        question_text=current_q,
+        job_terms=list(ctx.get("skills") or []) + [ctx.get("title") or ""],
     )
     action = decision["action"]
+    allow_probe = bool(decision.get("allow_probe")) and bool(llm_stream.configured_providers())
     next_idx = q_idx + 1 if action == "next" else q_idx
     next_q = plan[next_idx]["q"] if action == "next" and next_idx < total else None
     done = action in {"complete", "end_by_candidate", "end_conduct"}
 
-    transcript.append({"role": "candidate", "text": answer, "q_index": q_idx, "ts": time.time()})
+    cand_entry = {"role": "candidate", "text": answer, "q_index": q_idx, "ts": time.time()}
+    if decision.get("injection"):
+        cand_entry["flag"] = "injection"
+    transcript.append(cand_entry)
     messages = ai.turn_messages(
         action=action,
         job_title=ctx["title"],
@@ -304,97 +556,183 @@ async def interview_turn(request: Request, sid: int, payload: dict = Body(...), 
         focus=decision.get("focus"),
         practice=is_practice,
         filler_spoken=filler,
+        allow_probe=allow_probe,
+        look_for=cur.get("look_for"),
+        plan=plan,
+        q_index=q_idx,
+        branch=ctx.get("branch"),
+        injection=bool(decision.get("injection")),
     )
+    pre_ms = int((time.perf_counter() - t_req) * 1000)
 
     async def gen():
+        nonlocal action, next_idx, next_q, done
         t0 = time.perf_counter()
         yield json.dumps({"t": "meta", "action": action, "q_index": next_idx, "total": total, "done": done}) + "\n"
         result = llm_stream.StreamResult()
         text = ""
-        # When a filler was already spoken, hold back the first few words so a
-        # reply that opens by repeating it ("Okay, got it. ...") can be trimmed.
-        held = "" if filler else None
+        shaper = _ReplyShaper(filler, allow_probe)
+        persisted = False
+
+        def finalize_state(spoken: str) -> dict:
+            kind = {"follow_up": "follow_up", "next": "base"}.get(action, action)
+            entry = {"role": "interviewer", "text": spoken, "q_index": next_idx, "kind": kind, "ts": time.time()}
+            if shaper.probe:
+                entry["probe"] = True
+            if filler:
+                entry["filler"] = filler  # kept apart from the text: never scored
+            transcript.append(entry)
+            st.q_idx = next_idx
+            st.followups = followups + 1 if action == "follow_up" else (0 if action == "next" else followups)
+            return {
+                "kind": "turn", "action": action, "reason": decision.get("reason"), "probe": shaper.probe,
+                "provider": result.provider, "model": result.model, "ttft_ms": result.ttft_ms,
+                "server_ms": int((time.perf_counter() - t0) * 1000), "pre_ms": pre_ms,
+                "attempts": result.attempts,
+                "client": {k: client_meta.get(k) for k in ("silence_ms", "prev_tts_first_audio_ms", "prev_ttfa_ms", "endpoint_reason", "filler_ms", "thinking_aloud",
+                                                         "prev_answer_to_voice_ms", "prev_first_token_ms") if k in client_meta},
+            }
+
         try:
-            if not llm_stream.configured_providers():
-                raise llm_stream.LLMUnavailable("no provider")
-            async for delta in llm_stream.stream_chat(
-                messages,
-                max_tokens=110,
-                temperature=0.7,
-                first_token_timeout=float(__import__("os").environ.get("INTERVIEW_TTFT_BUDGET_S", "3.5")),
-                result=result,
-            ):
-                if held is not None:
-                    held += delta
-                    if len(held) < 60:
-                        continue
-                    delta, held = ai.strip_repeated_filler(held, filler), None
-                text += delta
-                yield json.dumps({"t": "d", "v": delta}) + "\n"
-            if held:
-                held = ai.strip_repeated_filler(held, filler)
-                text += held
-                yield json.dumps({"t": "d", "v": held}) + "\n"
-        except Exception as exc:
-            if held:
-                text += held
-                yield json.dumps({"t": "d", "v": held}) + "\n"
-            if not text:
-                logger.info("[INTERVIEW] scripted reply (%s)", exc)
-                text = ai.scripted_reply(action, current_question=current_q, next_question=next_q, focus=decision.get("focus"), filler_spoken=filler)
-                if is_practice and done:
-                    text = ai.practice_scripted_end(action)
-                result.provider = "scripted"
-                yield json.dumps({"t": "d", "v": text}) + "\n"
+            try:
+                if not llm_stream.configured_providers():
+                    raise llm_stream.LLMUnavailable("no provider")
+                async for delta in llm_stream.stream_chat(
+                    messages,
+                    max_tokens=TURN_MAX_TOKENS,
+                    temperature=0.6,
+                    result=result,
+                    operation="practice_turn" if is_practice else "turn",
+                ):
+                    out = shaper.feed(delta)
+                    if shaper.probe and action != "follow_up":
+                        # The model judged the answer wrong/vague: stay on this question.
+                        action, next_idx, next_q, done = "follow_up", q_idx, None, False
+                    if out:
+                        text += out
+                        yield json.dumps({"t": "d", "v": out}) + "\n"
+                rest = shaper.flush()
+                if shaper.probe and action != "follow_up":
+                    action, next_idx, next_q, done = "follow_up", q_idx, None, False
+                if rest:
+                    text += rest
+                    yield json.dumps({"t": "d", "v": rest}) + "\n"
+            except Exception as exc:
+                rest = shaper.flush()
+                if rest:
+                    text += rest
+                    yield json.dumps({"t": "d", "v": rest}) + "\n"
+                if not ai.clean_spoken(text):
+                    logger.warning("[INTERVIEW] scripted reply for session %s (%s)", sid, llm_telemetry.redact(exc))
+                    text = ai.scripted_reply(action, current_question=current_q, next_question=next_q, focus=decision.get("focus"), filler_spoken=filler)
+                    if is_practice and done:
+                        text = ai.practice_scripted_end(action)
+                    result.provider = "scripted"
+                    yield json.dumps({"t": "d", "v": text}) + "\n"
 
-        spoken = ai.clean_spoken(text)
-        # Safety net: a "next" turn must actually contain the next question.
-        if action == "next" and next_q and "?" not in spoken:
-            extra = " " + next_q
-            spoken += extra
-            yield json.dumps({"t": "d", "v": extra}) + "\n"
-        server_ms = int((time.perf_counter() - t0) * 1000)
-        yield json.dumps({
-            "t": "end",
-            "done": done,
-            "action": action,
-            "q_index": next_idx,
-            "provider": result.provider,
-            "ttft_ms": result.ttft_ms,
-            "server_ms": server_ms,
-        }) + "\n"
-
-        # Persist after streaming so the response isn't delayed by DB writes.
-        kind = {"follow_up": "follow_up", "next": "base"}.get(action, action)
-        entry = {"role": "interviewer", "text": spoken, "q_index": next_idx, "kind": kind, "ts": time.time()}
-        if filler:
-            entry["filler"] = filler  # kept apart from the text: never scored
-        transcript.append(entry)
-        with Session(engine) as session:
-            s2 = session.get(InterviewSession, sid)
-            if s2 is None:
-                return
-            s2.transcript_json = json.dumps(transcript)
-            s2.question_index = next_idx
-            s2.followups_on_current = followups + 1 if action == "follow_up" else (0 if action == "next" else followups)
-            lat = json.loads(s2.latency_json or "[]")
-            lat.append({
-                "kind": "turn",
+            spoken = ai.clean_spoken(text)
+            # Safety net: a "next" turn must actually contain the next question.
+            if action == "next" and next_q and "?" not in spoken:
+                extra = " " + next_q
+                spoken += extra
+                yield json.dumps({"t": "d", "v": extra}) + "\n"
+            # Trailing space lets the client's sentence splitter release the last sentence immediately.
+            yield json.dumps({"t": "d", "v": " "}) + "\n"
+            lat_entry = finalize_state(spoken)
+            persisted = True
+            yield json.dumps({
+                "t": "end",
+                "done": done,
                 "action": action,
+                "q_index": next_idx,
                 "provider": result.provider,
+                "model": result.model or None,
                 "ttft_ms": result.ttft_ms,
-                "server_ms": server_ms,
-                "client": {k: client_meta.get(k) for k in ("silence_ms", "prev_tts_first_audio_ms", "prev_ttfa_ms", "endpoint_reason", "filler_ms", "thinking_aloud") if k in client_meta},
-            })
-            s2.latency_json = json.dumps(lat[-60:])
-            session.add(s2)
-            session.commit()
+                "server_ms": lat_entry["server_ms"],
+            }) + "\n"
+            # Persist after streaming so the reply isn't delayed by DB writes.
+            await asyncio.to_thread(_persist_turn, sid, list(transcript), st.q_idx, st.followups, lat_entry)
+        finally:
+            if not persisted:  # client went away mid-reply: keep the answer anyway
+                lat_entry = finalize_state(ai.clean_spoken(text) or "(interrupted)")
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, _persist_turn, sid, list(transcript), st.q_idx, st.followups, lat_entry)
 
     return StreamingResponse(
         gen(),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+
+async def _evaluate(ctx: dict, plan: list, transcript: list, *, practice: bool) -> tuple:
+    """(qa, evaluation). Smart model → validate → one repair round → heuristic."""
+    qa = ai.qa_pairs(transcript, plan)
+    integrity = ai.integrity_flags(transcript)
+    n = len(plan)
+    evaluation = None
+    has_substance = bool(ai._answer_stats(qa)["substantive"])
+    if llm_stream.configured_providers() and has_substance:
+        msgs = ai.eval_messages(ctx["title"], ctx["jd"], ctx.get("skills") or [], qa, practice=practice, plan=plan,
+                                branch=ctx.get("branch"), total_questions=n)
+        budget = _envf("INTERVIEW_EVAL_BUDGET_S", 28.0)
+        t0 = time.perf_counter()
+        repaired = False
+        try:
+            obj = await asyncio.wait_for(
+                llm_stream.complete_json(msgs, smart=True, max_tokens=1400, timeout=20.0, deadline=budget * 0.7,
+                                         operation="practice_eval" if practice else "evaluate", return_raw=True,
+                                         hedge_after=_envf("INTERVIEW_EVAL_HEDGE_S", 12.0)),
+                timeout=budget * 0.7 + 1,
+            )
+        except Exception as exc:
+            logger.warning("[INTERVIEW] evaluation call failed: %s", exc)
+            obj = None
+        errs = ai.validate_eval(obj, qa) if obj is not None else ["no response"]
+        if obj is not None and errs:
+            remaining = budget - (time.perf_counter() - t0)
+            logger.info("[INTERVIEW] evaluation JSON invalid (%s); repairing", "; ".join(errs)[:200])
+            if remaining > 3:
+                try:
+                    obj2 = await asyncio.wait_for(
+                        llm_stream.complete_json(ai.repair_messages(msgs, obj, errs), smart=True, max_tokens=1400, timeout=min(15.0, remaining),
+                                                 deadline=remaining, operation="evaluate_repair", return_raw=True),
+                        timeout=remaining + 1,
+                    )
+                except Exception:
+                    obj2 = None
+                if obj2 is not None and not ai.validate_eval(obj2, qa):
+                    obj, errs, repaired = obj2, [], True
+        if obj is not None and not errs:
+            evaluation = ai.finalize_eval(obj, qa, total_questions=n, integrity=integrity)
+            evaluation["repaired"] = repaired
+    if evaluation is None:
+        evaluation = ai.heuristic_eval(qa, total_questions=n, practice=practice, integrity=integrity)
+        if practice:
+            evaluation["summary"] = f"Estimated from the structure and detail of {len([x for x in qa if x.get('answer')])} answers (offline scoring)."
+    return qa, evaluation
+
+
+def _llm_usage(lat: list, evaluation: dict, plan_provider: Optional[str]) -> dict:
+    turns: Dict[str, int] = {}
+    ttfts = []
+    for x in lat:
+        if isinstance(x, dict) and x.get("kind") == "turn":
+            key = x.get("provider") or "scripted"
+            if x.get("model"):
+                key = f"{key}/{x['model']}"
+            turns[key] = turns.get(key, 0) + 1
+            if isinstance(x.get("ttft_ms"), int):
+                ttfts.append(x["ttft_ms"])
+    ttfts.sort()
+    return {
+        "plan": plan_provider,
+        "turns": turns,
+        "turn_ttft_p50_ms": ttfts[len(ttfts) // 2] if ttfts else None,
+        "evaluation": (f"{evaluation.get('provider')}/{evaluation.get('model')}" if evaluation.get("method") == "llm" else "offline heuristic"),
+    }
 
 
 @router.post("/sessions/{sid}/finish")
@@ -407,23 +745,26 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
     with Session(engine) as session:
         s = _owned_session(session, sid, candidate)
         if s.status == "completed":
+            _drop_state(sid)
             if _is_practice(s):
                 return {"completed": True, "already": True, "practice": True, "evaluation": _practice_eval_view(s)}
             return {"completed": True, "already": True}
         if _is_practice(s):
-            return await _finish_practice(sid, payload)
-        app_record = session.get(Application, s.application_id)
-        ctx = _job_context(session, app_record)
-        plan, transcript = _load(s)
+            practice = True
+        else:
+            practice = False
+            ctx = _session_context(session, s)
+            plan, transcript = _load(s)
+            plan_provider = s.provider
+    if practice:
+        return await _finish_practice(sid, payload)
+    st = _STATES.get(sid)
+    if st is not None:
+        st.status = "finishing"  # no more turns while scoring
+        if len(st.transcript) > len(transcript):
+            transcript = list(st.transcript)
 
-    qa = ai.qa_pairs(transcript, plan)
-    evaluation = None
-    if llm_stream.configured_providers() and any(x.get("answer") for x in qa):
-        obj = await llm_stream.complete_json(ai.eval_messages(ctx["title"], ctx["jd"], ctx["skills"], qa), smart=True, max_tokens=1200, timeout=30.0)
-        if obj:
-            evaluation = ai.normalise_eval(obj)
-    if evaluation is None:
-        evaluation = ai.heuristic_eval(qa)
+    qa, evaluation = await _evaluate(ctx, plan, transcript, practice=False)
 
     try:
         risk_score = int(max(0, min(100, float(proctoring.get("risk_score", 0)))))
@@ -433,16 +774,18 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
     if risk_level not in {"low", "medium", "high"}:
         risk_level = "low"
 
-    rec_text = (
-        f"{evaluation['recommendation'].upper()}: {evaluation.get('summary', '')}".strip()
-        + (f" Strengths: {'; '.join(evaluation['strengths'])}." if evaluation.get("strengths") else "")
-        + (f" Concerns: {'; '.join(evaluation['concerns'])}." if evaluation.get("concerns") else "")
-    )[:1500]
-
     with Session(engine) as session:
         s = session.get(InterviewSession, sid)
         app_record = session.get(Application, s.application_id)
-        lat = json.loads(s.latency_json or "[]")
+        lat = _jl(s.latency_json, [])
+        usage = _llm_usage(lat, evaluation, plan_provider)
+        evaluation["llm_usage"] = usage
+        rec_text = (
+            f"{evaluation['recommendation'].upper()}: {evaluation.get('summary', '')}".strip()
+            + (f" Strengths: {'; '.join(evaluation['strengths'])}." if evaluation.get("strengths") else "")
+            + (f" Concerns: {'; '.join(evaluation['concerns'])}." if evaluation.get("concerns") else "")
+        )[:1400]
+        rec_text += f" [AI: scored by {usage['evaluation']}; replies by {', '.join(f'{k} x{v}' for k, v in usage['turns'].items()) or 'n/a'}]"
         if isinstance(client_latency, list):
             lat.append({"kind": "client_summary", "samples": client_latency[-40:]})
         s.latency_json = json.dumps(lat)
@@ -453,13 +796,14 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
 
         app_record.interview_id = s.id
         app_record.interview_eval_score = evaluation["overall_score"]
-        app_record.interview_recommendation = rec_text
+        app_record.interview_recommendation = rec_text[:1600]
         app_record.interview_risk_score = risk_score
         app_record.interview_risk_level = risk_level
         app_record.interview_transcript_json = json.dumps(qa)
         app_record.interview_status = "completed"
         app_record.status = "automated_interview"
-        if risk_level == "high" or risk_score >= 50 or evaluation.get("method") != "llm" or ended_reason != "completed":
+        if (risk_level == "high" or risk_score >= 50 or evaluation.get("method") != "llm" or ended_reason != "completed"
+                or evaluation.get("integrity_flags")):
             app_record.pending_human_review = True
         session.add(app_record)
         session.commit()
@@ -487,6 +831,7 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
         profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == app_record.candidate_id)).first()
         to_email = (profile.contact_email if profile and profile.contact_email else None) or (cand.username if cand else None)
         first = _first_name(session, cand) if cand else "there"
+    _drop_state(sid)
 
     if to_email and "@" in to_email:
         try:
@@ -504,13 +849,15 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
 # ── Practice mode (student portal: private mock interviews) ───────────────────
 
 PRACTICE_DAILY_LIMIT = 40
+_PRACTICE_EVAL_KEYS = ("overall_score", "dimension_scores", "rubric", "per_question", "strengths", "improvements", "concerns",
+                       "recommendation", "summary", "method", "ended_reason", "coverage", "answered", "total_questions")
 
 
 def _practice_eval_view(s: InterviewSession) -> Optional[dict]:
-    ev = json.loads(s.eval_json) if s.eval_json else None
+    ev = _jl(s.eval_json, None)
     if not ev:
         return None
-    return {k: ev.get(k) for k in ("overall_score", "dimension_scores", "per_question", "strengths", "concerns", "recommendation", "summary", "method", "ended_reason")}
+    return {k: ev.get(k) for k in _PRACTICE_EVAL_KEYS}
 
 
 def _practice_row(s: InterviewSession) -> dict:
@@ -562,6 +909,7 @@ async def create_practice_session(request: Request, payload: dict = Body(...), c
                 InterviewSession.candidate_id == cand.id, InterviewSession.mode == "practice", InterviewSession.status == "active")).all():
             old.status = "abandoned"
             session.add(old)
+            _drop_state(old.id)
         session.commit()
         profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == cand.id)).first()
         from .student_portal import branch_id, BRANCH_LABELS
@@ -570,31 +918,18 @@ async def create_practice_session(request: Request, payload: dict = Body(...), c
         branch_label = BRANCH_LABELS.get(bid or "", "Engineering")
         full = (profile.full_name or "").strip() if profile else ""
         first = full.split()[0].capitalize() if full else _first_name(session, cand)
-        skills = []
-        if profile:
-            try:
-                skills = [str(x) for x in json.loads(profile.skills_json or "[]")][:10]
-            except Exception:
-                skills = []
+        skills = [str(x) for x in _jl(profile.skills_json if profile else None, [])][:10]
 
     n = ai.PRACTICE_QUESTION_COUNT
     t0 = time.perf_counter()
-    plan = None
-    provider = "scripted"
-    if llm_stream.configured_providers():
-        try:
-            obj = await asyncio.wait_for(
-                llm_stream.complete_json(ai.practice_plan_messages(kind, topic, branch_label, company, seeds, n), smart=False, max_tokens=700, timeout=8.0),
-                timeout=9.0,
-            )
-            plan = ai.parse_plan(obj, n)
-            if plan:
-                provider = (obj or {}).get("_provider", "llm")
-        except Exception as exc:
-            logger.warning("[INTERVIEW] practice planning failed: %s", exc)
+    msgs = ai.practice_plan_messages(kind, topic, branch_label, company, seeds, n, candidate_skills=skills)
+    # Practice plans are cached only when the student supplied the questions
+    # (otherwise every session should get fresh questions).
+    plan, provider = await _plan_with_llm(msgs, n, _plan_key("practice", candidate, msgs[1]["content"]) if seeds else None)
     if not plan:
         plan = ai.practice_fallback_plan(kind, topic, bid, seeds, n)
     plan_ms = int((time.perf_counter() - t0) * 1000)
+    llm_stream.touch_activity()
 
     greeting_text = ai.practice_greeting(first, kind, topic, company, plan[0]["q"], len(plan))
     transcript = [{"role": "interviewer", "text": greeting_text, "q_index": 0, "kind": "base", "ts": time.time()}]
@@ -616,6 +951,10 @@ async def create_practice_session(request: Request, payload: dict = Body(...), c
         session.add(s)
         session.commit()
         session.refresh(s)
+        if _cache_on():
+            _STATES[s.id] = _State(sid=s.id, username=candidate, status="active", practice=True,
+                                   ctx={"title": topic, "company": company, "jd": context["jd"], "skills": skills, "branch": bid},
+                                   plan=plan, transcript=list(transcript), q_idx=0, followups=0)
         out = _session_payload(s, greeting_text, resumed=False)
         out.update({"practice": True, "kind": kind, "topic": topic, "company": company or None, "max_minutes": 15})
         return out
@@ -627,28 +966,17 @@ async def _finish_practice(sid: int, payload: dict) -> dict:
         s = session.get(InterviewSession, sid)
         ctx = _session_context(session, s)
         plan, transcript = _load(s)
-    qa = ai.qa_pairs(transcript, plan)
-    evaluation = None
-    if llm_stream.configured_providers() and any(x.get("answer") for x in qa):
-        try:
-            obj = await asyncio.wait_for(
-                llm_stream.complete_json(ai.eval_messages(ctx["title"], ctx["jd"], ctx["skills"], qa), smart=True, max_tokens=1200, timeout=25.0),
-                timeout=27.0,
-            )
-        except Exception:
-            obj = None
-        if obj:
-            evaluation = ai.normalise_eval(obj)
-    if evaluation is None:
-        evaluation = ai.heuristic_eval(qa)
-        fb = ai.practice_feedback(qa)
-        evaluation["dimension_scores"] = fb["dimension_scores"]
-        evaluation["strengths"] = fb["strengths"]
-        evaluation["concerns"] = fb["concerns"]
-        evaluation["summary"] = f"Estimated from the structure and detail of {len([x for x in qa if x.get('answer')])} answers (offline scoring)."
+        plan_provider = s.provider
+    st = _STATES.get(sid)
+    if st is not None:
+        st.status = "finishing"
+        if len(st.transcript) > len(transcript):
+            transcript = list(st.transcript)
+    qa, evaluation = await _evaluate(ctx, plan, transcript, practice=True)
     with Session(engine) as session:
         s = session.get(InterviewSession, sid)
-        lat = json.loads(s.latency_json or "[]")
+        lat = _jl(s.latency_json, [])
+        evaluation["llm_usage"] = _llm_usage(lat, evaluation, plan_provider)
         client_latency = payload.get("latency") or []
         if isinstance(client_latency, list):
             lat.append({"kind": "client_summary", "samples": client_latency[-40:]})
@@ -659,6 +987,7 @@ async def _finish_practice(sid: int, payload: dict) -> dict:
         session.add(s)
         session.commit()
         session.refresh(s)
+        _drop_state(sid)
         return {"completed": True, "ended_reason": ended_reason, "practice": True, "evaluation": _practice_eval_view(s)}
 
 
@@ -682,7 +1011,7 @@ async def practice_session_detail(sid: int, candidate: str = Depends(get_current
         if not _is_practice(s):
             raise HTTPException(status_code=404, detail="Practice session not found")
         plan, transcript = _load(s)
-        ev = json.loads(s.eval_json) if s.eval_json else {}
+        ev = _jl(s.eval_json, {})
         return {
             **_practice_row(s),
             "evaluation": _practice_eval_view(s),

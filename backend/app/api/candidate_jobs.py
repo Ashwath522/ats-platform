@@ -1,5 +1,6 @@
 """Candidate job browsing, applying, and application history."""
 import json
+import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api/candidate/jobs", tags=["candidate-jobs"])
 
 
 @router.get("")
-async def browse_jobs(
+def browse_jobs(
     title: Optional[str] = Query(None),
     location: Optional[str] = Query(None),
     salary_min: Optional[float] = Query(None),
@@ -87,7 +88,7 @@ async def browse_jobs(
 
 
 @router.get("/{job_id}")
-async def get_job_detail(job_id: int, candidate: str = Depends(get_current_candidate)):
+def get_job_detail(job_id: int, candidate: str = Depends(get_current_candidate)):
     """Full job details for a single posting."""
     with Session(engine) as session:
         job = session.get(Job, job_id)
@@ -110,98 +111,93 @@ async def get_job_detail(job_id: int, candidate: str = Depends(get_current_candi
 
 
 @router.post("/{job_id}/apply")
-async def apply_to_job(
+def apply_to_job(
     job_id: int,
     candidate: str = Depends(get_current_candidate),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Apply to a job. Auto-scores the candidate's stored resume against the job description.
-    No re-upload needed — uses the resume already linked to the candidate's profile."""
+    No re-upload needed — uses the resume already linked to the candidate's profile.
+
+    The (slow) scoring + optional LLM call runs *outside* any DB session so a
+    pooled connection is not held for seconds, and a per-(candidate, job) lock
+    plus a re-check right before the insert stop double-clicks from creating
+    duplicate applications."""
+    lock = _apply_lock(candidate, job_id)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Your application for this job is already being submitted")
+    try:
+        return _apply(job_id, candidate, background_tasks)
+    finally:
+        lock.release()
+
+
+def _apply(job_id: int, candidate: str, background_tasks: BackgroundTasks):
     with Session(engine) as session:
-        # Get candidate user
         user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
         if not user:
             raise HTTPException(status_code=404, detail="Candidate not found")
-
-        # Check job exists and is open
         job = session.get(Job, job_id)
         if not job or job.status != "open":
             raise HTTPException(status_code=404, detail="Job not found or closed")
-
-        # Check not already applied
-        existing = session.exec(
-            select(Application)
-            .where(Application.candidate_id == user.id, Application.job_id == job_id)
-        ).first()
-        if existing:
+        if _already_applied(session, user.id, job_id):
             raise HTTPException(status_code=409, detail="You have already applied to this job")
-
-        # Get candidate's profile + resume
-        profile = session.exec(
-            select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)
-        ).first()
+        profile = session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == user.id)).first()
         if not profile or not profile.resume_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Upload a resume to your profile before applying",
-            )
-
+            raise HTTPException(status_code=400, detail="Upload a resume to your profile before applying")
         resume = session.get(Resume, profile.resume_id)
         if not resume:
             raise HTTPException(status_code=400, detail="Resume not found — please re-upload")
+        user_id, resume_id, profile_branch = user.id, profile.resume_id, profile.branch
+        job_title, job_branch = job.title, job.branch
+        # The JD the score is computed against now includes the job's listed
+        # requirements (they used to be ignored, so the ATS score disagreed with
+        # the skills shown on the job card).
+        jd_text = job.description or ""
+        if (job.requirements or "").strip():
+            jd_text = f"{jd_text}\n\nRequirements: {job.requirements}"
+        vector_doc_id = resume.vector_doc_id
 
-        # Get resume text from vector store
-        resume_doc = vector_store.get_document("resumes", resume.vector_doc_id)
-        if not resume_doc:
-            raise HTTPException(status_code=500, detail="Resume data not found in vector store")
+    resume_doc = vector_store.get_document("resumes", vector_doc_id)
+    if not resume_doc:
+        raise HTTPException(status_code=500, detail="Resume data not found in vector store")
+    resume_text = resume_doc["document"]
 
-        resume_text = resume_doc["document"]
+    # Stage 1: deterministic scoring (no DB connection held)
+    resume_embedding = EmbeddingModel.get().embed_text(resume_text)
+    jd_embedding = EmbeddingModel.get().embed_text(f"{job_title}\n\n{jd_text}")
+    branch_to_match = job_branch or profile_branch
+    score_result = score_resume_against_jd(resume_text, jd_text, resume_embedding, jd_embedding, branch=branch_to_match)
+    baseline_ats = score_result["ats_score"]
 
-        # Score resume against job description
-        resume_embedding = EmbeddingModel.get().embed_text(resume_text)
-        jd_embedding = EmbeddingModel.get().embed_text(f"{job.title}\n\n{job.description}")
+    # Stage 2: optional LLM scoring
+    llm_result = run_hybrid_llm_scoring(resume_text, jd_text, score_result["missing_skills"], score_result["matched_skills"])
+    llm_score = normalize_llm_score(llm_result.get("llm_score")) if llm_result.get("llm_configured") else None
+    llm_used = llm_score is not None
+    final_ats_score = combine_ats(baseline_ats, llm_score)
 
-        # Stage 1: Deterministic scoring
-        branch_to_match = job.branch or profile.branch
-        score_result = score_resume_against_jd(
-            resume_text, job.description, resume_embedding, jd_embedding, branch=branch_to_match
-        )
-        
-        baseline_ats = score_result["ats_score"]
-        
-        # Stage 2: LLM scoring
-        llm_result = run_hybrid_llm_scoring(
-            resume_text, job.description, score_result["missing_skills"], score_result["matched_skills"]
-        )
-        
-        llm_used = llm_result.get("llm_configured", False)
-        if llm_used and "llm_score" in llm_result:
-            final_ats_score = round((0.70 * baseline_ats) + (0.30 * llm_result["llm_score"]))
-            final_ats_score = max(0, min(100, final_ats_score))
-        else:
-            final_ats_score = baseline_ats
+    if final_ats_score >= 75:
+        verdict, pending_human_review = "Strong Fit", False
+    elif final_ats_score >= 50:
+        verdict, pending_human_review = "Potential Fit", False
+    else:
+        verdict, pending_human_review = "Not a Fit", True
 
-        # Compute suitability_verdict
-        if final_ats_score >= 75:
-            verdict = "Strong Fit"
-            pending_human_review = False
-        elif final_ats_score >= 50:
-            verdict = "Potential Fit"
-            pending_human_review = False
-        else:
-            verdict = "Not a Fit"
-            pending_human_review = True
-
-        # Create application with score
+    with Session(engine) as session:
+        if _already_applied(session, user_id, job_id):   # re-check: another request may have won
+            raise HTTPException(status_code=409, detail="You have already applied to this job")
+        job = session.get(Job, job_id)
+        if not job or job.status != "open":
+            raise HTTPException(status_code=404, detail="Job not found or closed")
         application = Application(
-            candidate_id=user.id,
+            candidate_id=user_id,
             job_id=job_id,
-            resume_id=profile.resume_id,
+            resume_id=resume_id,
             baseline_ats_score=baseline_ats,
             final_score=final_ats_score,
             ats_score=final_ats_score,
             llm_used=llm_used,
-            ai_recommendation=llm_result.get("reasoning", None),
+            ai_recommendation=llm_result.get("reasoning", None) if llm_used else None,
             suitability_verdict=verdict,
             matched_skills_json=json.dumps(score_result["matched_skills"]),
             missing_skills_json=json.dumps(score_result["missing_skills"]),
@@ -211,13 +207,13 @@ async def apply_to_job(
         session.commit()
         session.refresh(application)
 
-        # Record immutable audit log
         from ..services.audit import record_audit_event
+        from ..services.deep_analysis import _resolve_provider
         record_audit_event(
             session=session,
             event_type="ats_score",
             application_id=application.id,
-            candidate_id=user.id,
+            candidate_id=user_id,
             job_id=job_id,
             ats_score=final_ats_score,
             baseline_ats_score=baseline_ats,
@@ -226,17 +222,18 @@ async def apply_to_job(
             matched_skills=score_result.get("matched_skills", []),
             missing_skills=score_result.get("missing_skills", []),
             final_score=final_ats_score,
-            llm_providers_consulted=["gemini"] if llm_used else [],
+            llm_providers_consulted=[_resolve_provider()] if llm_used else [],
             raw_verdicts=llm_result if llm_used else None,
             final_recommendation=verdict,
         )
+        job_title = job.title
 
         background_tasks.add_task(learn_skills_from_resume, resume_text, branch_to_match)
 
         return {
             "message": "Application submitted successfully",
             "application_id": application.id,
-            "job_title": job.title,
+            "job_title": job_title,
             "ats_score": final_ats_score,
             "matched_skills": score_result["matched_skills"],
             "missing_skills": score_result["missing_skills"],
@@ -244,8 +241,45 @@ async def apply_to_job(
         }
 
 
+_apply_locks: dict = {}
+_apply_locks_guard = threading.Lock()
+
+
+def _apply_lock(candidate: str, job_id: int) -> threading.Lock:
+    with _apply_locks_guard:
+        if len(_apply_locks) > 5000:
+            for k in [k for k, v in _apply_locks.items() if not v.locked()]:
+                _apply_locks.pop(k, None)
+        return _apply_locks.setdefault((candidate, job_id), threading.Lock())
+
+
+def _already_applied(session: Session, candidate_id: int, job_id: int) -> bool:
+    return session.exec(select(Application.id).where(Application.candidate_id == candidate_id,
+                                                     Application.job_id == job_id)).first() is not None
+
+
+def normalize_llm_score(value) -> Optional[int]:
+    """LLMs return 85, "85", 0.85 or garbage: map to 0-100 or None (ignored)."""
+    try:
+        v = float(str(value).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+    if v != v:  # NaN
+        return None
+    if 0 < v <= 1:
+        v *= 100
+    return int(max(0, min(100, round(v))))
+
+
+def combine_ats(baseline: int, llm_score: Optional[int]) -> int:
+    """Final ATS score: 70 % deterministic + 30 % LLM (when an LLM answered)."""
+    if llm_score is None:
+        return int(baseline)
+    return max(0, min(100, round(0.70 * baseline + 0.30 * llm_score)))
+
+
 @router.get("/applications/mine")
-async def my_applications(candidate: str = Depends(get_current_candidate)):
+def my_applications(candidate: str = Depends(get_current_candidate)):
     """List all applications by this candidate with scores."""
     with Session(engine) as session:
         user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()
@@ -291,7 +325,7 @@ async def my_applications(candidate: str = Depends(get_current_candidate)):
 
 
 @router.get("/applications/{app_id}/explainability")
-async def get_application_explainability(app_id: int, candidate: str = Depends(get_current_candidate)):
+def get_application_explainability(app_id: int, candidate: str = Depends(get_current_candidate)):
     """Candidate-facing explainability view: plain-language breakdown of scoring signals."""
     from ..services.audit import generate_score_explanation
     with Session(engine) as session:
@@ -310,7 +344,7 @@ async def get_application_explainability(app_id: int, candidate: str = Depends(g
 
 
 @router.post("/{job_id}/suggestions")
-async def get_job_suggestions(job_id: int, candidate: str = Depends(get_current_candidate)):
+def get_job_suggestions(job_id: int, candidate: str = Depends(get_current_candidate)):
     """Get personalized AI resume suggestions for a specific job posting."""
     with Session(engine) as session:
         user = session.exec(select(CandidateUser).where(CandidateUser.username == candidate)).first()

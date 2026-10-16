@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from sqlmodel import Session, select
 
 from ..db import engine, CandidateUser, CandidateProfile, EmailToken, utc_now
-from ..auth import hash_password, verify_password, create_access_token
+from ..auth import hash_password, verify_password, create_access_token, record_login
 from ..rate_limit import limiter
 from ..services import email_templates
 
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/candidate/auth", tags=["candidate-auth"])
 
 @router.post("/register")
 @limiter.limit("20/minute")
-async def register(request: Request, username: str = Form(...), password: str = Form(...)):
+def register(request: Request, username: str = Form(...), password: str = Form(...)):
     username = username.strip()
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -33,17 +33,17 @@ async def register(request: Request, username: str = Form(...), password: str = 
 
 @router.post("/login")
 @limiter.limit("10/minute")
-async def login(request: Request, username: str = Form(...), password: str = Form(...)):
+def login(request: Request, background: BackgroundTasks, username: str = Form(...), password: str = Form(...)):
     username = username.strip()
+    # One query (id, hash, status); last_login_at is written after the response.
     with Session(engine) as session:
-        user = session.exec(select(CandidateUser).where(CandidateUser.username == username)).first()
-        if not user or not verify_password(password, user.password_hash):
-            raise HTTPException(status_code=401, detail="Incorrect username or password")
-        if (user.status or "active") == "suspended":
-            raise HTTPException(status_code=403, detail="This account is suspended. Contact support.")
-        user.last_login_at = utc_now()
-        session.add(user)
-        session.commit()
+        row = session.exec(select(CandidateUser.id, CandidateUser.password_hash, CandidateUser.status)
+                           .where(CandidateUser.username == username)).first()
+    if not row or not verify_password(password, row[1]):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    if (row[2] or "active") == "suspended":
+        raise HTTPException(status_code=403, detail="This account is suspended. Contact support.")
+    background.add_task(record_login, CandidateUser, row[0], password, row[1])
     token = create_access_token(username, role="candidate")
     return {"access_token": token, "token_type": "bearer", "username": username}
 
@@ -59,7 +59,7 @@ def _recipient(session: Session, user: CandidateUser) -> str | None:
 
 @router.post("/password-reset/request")
 @limiter.limit("10/minute")
-async def candidate_reset_request(request: Request, username: str = Form(...)):
+def candidate_reset_request(request: Request, username: str = Form(...)):
     """Always answers ok (no account enumeration)."""
     from .auth import _create_email_token, _invalidate_email_tokens, _send_email_or_dev
 
@@ -78,7 +78,7 @@ async def candidate_reset_request(request: Request, username: str = Form(...)):
 
 @router.post("/password-reset/confirm")
 @limiter.limit("10/minute")
-async def candidate_reset_confirm(request: Request, username: str = Form(...), token: str = Form(...), new_password: str = Form(...)):
+def candidate_reset_confirm(request: Request, username: str = Form(...), token: str = Form(...), new_password: str = Form(...)):
     from .auth import _hash_token
 
     if len(new_password) < 8:
@@ -108,7 +108,7 @@ async def candidate_reset_confirm(request: Request, username: str = Form(...), t
 
 @router.post("/change-password")
 @limiter.limit("10/minute")
-async def candidate_change_password(request: Request, current_password: str = Form(...), new_password: str = Form(...)):
+def candidate_change_password(request: Request, current_password: str = Form(...), new_password: str = Form(...)):
     from fastapi.security.utils import get_authorization_scheme_param
     from ..auth import decode_token_payload
 
