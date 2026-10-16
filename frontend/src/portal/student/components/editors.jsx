@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button, Chip, Field, Input, Modal, Select, Textarea, useToast } from '../../../ui/index.jsx'
 import { useApi } from '../../../ui/useApi.js'
+import { CollegePicker } from '../../../ui/CollegePicker.jsx'
 import { BRANCHES } from '../../../branding/branches.js'
 import { useStudent } from '../StudentShell.jsx'
 
@@ -64,7 +65,7 @@ export function IdentityModal({ open, onClose, profile, groups = ['identity', 'c
       grad_year: profile.grad_year || '', current_year: profile.current_year || '', cgpa: profile.cgpa ?? '', bio: profile.bio || '',
       headline: profile.headline || '', location_text: profile.location_text || '', contact_email: profile.contact_email || '',
       contact_phone: profile.contact_phone || '', date_of_birth: profile.date_of_birth || '', linkedin_url: profile.linkedin_url || '',
-      github_url: profile.github_url || '', portfolio_url: profile.portfolio_url || '',
+      github_url: profile.github_url || '', portfolio_url: profile.portfolio_url || '', college_meta: profile.college_meta || null,
     })
   }, [open, profile])
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }))
@@ -90,6 +91,7 @@ export function IdentityModal({ open, onClose, profile, groups = ['identity', 'c
       if (k === 'cgpa') v = v === '' ? null : Number(v)
       if (v !== null && v !== undefined) patch[k] = typeof v === 'string' ? v.trim() : v
     })
+    if (groups.includes('identity')) patch.college_meta = f.college_meta?.id ? f.college_meta : {}
     try { await save(patch); onClose() } catch { /* toast shown */ }
   }
   return (
@@ -102,7 +104,10 @@ export function IdentityModal({ open, onClose, profile, groups = ['identity', 'c
             <Select value={f.branch || ''} onChange={set('branch')} placeholder="Select branch" options={BRANCHES.map((b) => ({ value: b.id, label: b.long }))} />
           </Field>
           <Field label="Degree" hint="e.g. B.E. in Mechanical Engineering"><Input value={f.degree || ''} onChange={set('degree')} maxLength={100} /></Field>
-          <Field label="College / University"><Input value={f.college || ''} onChange={set('college')} maxLength={120} /></Field>
+          <Field label="College / University" hint="Pick from the list, or use exactly what you typed">
+            <CollegePicker value={f.college || ''} collegeId={f.college_meta?.id} collegeDomain={f.college_meta?.domain} maxLength={120}
+              onChange={(name, meta) => setF((x) => ({ ...x, college: name, college_meta: meta }))} />
+          </Field>
           <Field label="Graduation year" error={err.grad_year}><Input type="number" value={f.grad_year} onChange={set('grad_year')} /></Field>
           <Field label="Current year"><Select value={f.current_year || ''} onChange={set('current_year')} placeholder="Select" options={['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduated']} /></Field>
           <Field label="CGPA (out of 10)" error={err.cgpa}><Input type="number" step="0.01" value={f.cgpa} onChange={set('cgpa')} /></Field>
@@ -157,6 +162,8 @@ export function ListEditorModal({ open, onClose, title, items = [], fields, onSa
               {fields.map((f) => (
                 <Field key={f.key} label={f.label + (f.required ? ' *' : '')} className={f.type === 'textarea' ? 'span-2' : undefined}>
                   {f.type === 'textarea' ? <Textarea value={r[f.key] || ''} onChange={(e) => upd(i, f.key, e.target.value)} maxLength={1000} placeholder={f.placeholder} />
+                    : f.type === 'college' ? <CollegePicker value={r[f.key] || ''} collegeId={r[`${f.key}_id`]} collegeDomain={r[`${f.key}_domain`]} maxLength={140} placeholder={f.placeholder}
+                      onChange={(name, meta) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, [f.key]: name, [`${f.key}_id`]: meta?.id || undefined, [`${f.key}_domain`]: meta?.domain || undefined } : x)))} />
                     : f.type === 'select' ? <Select value={r[f.key] || ''} onChange={(e) => upd(i, f.key, e.target.value)} options={f.options} placeholder="Select" />
                       : <Input value={r[f.key] || ''} onChange={(e) => upd(i, f.key, e.target.value)} maxLength={140} placeholder={f.placeholder} />}
                 </Field>
@@ -202,7 +209,7 @@ export function ChipsModal({ open, onClose, title, values = [], suggestions = []
 
 export const EDUCATION_FIELDS = [
   { key: 'level', label: 'Level', type: 'select', options: [{ value: 'degree', label: 'Bachelor’s degree' }, { value: 'pg', label: 'Postgraduate' }, { value: 'diploma', label: 'Diploma' }, { value: 'pu', label: 'Class 12 / PU' }, { value: 'school', label: 'Class 10' }], required: true },
-  { key: 'institution', label: 'Institution', required: true },
+  { key: 'institution', label: 'Institution', type: 'college', required: true, placeholder: 'College or school name' },
   { key: 'field_of_study', label: 'Field of study' },
   { key: 'grade', label: 'Grade / CGPA' },
   { key: 'start_year', label: 'Start year' },

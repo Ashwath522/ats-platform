@@ -552,3 +552,29 @@ def recruiter_message(
         + _button("View my applications", link),
     )
     return subject, text, html
+
+
+# --------------------------------------------------------------------------- company follow (directory)
+def company_follow_new_roles(candidate_name: Optional[str], company_name: str, titles, slug: str) -> Email:
+    """A company the student follows posted new role(s). Sent at most once per company per day."""
+    titles = [str(t) for t in (titles or []) if t][:10]
+    link = app_url(f"/candidate/companies/{quote(slug)}")
+    count = len(titles)
+    subject = f"New role{'s' if count != 1 else ''} at {company_name}" + (f": {titles[0]}" if count == 1 else f" ({count})")
+    lines = "\n".join(f"- {t}" for t in titles)
+    text = (
+        f"{_greeting(candidate_name)}\n\n{company_name}, a company you follow on {BRAND}, has new opening{'s' if count != 1 else ''}:\n"
+        f"{lines}\n\nSee all open roles: {link}\n\n"
+        f"You get at most one email per company per day. Turn these off in Settings -> Notifications or unfollow the company.\n\n- The {BRAND} team"
+    )
+    items = "".join(f"<li style=\"margin:0 0 6px;\">{_e(t)}</li>" for t in titles)
+    html = _layout(
+        f"New role{'s' if count != 1 else ''} at {company_name}",
+        f"{company_name} posted {count} new role{'s' if count != 1 else ''}",
+        _p(_e(_greeting(candidate_name)))
+        + _p(f"<strong>{_e(company_name)}</strong>, a company you follow, has new opening{'s' if count != 1 else ''}:")
+        + f'<ul style="margin:0 0 14px;padding-left:20px;font-size:15px;color:{TEXT};">{items}</ul>'
+        + _button("View open roles", link)
+        + _p(f'<span style="color:{MUTED};font-size:13px;">At most one email per company per day. Manage this in Settings &rarr; Notifications or unfollow the company.</span>'),
+    )
+    return subject, text, html

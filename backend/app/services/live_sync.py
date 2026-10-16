@@ -510,8 +510,15 @@ async def ingest_jobs(client: httpx.AsyncClient, provider, result: FetchResult) 
         nonlocal added, updated, expired
         with Session(engine) as s:
             rows = {e.external_id: e for e in s.exec(select(ExternalJob).where(ExternalJob.source == name, ExternalJob.external_id.in_(list(items)))).all()} if items else {}
-            a, u, x = _write_jobs(s, provider, items, rows, dropped, failed, new_rejected, now)
+            fresh: list = []
+            a, u, x = _write_jobs(s, provider, items, rows, dropped, failed, new_rejected, now, new_rows=fresh)
+            from types import SimpleNamespace as _NS
+            fresh = [_NS(source=r.source, company_slug=r.company_slug, company_name=r.company_name, title=r.title,
+                         status=r.status) for r in fresh]
             s.commit()
+        if fresh:   # followers of these companies get the bell item + (at most daily) email
+            from .company_directory import notify_new_external_jobs
+            notify_new_external_jobs(fresh)
         added += a
         updated += u
         expired += x
@@ -555,7 +562,7 @@ async def ingest_jobs(client: httpx.AsyncClient, provider, result: FetchResult) 
 
 
 def _write_jobs(s: Session, provider, items: Dict[str, "RawJob"], rows: Dict[str, ExternalJob], dropped: Dict[str, str],
-                failed: set, new_rejected: Dict[str, str], now) -> tuple:
+                failed: set, new_rejected: Dict[str, str], now, new_rows: Optional[list] = None) -> tuple:
     """Insert/update/expire ExternalJob rows for `items`. Returns (added, updated, expired)."""
     name = provider.name
     added = updated = expired = 0
@@ -613,6 +620,8 @@ def _write_jobs(s: Session, provider, items: Dict[str, "RawJob"], rows: Dict[str
             s.flush()
             active_by_key[key] = row
             added += 1
+            if new_rows is not None:
+                new_rows.append(row)
             continue
         changed = _apply_raw(row, raw, branch, skills, apply_url, posting_url)
         row.last_seen_at = row.last_checked_at = now

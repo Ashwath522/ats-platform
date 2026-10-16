@@ -19,6 +19,8 @@ const StudentProfile = lazy(() => import('./portal/student/Profile.jsx'))
 const ResumeSkills = lazy(() => import('./portal/student/ResumeSkills.jsx'))
 const StudentProjects = lazy(() => import('./portal/student/Projects.jsx'))
 const Opportunities = lazy(() => import('./portal/student/Opportunities.jsx'))
+const StudentCompanies = lazy(() => import('./portal/student/Companies.jsx'))
+const CompanyPortfolio = lazy(() => import('./portal/student/CompanyPortfolio.jsx'))
 const StudentApplications = lazy(() => import('./portal/student/Applications.jsx'))
 const AIInterviewPrep = lazy(() => import('./portal/student/AIInterviewPrep.jsx'))
 const Resources = lazy(() => import('./portal/student/Resources.jsx'))
@@ -89,6 +91,8 @@ export default function App() {
               <Route path="resume-skills" element={<ResumeSkills />} />
               <Route path="projects" element={<StudentProjects />} />
               <Route path="opportunities" element={<Opportunities />} />
+              <Route path="companies" element={<StudentCompanies />} />
+              <Route path="companies/:slug" element={<CompanyPortfolio />} />
               <Route path="applications" element={<StudentApplications />} />
               <Route path="ai-interview" element={<AIInterviewPrep />} />
               <Route path="resources" element={<Resources />} />

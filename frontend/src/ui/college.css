@@ -1,0 +1,38 @@
+/* College picker + logo (see CollegePicker.jsx). */
+.cl-college-logo { position: relative; border-radius: 8px; background: #fff; }
+.cl-college-logo img { position: absolute; inset: 12%; width: 76%; height: 76%; object-fit: contain; }
+.cl-college-mono { line-height: 1; letter-spacing: -0.03em; white-space: nowrap; }
+
+.cl-college-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; vertical-align: middle; }
+.cl-college-name .cl-college-logo { border-radius: 6px; }
+.cl-college-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.cl-college-picker { position: relative; width: 100%; min-width: 0; }
+.cl-college-input { position: relative; }
+.cl-college-input > svg, .cl-college-input > .cl-college-logo { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.cl-college-input > svg { left: 12px; color: var(--cl-faint); }
+.cl-college-input > .cl-input { padding-left: 42px; }
+
+.cl-college-list {
+  position: absolute; z-index: 70; top: calc(100% + 4px); left: 0; right: 0;
+  margin: 0; padding: 6px; list-style: none; background: #fff;
+  border: 1px solid var(--cl-line); border-radius: 12px; box-shadow: var(--cl-shadow-lg);
+  max-height: min(360px, 60vh); overflow-y: auto; overscroll-behavior: contain;
+}
+.cl-college-list[hidden] { display: none; }
+.cl-college-opt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; min-height: 48px; border-radius: 9px; cursor: pointer; }
+.cl-college-opt.active { background: var(--cl-blue-50); }
+.cl-college-opt-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.cl-college-opt-body strong { font-size: 13.5px; font-weight: 600; color: var(--cl-ink); line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cl-college-picker .cl-college-opt-body small { font-size: 12px; color: var(--cl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl-college-opt.free { border-top: 1px solid var(--cl-line-2); margin-top: 2px; border-radius: 0 0 9px 9px; }
+.cl-college-opt.free:first-child { border-top: 0; margin-top: 0; border-radius: 9px; }
+.cl-college-free-ico { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--cl-blue-50); color: var(--cl-blue); }
+.cl-college-note { padding: 10px; font-size: 13px; color: var(--cl-muted); }
+
+/* "logo + college | years" line used in profile headers */
+.cl-college-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; min-width: 0; }
+.cl-college-line .cl-college-name-text { white-space: normal; }
+.cl-college-extra::before { content: '|'; margin: 0 10px; color: var(--cl-faint); }
+.cl-college-line > .cl-college-extra:first-child::before { content: none; margin: 0; }

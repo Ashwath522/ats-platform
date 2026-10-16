@@ -22,6 +22,7 @@ export const STUDENT_ROUTES = {
   '/candidate/resume-skills': { chunk: () => import('./student/ResumeSkills.jsx'), data: ['/api/student/resume/insights'] },
   '/candidate/projects': { chunk: () => import('./student/Projects.jsx'), data: ['/api/student/projects'] },
   '/candidate/opportunities': { chunk: () => import('./student/Opportunities.jsx'), data: ['/api/student/opportunities?sort=relevance&page=1&page_size=10'] },
+  '/candidate/companies': { chunk: () => import('./student/Companies.jsx'), data: ['/api/student/company-directory?page=1&page_size=24'] },
   '/candidate/applications': { chunk: () => import('./student/Applications.jsx'), data: ['/api/student/applications/overview'] },
   '/candidate/ai-interview': { chunk: () => import('./student/AIInterviewPrep.jsx'), data: ['/api/interview/practice/history?limit=200', '/api/student/companies'] },
   '/candidate/resources': { chunk: () => import('./student/Resources.jsx'), data: [] },

@@ -18,7 +18,7 @@ from sqlmodel import Session
 
 from ..auth import _principal, decode_token_payload
 from ..db import (
-    Application, ContentFlag, DecisionAuditLog, Job, Offer, RecruiterRequest,
+    Application, CompanyFollow, ContentFlag, DecisionAuditLog, Job, Offer, RecruiterRequest,
     ScheduledInterview, User, engine, utc_now,
 )
 
@@ -88,10 +88,17 @@ def candidate_feed(s: Session, cid: int) -> List[dict]:
               where=[ScheduledInterview.candidate_id == cid, ScheduledInterview.status == "scheduled",
                      ScheduledInterview.starts_at > now],
               order=ScheduledInterview.starts_at, limit=10),
+        # followed companies (same round trip) -> "New role at <company>" items below
+        _part("follow", CompanyFollow.created_at, CompanyFollow.company_slug, source=CompanyFollow,
+              where=[CompanyFollow.candidate_id == cid], order=CompanyFollow.created_at.desc(), limit=100),
     ]
     items = []
+    follows = []
     for kind, at, a, b, c in s.execute(union_all(*parts)).all():
         at = _as_dt(at)
+        if kind == "follow":
+            follows.append((a, at))
+            continue
         if kind == "ev":
             link = "/candidate/applications" + (f"?interview={c}" if a == "interview_scheduled" and c else "")
             items.append({"title": f"{_EVENT_TEXT.get(a, 'Update')}{f' — {b}' if b else ''}", "at": _iso(at), "link": link, "kind": a})
@@ -101,6 +108,14 @@ def candidate_feed(s: Session, cid: int) -> List[dict]:
             starts = _as_dt(b)
             items.append({"title": f"{a} on {_ist_label(starts)}" if starts else str(a), "at": _iso(at),
                           "starts_at": _iso(starts), "link": "/candidate/applications", "kind": "interview"})
+    # New roles at companies the student follows (derived from jobs created after the follow)
+    try:
+        if follows:
+            from ..services.company_directory import follow_feed
+            items.extend(follow_feed(s, cid, follows=follows))
+    except Exception:  # pragma: no cover - never break the bell
+        import logging
+        logging.getLogger("ats-platform").exception("[NOTIFY] follow feed failed")
     return items
 
 

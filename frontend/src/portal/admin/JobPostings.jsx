@@ -4,6 +4,7 @@ import { Briefcase, CircleCheck, CirclePause, CircleX, Flag, FileText, Eye, Lock
 import {
   Alert, Badge, Button, Card, DataTable, EmptyState, Field, LogoTile, Menu, Modal, PageHeader, Pagination, Select, Skeleton, StatusPill, fmtDate, statusLabel, useToast,
 } from '../../ui/index.jsx'
+import { DemoBadge } from '../shared/companies.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { BRANCHES } from '../../branding/branches.js'
 import { ConfirmModal, FilterSelect, KV, MiniStat, NoteModal, fmtNum, qs } from './components/adminKit.jsx'
@@ -67,7 +68,7 @@ export default function AdminJobPostings() {
     { key: 'title', header: 'Job', render: (j) => (
       <span className="cl-row" style={{ gap: 10, minWidth: 0 }}>
         <LogoTile name={j.company} size={34} />
-        <Cell2 main={<>{j.title}{j.flagged && <Badge tone="red" className="adm-flagtag"><Flag size={11} /> Flagged</Badge>}</>} sub={j.company} />
+        <Cell2 main={<>{j.title}{j.flagged && <Badge tone="red" className="adm-flagtag"><Flag size={11} /> Flagged</Badge>}{j.is_demo && <> <DemoBadge compact /></>}</>} sub={j.company} />
       </span>
     ) },
     { key: 'branch', header: 'Branch', render: (j) => j.branch_label || <span className="cl-faint">Any</span> },

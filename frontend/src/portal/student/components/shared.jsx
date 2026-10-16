@@ -5,8 +5,9 @@ import {
   Bookmark, MapPin, ArrowRight, Check, Cog, Building2, Zap, Cpu, FlaskConical, Plane, Car, Layers, Briefcase,
   CheckCircle2, AlertCircle, ExternalLink, Clock,
 } from 'lucide-react'
-import { Alert, Badge, Button, LogoTile, Modal, Skeleton, Progress, StatusPill, useToast, fmtDate } from '../../../ui/index.jsx'
+import { Alert, Badge, Button, Modal, Skeleton, Progress, StatusPill, useToast, fmtDate } from '../../../ui/index.jsx'
 import { useApi } from '../../../ui/useApi.js'
+import { CompanyLogo, DemoBadge } from '../../shared/companies.jsx'
 import { branchThumb, getBranch } from '../../../branding/branches.js'
 import { ExternalJobModal, isExternalKey } from './liveJobs.jsx'
 import './student.css'
@@ -84,10 +85,11 @@ export function JobMediaCard({ job, index = 0, saved, onToggleSave, onOpen }) {
       <div className="cl-media">
         <img src={branchThumb(job.branch || 'mechanical', index)} alt="" loading="lazy" />
         <BookmarkButton on={saved} onClick={onToggleSave} className="cl-media-act" />
-        <div className="st-media-logo"><LogoTile name={job.company} src={job.company_logo} size={26} wide /></div>
+        <div className="st-media-logo"><CompanyLogo name={job.company} domain={job.company_domain} src={job.company_logo} size={26} wide={!job.company_domain} /></div>
       </div>
       <div className="cl-media-body">
         <h4 className="cl-ellipsis">{job.title}</h4>
+        {job.company_demo && <DemoBadge compact />}
         <div className="cl-meta"><span><MapPin size={14} />{job.location || 'Location not specified'}</span></div>
         <JobTags job={{ ...job, skills: [] }} max={3} />
       </div>
@@ -146,9 +148,12 @@ function InternalJobDetailsModal({ jobId, onClose, saved, onToggleSave, onApplie
       {job && (
         <div className="cl-col" style={{ gap: 14 }}>
           <div className="cl-row" style={{ alignItems: 'flex-start' }}>
-            <LogoTile name={job.company} src={job.company_logo} size={52} />
+            <CompanyLogo name={job.company} domain={job.company_domain} src={job.company_logo} size={52} />
             <div className="cl-grow">
-              <div style={{ fontWeight: 700, color: 'var(--cl-ink)', fontSize: 16 }}>{job.company}</div>
+              <div className="cl-row cl-wrap" style={{ fontWeight: 700, color: 'var(--cl-ink)', fontSize: 16, gap: 8 }}>
+                {job.company_slug ? <Link to={`/candidate/companies/${job.company_slug}`} style={{ color: 'inherit' }}>{job.company}</Link> : job.company}
+                {job.company_demo && <DemoBadge />}
+              </div>
               <div className="cl-meta" style={{ marginTop: 4 }}>
                 <span><MapPin size={14} />{job.location || '—'}</span>
                 {salary && <span>{salary}</span>}

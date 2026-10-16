@@ -382,7 +382,9 @@ def external_card(e: ExternalJob, *, pskills: List[str], pbranch: Optional[str],
     raw = (0.7 * overlap + 0.3 * same) if skills else (0.2 + 0.6 * same)
     posted = e.posted_at or e.first_seen_at
     label = PROVIDERS[e.source].source_label(e.company_name) if e.source in PROVIDERS else e.source
+    from ..services.company_directory import card_meta, slug_for_external
     return {
+        **card_meta(slug_for_external(e)),
         "id": f"ext-{e.id}", "external": True, "external_job_id": e.id, "title": e.title, "company": e.company_name,
         "company_logo": None, "location": e.location_text or "", "branch": e.branch, "branch_label": BRANCH_LABELS.get(e.branch or "", ""),
         "job_type": e.job_type, "remote_type": e.remote_type, "experience_level": e.experience_level,

@@ -14,6 +14,7 @@ import {
   IdentityModal, ListEditorModal, ChipsModal, useProfileSave, openAuthedFile, EDUCATION_FIELDS, EXPERIENCE_FIELDS, ACHIEVEMENT_FIELDS,
 } from './components/editors.jsx'
 import { CertificationsList, useCertModal } from './components/certs.jsx'
+import { CollegeLogo, CollegeName } from '../../ui/CollegePicker.jsx'
 import './components/student.css'
 
 const TABS = [
@@ -86,6 +87,7 @@ export default function Profile() {
   const primaryEdu = edu.find((e) => e.level === 'degree') || edu[0]
   const degree = profile.degree || (primaryEdu ? `${LEVEL_LABEL[primaryEdu.level] || ''} ${primaryEdu.field_of_study || ''}`.trim() : `B.E. in ${branch.long}`)
   const college = profile.college || primaryEdu?.institution
+  const collegeMeta = profile.college ? profile.college_meta : (primaryEdu?.institution_id ? { id: primaryEdu.institution_id, domain: primaryEdu.institution_domain } : null)
   const projList = projects.data?.projects || []
 
   const about = (
@@ -99,7 +101,9 @@ export default function Profile() {
         <div className="cl-col" style={{ gap: 14 }}>
           {(edu.length ? edu : [{ institution: college, field_of_study: degree }]).slice(0, tab === 'education' ? 20 : 2).map((e, i) => (
             <div key={i} className="cl-row" style={{ alignItems: 'flex-start' }}>
-              <span className="cl-ico"><BadgeCheck size={18} /></span>
+              {e.institution && !['pu', 'school'].includes(e.level)
+                ? <CollegeLogo name={e.institution} id={e.institution_id || (e.institution === profile.college ? profile.college_meta?.id : undefined)} domain={e.institution_domain || (e.institution === profile.college ? profile.college_meta?.domain : undefined)} size={36} />
+                : <span className="cl-ico"><BadgeCheck size={18} /></span>}
               <div style={{ fontSize: 14 }}>
                 <strong style={{ color: 'var(--cl-ink)', fontWeight: 600 }}>{e.field_of_study ? `${LEVEL_LABEL[e.level] ? LEVEL_LABEL[e.level] + ' – ' : ''}${e.field_of_study}` : LEVEL_LABEL[e.level] || degree}</strong>
                 <div className="cl-muted">{e.institution}</div>
@@ -187,7 +191,9 @@ export default function Profile() {
               <div style={{ paddingTop: 16, minWidth: 0 }}>
                 <div className="cl-row cl-wrap"><h2>{displayName || 'Your name'}</h2><EditBtn onClick={() => setModal('identity')} label="Edit profile" /></div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--cl-ink)', marginTop: 6 }}>{degree}</div>
-                <div className="cl-muted" style={{ marginTop: 2 }}>{[college, years(profile)].filter(Boolean).join('  |  ') || <button className="cl-link" onClick={() => setModal('identity')}>Add your college</button>}</div>
+                <div className="cl-muted cl-college-line" style={{ marginTop: 4 }}>{college
+                  ? <><CollegeName name={college} id={collegeMeta?.id} domain={collegeMeta?.domain} size={24} />{years(profile) && <span className="cl-college-extra">{years(profile)}</span>}</>
+                  : years(profile) || <button className="cl-link" onClick={() => setModal('identity')}>Add your college</button>}</div>
                 {profile.headline && <div style={{ marginTop: 10, fontSize: 14 }}>{profile.headline}</div>}
                 {!profile.headline && profile.bio && <p className="cl-muted" style={{ marginTop: 10, fontSize: 13.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{profile.bio}</p>}
               </div>
@@ -278,13 +284,13 @@ export default function Profile() {
       <ChipsModal open={modal === 'interests'} onClose={() => setModal(null)} title="Areas of interest" values={profile.interests || []} suggestions={branch.domains} max={10} onSave={(list) => save({ interests: list }, 'Interests saved')} placeholder="Add a domain" />
       <ChipsModal open={modal === 'skills'} onClose={() => setModal(null)} title="Technical skills" values={profile.skills || []} suggestions={branch.skills} onSave={(list) => save({ skills: list }, 'Skills saved')} placeholder="Add a skill (e.g. SolidWorks)" />
       {cert.modal}
-      <PreviewModal open={modal === 'preview'} onClose={() => setModal(null)} profile={profile} name={displayName} degree={degree} college={college} projects={projList} branch={branch} />
+      <PreviewModal open={modal === 'preview'} onClose={() => setModal(null)} profile={profile} name={displayName} degree={degree} college={college} collegeMeta={collegeMeta} projects={projList} branch={branch} />
     </div>
   )
 }
 
 /** The profile as a recruiter sees it (respects the student's privacy settings). */
-function PreviewModal({ open, onClose, profile, name, degree, college, projects, branch }) {
+function PreviewModal({ open, onClose, profile, name, degree, college, collegeMeta, projects, branch }) {
   const privacy = profile.privacy || {}
   const showContact = (privacy.show_contact || 'shortlisted') === 'all'
   return (
@@ -296,7 +302,7 @@ function PreviewModal({ open, onClose, profile, name, degree, college, projects,
           <div className="cl-grow">
             <h3 style={{ fontSize: 20 }}>{name}</h3>
             <div style={{ fontWeight: 600 }}>{degree}</div>
-            <div className="cl-muted">{[college, years(profile), profile.location_text].filter(Boolean).join(' · ')}</div>
+            <div className="cl-muted cl-college-line">{college && <CollegeName name={college} id={collegeMeta?.id} domain={collegeMeta?.domain} size={20} />}{[years(profile), profile.location_text].filter(Boolean).map((x) => <span key={x} className="cl-college-extra">{x}</span>)}</div>
             <div className="cl-row cl-wrap" style={{ marginTop: 8 }}>
               <Badge tone="blue">{branch.label}</Badge>
               {profile.cgpa ? <Badge>CGPA {profile.cgpa}</Badge> : null}

@@ -5,6 +5,7 @@ import {
 } from '../../ui/index.jsx'
 import { useApi, useQuery } from '../../ui/useApi.js'
 import CandidateDetailPanel from './components/CandidateDetailPanel.jsx'
+import { CollegeName } from '../../ui/CollegePicker.jsx'
 import CandidateCompareModal from './components/CandidateCompareModal.jsx'
 import CandidateInviteModal from './components/CandidateInviteModal.jsx'
 import ScheduleInterviewModal from './components/ScheduleInterviewModal.jsx'
@@ -175,7 +176,7 @@ export default function Candidates() {
                       <Avatar name={c.name} src={c.avatar_path} size={44} />
                       <span style={{ minWidth: 0 }}>
                         <strong>{c.name}<VerifiedTick show={c.verified} size={14} /></strong>
-                        <small>{[c.college, b.id ? b.label : null].filter(Boolean).join(' | ') || 'Profile incomplete'}</small>
+                        <small className="cl-college-line">{c.college && <CollegeName name={c.college} size={16} />}{b.id && <span className="cl-college-extra">{b.label}</span>}{!c.college && !b.id && 'Profile incomplete'}</small>
                       </span>
                       <span title={c.match_source === 'skills' ? 'Skill overlap with your open jobs' : 'Best application match score'}><MatchPill value={c.match} /></span>
                       <ChevronRight size={18} />

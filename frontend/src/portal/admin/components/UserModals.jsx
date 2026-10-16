@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Copy, GraduationCap, Building2, ShieldCheck } from 'lucide-react'
 import { Alert, Avatar, Button, Chip, Field, Input, Modal, Select, Skeleton, Textarea, useToast } from '../../../ui/index.jsx'
 import VerificationReport from '../../../components/VerificationReport.jsx'
+import { CollegeName, CollegePicker } from '../../../ui/CollegePicker.jsx'
 import { AccountPill, KV, Timeline, UserTypeBadge, VerificationPill, fmtDateTime } from './adminKit.jsx'
 
 export const BRANCH_OPTIONS = [
@@ -96,7 +97,7 @@ export function AddUserModal({ open, type, api, onClose, onCreated }) {
           <Field label="Full name *" error={errors.name}><Input value={form.name || ''} onChange={set('name')} autoFocus maxLength={120} autoComplete="off" /></Field>
           <Field label="Email *" error={errors.email}><Input type="email" value={form.email || ''} onChange={set('email')} maxLength={254} autoComplete="off" /></Field>
           <Field label="Phone" error={errors.phone}><Input type="tel" value={form.phone || ''} onChange={set('phone')} maxLength={30} placeholder="+91 98765 43210" /></Field>
-          {type === 'candidate' && <Field label="College"><Input value={form.college || ''} onChange={set('college')} maxLength={200} /></Field>}
+          {type === 'candidate' && <Field label="College"><CollegePicker value={form.college || ''} onChange={(name) => set('college')({ target: { value: name } })} maxLength={200} /></Field>}
           {type === 'candidate' && <Field label="Branch"><Select value={form.branch || ''} onChange={set('branch')} options={BRANCH_OPTIONS} placeholder="Select branch" /></Field>}
           {type === 'recruiter' && <Field label="Company *" error={errors.company}><Input value={form.company || ''} onChange={set('company')} maxLength={200} /></Field>}
           {type === 'recruiter' && <Field label="Designation"><Input value={form.designation || ''} onChange={set('designation')} maxLength={120} placeholder="Campus Hiring Lead" /></Field>}
@@ -198,7 +199,7 @@ export function FullProfileModal({ open, detail, onClose }) {
         {isCand ? (
           <>
             <KV wide rows={[
-              ['College', detail.college], ['Branch', detail.dept], ['Degree', p.degree], ['Graduation year', p.grad_year], ['Current year', p.current_year],
+              ['College', detail.college && <CollegeName name={detail.college} size={18} />], ['Branch', detail.dept], ['Degree', p.degree], ['Graduation year', p.grad_year], ['Current year', p.current_year],
               ['CGPA', detail.cgpa], ['Location', detail.location], ['Resume', p.resume ? 'Uploaded' : 'Not uploaded'],
               ['LinkedIn', p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noreferrer">{p.linkedin_url}</a>],
               ['GitHub', p.github_url && <a href={p.github_url} target="_blank" rel="noreferrer">{p.github_url}</a>],

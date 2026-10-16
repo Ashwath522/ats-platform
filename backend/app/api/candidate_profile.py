@@ -1,5 +1,6 @@
 """Candidate profile CRUD + resume upload linked to profile."""
 import json
+import re
 import logging
 from datetime import datetime
 
@@ -55,6 +56,8 @@ class ProfileUpdate(BaseModel):
     preferences: Optional[dict] = None
     privacy: Optional[dict] = None
     notifications: Optional[dict] = None
+    # {id, domain} of a college picked from the frontend college list; {} clears it.
+    college_meta: Optional[dict] = None
 
 
 def _get_candidate_user(session: Session, username: str) -> CandidateUser:
@@ -90,6 +93,36 @@ _V2_JSON = {"interests": ("interests_json", []), "achievements": ("achievements_
             "privacy": ("privacy_json", {}), "notifications": ("notifications_json", {})}
 
 
+# College metadata (dataset id + official domain for the logo) is kept inside
+# preferences_json under this key, so no new column is needed. It is exposed as
+# a top-level `college_meta` and hidden from `preferences`.
+_COLLEGE_META_KEY = "college_meta"
+_HOST_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})*\.[a-z]{2,24}$")
+_COLLEGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+
+
+def _clean_college_meta(raw: Optional[dict], college: Optional[str]) -> Optional[dict]:
+    if not isinstance(raw, dict) or not raw:
+        return None
+    cid = str(raw.get("id") or "").strip().lower()
+    domain = str(raw.get("domain") or "").strip().lower()
+    if not _COLLEGE_ID_RE.match(cid):
+        raise HTTPException(status_code=422, detail="Invalid college id")
+    if domain and (len(domain) > 120 or not _HOST_RE.match(domain)):
+        raise HTTPException(status_code=422, detail="Invalid college domain")
+    return {"id": cid, "domain": domain, "name": (college or "").strip()[:200]}
+
+
+def _college_meta(profile: CandidateProfile) -> Optional[dict]:
+    meta = _j(profile.preferences_json, {}).get(_COLLEGE_META_KEY) if profile.preferences_json else None
+    if not isinstance(meta, dict) or not meta.get("id"):
+        return None
+    # Stale if the college text was changed elsewhere (e.g. by an admin) without new metadata.
+    if (meta.get("name") or "").strip().lower() != (profile.college or "").strip().lower():
+        return None
+    return {"id": meta["id"], "domain": meta.get("domain") or ""}
+
+
 def profile_completion(profile: CandidateProfile, has_resume: bool, project_count: int = 0) -> dict:
     """Checklist shown on dashboard / profile / settings (same rules everywhere)."""
     items = [
@@ -111,6 +144,9 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
             project_count = _project_count(_s, profile.candidate_id)
     v2 = {k: getattr(profile, k, None) for k in _V2_SCALARS}
     v2.update({k: _j(getattr(profile, col, None), d) for k, (col, d) in _V2_JSON.items()})
+    if isinstance(v2.get("preferences"), dict):
+        v2["preferences"].pop(_COLLEGE_META_KEY, None)
+    v2["college_meta"] = _college_meta(profile)
     return {
         **v2,
         "completion": profile_completion(profile, bool(resume), project_count),
@@ -254,10 +290,27 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
             v = getattr(update, k)
             if v is not None:
                 setattr(profile, k, v.strip() if isinstance(v, str) else v)
+        prev_meta = _j(profile.preferences_json, {}).get(_COLLEGE_META_KEY)
         for k, (col, _d) in _V2_JSON.items():
             v = getattr(update, k)
             if v is not None:
                 setattr(profile, col, json.dumps(v))
+        # Keep college metadata across preference rewrites; replace/clear it when asked.
+        prefs = _j(profile.preferences_json, {})
+        if not isinstance(prefs, dict):
+            prefs = {}
+        prefs.pop(_COLLEGE_META_KEY, None)
+        if update.college_meta is not None:
+            meta = _clean_college_meta(update.college_meta, profile.college)
+        elif update.college is not None and isinstance(prev_meta, dict) and \
+                (prev_meta.get("name") or "").strip().lower() != (profile.college or "").strip().lower():
+            meta = None  # college typed as free text → drop the old logo metadata
+        else:
+            meta = prev_meta if isinstance(prev_meta, dict) else None
+        if meta:
+            prefs[_COLLEGE_META_KEY] = meta
+        if prefs or profile.preferences_json:
+            profile.preferences_json = json.dumps(prefs)
 
         profile.updated_at = utc_now()
         session.add(profile)

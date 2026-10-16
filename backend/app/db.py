@@ -676,6 +676,43 @@ class SavedExternalJob(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+# ─── Company directory (real employers + clearly-labelled demo companies) ────
+
+class CompanyDirectory(SQLModel, table=True):
+    """A company students can browse and follow. Real entries hold neutral,
+    verifiable facts only (logos are never stored: the UI shows the site's own
+    favicon by ``domain``). ``is_demo`` rows are fictional test companies with a
+    recruiter account (``company_profile_id``) - always shown with a Demo tag."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    slug: str = Field(index=True, unique=True)
+    name: str
+    domain: Optional[str] = None
+    website: Optional[str] = None
+    careers_url: Optional[str] = None
+    industry: Optional[str] = Field(default=None, index=True)
+    branches_json: str = "[]"                 # subset of the 8 core branch ids
+    hq: Optional[str] = None
+    india_locations_json: str = "[]"
+    about: Optional[str] = None
+    employee_band: Optional[str] = None
+    founded: Optional[str] = None
+    smartrecruiters_id: Optional[str] = Field(default=None, index=True)
+    live_source_names_json: str = "[]"        # names used by live job sources, e.g. ["Bosch Group"]
+    is_demo: bool = Field(default=False, index=True)
+    company_profile_id: Optional[int] = Field(default=None, index=True)   # CompanyProfile of the recruiter account
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CompanyFollow(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("candidate_id", "company_slug", name="uq_companyfollow_cand_slug"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(index=True)     # CandidateUser.id
+    company_slug: str = Field(index=True)
+    notify_email: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utc_now, index=True)
+
+
 def init_db():
     SQLModel.metadata.create_all(engine)
     if engine.url.drivername.startswith("sqlite"):

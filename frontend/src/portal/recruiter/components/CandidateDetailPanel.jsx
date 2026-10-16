@@ -8,6 +8,7 @@ import {
   Alert, Avatar, Badge, Button, Card, EmptyState, Menu, Skeleton, StatusPill, Tabs, Textarea, fmtDate, fmtTime, timeAgo, useToast,
 } from '../../../ui/index.jsx'
 import { mediaUrl } from '../../../lib/api.js'
+import { CollegeLogo, CollegeName } from '../../../ui/CollegePicker.jsx'
 import { branchThumb } from '../../../branding/branches.js'
 import { API, AiResultBody, MatchPill, StagePill, VerifiedTick, branchMeta, yearLine } from './RecruiterPipelineKit.jsx'
 
@@ -38,7 +39,7 @@ function Education({ c }) {
   const rows = list.length ? list : [{ level: c.degree || 'Degree', institution: c.college, end_year: c.grad_year, grade: c.cgpa ? `CGPA: ${c.cgpa}/10` : '' }]
   return rows.map((e, i) => (
     <div className="rp-edu" key={i}>
-      <span className="cl-ico"><Building2 size={18} /></span>
+      {e.institution ? <CollegeLogo name={e.institution} id={e.institution_id} domain={e.institution_domain} size={36} /> : <span className="cl-ico"><Building2 size={18} /></span>}
       <div><strong>{e.level || e.degree || e.field_of_study || 'Education'}{e.field_of_study && e.level ? ` — ${e.field_of_study}` : ''}</strong><small>{e.institution || '—'}</small></div>
       <div className="r">{[e.start_year, e.end_year].filter(Boolean).join(' – ')}{e.grade ? <div>{String(e.grade).match(/^[\d.]+$/) ? `CGPA: ${e.grade}` : e.grade}</div> : null}</div>
     </div>
@@ -211,7 +212,7 @@ export default function CandidateDetailPanel({ api, c, loading, error, onShortli
               ]} />
             </div>
           </div>
-          <div className="sub">{yearLine(c) || 'Student'}<i>|</i>{c.college || 'College not added'}</div>
+          <div className="sub">{yearLine(c) || 'Student'}<i>|</i>{c.college ? <CollegeName name={c.college} size={18} /> : 'College not added'}</div>
           <div className="sub" style={{ marginTop: 2, color: 'var(--cl-text)' }}>{b.long}{c.degree ? ` · ${c.degree}` : ''}</div>
           <div className="rp-contact">
             {c.location && <span><MapPin size={15} />{c.location}</span>}
