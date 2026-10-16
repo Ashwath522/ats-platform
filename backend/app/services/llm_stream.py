@@ -99,6 +99,14 @@ def _groq_base(env) -> str:
     return raw
 
 
+_RESOLVED: Dict[str, Tuple[str, str]] = {}
+
+
+def _resolved(name: str, idx: int, default: str) -> str:
+    pair = _RESOLVED.get(name)
+    return pair[idx] if pair else default
+
+
 def configured_providers() -> List[Provider]:
     """Providers in preference order, only those that are configured."""
     env = os.environ
@@ -109,8 +117,8 @@ def configured_providers() -> List[Provider]:
             "groq",
             _groq_base(env),
             _first_key(env.get("GROQ_API_KEY")),
-            fast_model=env.get("INTERVIEW_GROQ_FAST_MODEL", "llama-3.1-8b-instant"),
-            smart_model=env.get("INTERVIEW_GROQ_SMART_MODEL", "llama-3.3-70b-versatile"),
+            fast_model=env.get("INTERVIEW_GROQ_FAST_MODEL") or _resolved("groq", 0, "llama-3.1-8b-instant"),
+            smart_model=env.get("INTERVIEW_GROQ_SMART_MODEL") or _resolved("groq", 1, "llama-3.3-70b-versatile"),
         )
     if _first_key(env.get("GEMINI_API_KEY")):
         effort = env.get("INTERVIEW_GEMINI_REASONING_EFFORT", "none").strip()
@@ -119,8 +127,8 @@ def configured_providers() -> List[Provider]:
             env.get("GEMINI_OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai").rstrip("/"),
             _first_key(env.get("GEMINI_API_KEY")),
             # gemini-2.0-flash was retired in 2026; 2.5 flash-lite is the fast free model.
-            fast_model=env.get("INTERVIEW_GEMINI_FAST_MODEL", "gemini-2.5-flash-lite"),
-            smart_model=env.get("INTERVIEW_GEMINI_SMART_MODEL", "gemini-2.5-flash"),
+            fast_model=env.get("INTERVIEW_GEMINI_FAST_MODEL") or _resolved("gemini", 0, "gemini-2.5-flash-lite"),
+            smart_model=env.get("INTERVIEW_GEMINI_SMART_MODEL") or _resolved("gemini", 1, "gemini-2.5-flash"),
             extra_body={"reasoning_effort": effort} if effort else {},
         )
     if _first_key(env.get("OPENROUTER_API_KEY")):
@@ -128,8 +136,8 @@ def configured_providers() -> List[Provider]:
             "openrouter",
             env.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
             _first_key(env.get("OPENROUTER_API_KEY")),
-            fast_model=env.get("INTERVIEW_OPENROUTER_FAST_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
-            smart_model=env.get("INTERVIEW_OPENROUTER_SMART_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
+            fast_model=env.get("INTERVIEW_OPENROUTER_FAST_MODEL") or _resolved("openrouter", 0, "meta-llama/llama-3.3-70b-instruct:free"),
+            smart_model=env.get("INTERVIEW_OPENROUTER_SMART_MODEL") or _resolved("openrouter", 1, "meta-llama/llama-3.3-70b-instruct:free"),
             extra_headers={"X-Title": "CoreLink AI Interview"},
         )
     if env.get("OLLAMA_BASE_URL") or env.get("INTERVIEW_USE_OLLAMA", "").lower() in {"1", "true", "yes"}:
@@ -170,6 +178,8 @@ def _cooldown_seconds(status: str, fails: int, retry_after: Optional[float]) -> 
 
 
 def mark_failure(name: str, status: str, retry_after: Optional[float] = None) -> None:
+    if status == "model_not_found":
+        _schedule_resolve()
     h = _HEALTH.setdefault(name, {"fails": 0, "cool_until": 0.0})
     if status != "hedge_lost":
         h["fails"] = h.get("fails", 0) + 1
@@ -672,6 +682,11 @@ async def probe_providers(chat: bool = False, timeout: float = 4.0) -> Dict[str,
     interviewer uses. ``chat=True`` also sends a 1-token completion to the fast
     model (proves the model name is valid). Never returns keys."""
     client = _get_client()
+    if os.environ.get("TESTING") != "1" and time.monotonic() - _resolve_state["last"] > 60:
+        try:
+            await resolve_models()   # report the models actually in use
+        except Exception:
+            pass
 
     async def one(p: Provider) -> Tuple[str, dict]:
         info: Dict[str, Any] = {"configured": True, "reachable": False, "base_url": p.base_url, "fast_model": p.fast_model, "smart_model": p.smart_model}
@@ -718,44 +733,114 @@ async def probe_providers(chat: bool = False, timeout: float = 4.0) -> Dict[str,
     return dict(pairs)
 
 
-# ── OpenRouter free-model auto-selection ──────────────────────────────────────
-# OpenRouter rotates its ":free" models. If the configured one disappears every
-# call fails with 404, so at startup we check the public model list and, when
-# the default is gone (and the owner hasn't pinned a model), switch to the best
-# free chat model still listed.
+# ── Automatic model selection ─────────────────────────────────────────────────
+# Free providers retire model names often (Groq, Gemini and OpenRouter all did in
+# 2026). Unless the owner pins a model with INTERVIEW_<PROVIDER>_{FAST,SMART}_MODEL,
+# we read each provider's live /models list at startup, every 6 hours, and right
+# after any "model not found" error, and pick the best listed fast/smart models.
+import re as _re
+
+_SKIP = _re.compile(r"whisper|tts|speech|audio|guard|embed|playai|orpheus|compound|vision-preview|image|live|realtime|moderation|rerank", _re.I)
+_GROQ_FAST = ("llama-3.1-8b-instant", "instant", "llama-4-scout", "gpt-oss-20b", "qwen3-32b", "gemma", "8b")
+_GROQ_SMART = ("llama-3.3-70b-versatile", "llama-3.3-70b", "llama-4-maverick", "gpt-oss-120b", "kimi-k2", "qwen3-32b", "70b", "llama-4-scout")
 _OR_PREFERENCE = ("llama-3.3-70b", "llama-4", "qwen-2.5-72b", "qwen3", "gemma-3-27b", "mistral-small", "deepseek-chat", "deepseek-v3", "gemma")
 
 
+def _first_match(ids: List[str], prefs) -> Optional[str]:
+    for pref in prefs:
+        for i in ids:
+            if pref in i.lower():
+                return i
+    return None
+
+
 def pick_free_model(models: List[dict], current: str) -> Optional[str]:
-    """Return a replacement free model id, or None if `current` is still listed."""
+    """OpenRouter: a replacement free model id, or None if `current` is still listed."""
     ids = [str(m.get("id", "")) for m in models if isinstance(m, dict)]
     if current in ids:
         return None
-    free = [i for i in ids if i.endswith(":free")]
-    for pref in _OR_PREFERENCE:
-        for i in free:
-            if pref in i.lower():
-                return i
-    return free[0] if free else None
+    free = [i for i in ids if i.endswith(":free") and not _SKIP.search(i)]
+    return _first_match(free, _OR_PREFERENCE) or (free[0] if free else None)
 
 
-async def auto_select_openrouter_models() -> Optional[str]:
-    env = os.environ
-    if not _first_key(env.get("OPENROUTER_API_KEY")):
+def _gemini_version(mid: str) -> Tuple[float, int]:
+    m = _re.match(r"gemini-(\d+(?:\.\d+)?)-", mid)
+    return (float(m.group(1)) if m else 0.0, 0 if _re.search(r"-\d{3}$", mid) else 1)
+
+
+def choose_models(provider: str, model_ids: List[str]) -> Optional[Tuple[str, str]]:
+    """Best (fast, smart) chat models from a provider's /models list."""
+    ids = [m.split("/", 1)[1] if provider == "gemini" and m.startswith("models/") else m for m in model_ids]
+    ids = [i for i in ids if i and not _SKIP.search(i)]
+    if not ids:
         return None
-    if env.get("INTERVIEW_OPENROUTER_FAST_MODEL") or env.get("INTERVIEW_OPENROUTER_SMART_MODEL"):
-        return None  # owner pinned a model on purpose
-    base = env.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    if provider == "groq":
+        fast = _first_match(ids, _GROQ_FAST)
+        smart = _first_match(ids, _GROQ_SMART) or fast
+        fast = fast or smart
+        return (fast, smart) if fast else None
+    if provider == "gemini":
+        stable = [i for i in ids if _re.fullmatch(r"gemini-\d+(?:\.\d+)?-(flash|pro)(-lite)?(-\d{3})?", i)]
+        lite = sorted([i for i in stable if "-flash-lite" in i], key=_gemini_version, reverse=True)
+        flash = sorted([i for i in stable if "-flash" in i and "-lite" not in i], key=_gemini_version, reverse=True)
+        fast = (lite or flash or [None])[0]
+        smart = (flash or lite or [None])[0]
+        return (fast, smart) if fast else None
+    if provider == "openrouter":
+        free = [i for i in ids if i.endswith(":free")]
+        pick = _first_match(free, _OR_PREFERENCE) or (free[0] if free else None)
+        return (pick, pick) if pick else None
+    return None
+
+
+_PINS = {"groq": "INTERVIEW_GROQ", "gemini": "INTERVIEW_GEMINI", "openrouter": "INTERVIEW_OPENROUTER"}
+_resolve_state = {"last": 0.0, "task": None}
+
+
+async def resolve_models() -> Dict[str, Tuple[str, str]]:
+    """Refresh _RESOLVED from each configured provider's live model list."""
+    _resolve_state["last"] = time.monotonic()
+    client = _get_client()
+    out: Dict[str, Tuple[str, str]] = {}
+
+    async def one(p: Provider):
+        prefix = _PINS.get(p.name)
+        if not prefix or (os.environ.get(f"{prefix}_FAST_MODEL") and os.environ.get(f"{prefix}_SMART_MODEL")):
+            return
+        try:
+            r = await client.get(f"{p.base_url}/models", headers=p.headers, timeout=8.0)
+            if r.status_code != 200:
+                return
+            ids = [str(m.get("id", "")) for m in (r.json().get("data") or []) if isinstance(m, dict)]
+        except Exception:
+            return
+        pair = choose_models(p.name, ids)
+        if pair and _RESOLVED.get(p.name) != pair:
+            _RESOLVED[p.name] = pair
+            _HEALTH.pop(p.name, None)   # give it a fresh chance with the new models
+            logger.warning("[llm] %s models -> fast=%s smart=%s", p.name, pair[0], pair[1])
+        if pair:
+            out[p.name] = pair
+
+    await asyncio.gather(*[one(p) for p in configured_providers()])
+    return out
+
+
+def _schedule_resolve() -> None:
+    if time.monotonic() - _resolve_state["last"] < 60:
+        return
     try:
-        r = await _get_client().get(f"{base}/models", timeout=8.0)
-        if r.status_code != 200:
-            return None
-        current = "meta-llama/llama-3.3-70b-instruct:free"
-        new = pick_free_model(r.json().get("data") or [], current)
-    except Exception:
-        return None
-    if new:
-        env["INTERVIEW_OPENROUTER_FAST_MODEL"] = new
-        env["INTERVIEW_OPENROUTER_SMART_MODEL"] = new
-        logger.warning("[llm] OpenRouter model %s is no longer listed; using %s", current, new)
-    return new
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _resolve_state["last"] = time.monotonic()
+    _resolve_state["task"] = loop.create_task(resolve_models())
+
+
+async def model_refresh_loop(every_s: float = 6 * 3600) -> None:
+    while True:
+        try:
+            await resolve_models()
+        except Exception:
+            logger.exception("[llm] model refresh failed")
+        await asyncio.sleep(every_s)
