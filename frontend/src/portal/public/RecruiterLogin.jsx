@@ -4,7 +4,7 @@ import { ArrowRight, ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
 import RecruiterAccessRequest from '../../components/RecruiterAccessRequest.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, GoogleSignIn, LinkedInSignIn, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, SocialSignIn, TextField, postForm } from './components/AuthKit.jsx'
 
 const IMG = '/assets/images/crops/login-recruiter.jpg'
 const COPY = {
@@ -31,7 +31,7 @@ export default function RecruiterLogin() {
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
   const [errors, setErrors] = useState({})
-  const [error, setError] = useState(null)
+  const [error, setError] = useState(() => location.state?.authError || null)
   const [notice, setNotice] = useState(null)
   const [devCode, setDevCode] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -134,14 +134,13 @@ export default function RecruiterLogin() {
             </Button>
           </form>
           {mode === 'login' && (
-            <GoogleSignIn role="recruiter"
+            <SocialSignIn role="recruiter"
               onSuccess={(data) => {
                 if (data.role === 'admin') { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }
                 else { loginRecruiter(data.access_token, data.email || data.username); navigate('/recruiter/dashboard') }
               }}
               onError={(msg) => setError(msg)} />
           )}
-          {mode === 'login' && <LinkedInSignIn role="recruiter" onError={setError} />}
           {mode === 'login' && <p className="pub-switch">Don’t have an account?<button type="button" className="pub-linkbtn" onClick={() => go('request')}>Contact Us</button></p>}
           {mode !== 'login' && (
             <>

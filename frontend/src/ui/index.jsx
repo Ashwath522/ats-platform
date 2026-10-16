@@ -9,6 +9,7 @@ import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, ChevronDown, C
 import { heroMedia } from '../branding/branches.js'
 import { mediaUrl } from '../lib/api.js'
 import './ui.css'
+import './gloss.css'
 
 export const cx = (...a) => a.filter(Boolean).join(' ')
 

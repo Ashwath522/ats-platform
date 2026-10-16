@@ -256,8 +256,11 @@
 .pub-or::before, .pub-or::after { content: ''; flex: 1; height: 1px; background: var(--cl-line); }
 .pub-google-btn { display: flex; justify-content: center; min-height: 44px; }
 .pub-google[aria-busy="true"] { opacity: 0.6; pointer-events: none; }
-.pub-linkedin { width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #0A66C2; border-radius: 8px; background: #0A66C2; color: white; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
-.pub-linkedin b { background: white; color: #0A66C2; border-radius: 3px; padding: 0 3px; font-size: 17px; line-height: 20px; }
+.pub-linkedin { width: 100%; max-width: 400px; height: 40px; margin: 0 auto; padding: 0 12px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; color: #3c4043; font: 500 14px/1 'Google Sans', Roboto, var(--cl-font, system-ui), sans-serif; letter-spacing: 0.25px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
+.pub-linkedin:hover:not(:disabled) { background: #f7fafd; border-color: #d2e3fc; }
+.pub-linkedin:focus-visible { outline: 3px solid rgba(10, 102, 194, 0.35); outline-offset: 2px; }
+.pub-linkedin:disabled { opacity: 0.7; cursor: progress; }
+.pub-linkedin svg { flex: 0 0 auto; }
 
 /* Privacy / Terms */
 .pub-legal { min-height: 100vh; background: #f6f8fc; }
