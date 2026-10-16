@@ -256,6 +256,8 @@
 .pub-or::before, .pub-or::after { content: ''; flex: 1; height: 1px; background: var(--cl-line); }
 .pub-google-btn { display: flex; justify-content: center; min-height: 44px; }
 .pub-google[aria-busy="true"] { opacity: 0.6; pointer-events: none; }
+.pub-linkedin { width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #0A66C2; border-radius: 8px; background: #0A66C2; color: white; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+.pub-linkedin b { background: white; color: #0A66C2; border-radius: 3px; padding: 0 3px; font-size: 17px; line-height: 20px; }
 
 /* Privacy / Terms */
 .pub-legal { min-height: 100vh; background: #f6f8fc; }

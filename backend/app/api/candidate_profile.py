@@ -20,6 +20,7 @@ import os
 import shutil
 from ..services.report_parsers.router import route_file
 from ..services.scorer import evaluate_profile_project
+from ..services.linkedin_pdf import parse_linkedin_text
 
 logger = logging.getLogger("ats-platform")
 
@@ -99,6 +100,16 @@ _V2_JSON = {"interests": ("interests_json", []), "achievements": ("achievements_
 _COLLEGE_META_KEY = "college_meta"
 _HOST_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})*\.[a-z]{2,24}$")
 _COLLEGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+_LINKEDIN_URL_RE = re.compile(r"^https?://(?:[a-z]{2,3}\.)?www\.linkedin\.com/in/([A-Za-z0-9-]+)$", re.I)
+
+def normalize_linkedin_url(value):
+    raw = str(value or '').strip()
+    if not raw: return None
+    candidate = raw if re.match(r'^https?://', raw, re.I) else 'https://' + raw
+    candidate = candidate.split('?', 1)[0].rstrip('/')
+    m = _LINKEDIN_URL_RE.match(candidate)
+    if not m: raise HTTPException(422, 'Enter a valid LinkedIn profile URL, such as linkedin.com/in/your-name')
+    return 'https://www.linkedin.com/in/' + m.group(1)
 
 
 def _clean_college_meta(raw: Optional[dict], college: Optional[str]) -> Optional[dict]:
@@ -145,7 +156,9 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
     v2 = {k: getattr(profile, k, None) for k in _V2_SCALARS}
     v2.update({k: _j(getattr(profile, col, None), d) for k, (col, d) in _V2_JSON.items()})
     if isinstance(v2.get("preferences"), dict):
+        verified = v2["preferences"].get("linkedin_verified")
         v2["preferences"].pop(_COLLEGE_META_KEY, None)
+    else: verified = None
     v2["college_meta"] = _college_meta(profile)
     return {
         **v2,
@@ -171,6 +184,8 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
             "uploaded_at": resume.uploaded_at.isoformat(),
         } if resume else None,
         "updated_at": profile.updated_at.isoformat(),
+        "linkedin_verified": bool(verified),
+        "linkedin_verified_at": verified.get("at") if isinstance(verified, dict) else None,
     }
 
 
@@ -290,15 +305,22 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
             v = getattr(update, k)
             if v is not None:
                 setattr(profile, k, v.strip() if isinstance(v, str) else v)
-        prev_meta = _j(profile.preferences_json, {}).get(_COLLEGE_META_KEY)
+        if update.linkedin_url is not None:
+            profile.linkedin_url = normalize_linkedin_url(update.linkedin_url)
+        previous_prefs = _j(profile.preferences_json, {})
+        prev_meta = previous_prefs.get(_COLLEGE_META_KEY)
+        prev_linkedin_verified = previous_prefs.get("linkedin_verified")
         for k, (col, _d) in _V2_JSON.items():
             v = getattr(update, k)
             if v is not None:
+                if k == "preferences" and isinstance(v, dict):
+                    v = {key: value for key, value in v.items() if key != "linkedin_verified"}
                 setattr(profile, col, json.dumps(v))
         # Keep college metadata across preference rewrites; replace/clear it when asked.
         prefs = _j(profile.preferences_json, {})
         if not isinstance(prefs, dict):
             prefs = {}
+        verified = prev_linkedin_verified
         prefs.pop(_COLLEGE_META_KEY, None)
         if update.college_meta is not None:
             meta = _clean_college_meta(update.college_meta, profile.college)
@@ -309,6 +331,8 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
             meta = prev_meta if isinstance(prev_meta, dict) else None
         if meta:
             prefs[_COLLEGE_META_KEY] = meta
+        if verified:
+            prefs["linkedin_verified"] = verified
         if prefs or profile.preferences_json:
             profile.preferences_json = json.dumps(prefs)
 
@@ -328,6 +352,21 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
 
         resume = session.get(Resume, profile.resume_id) if profile.resume_id else None
         return _profile_to_dict(profile, resume, _project_count(session, user.id))
+
+@router.post("/linkedin-import")
+async def linkedin_import(file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024 or not data.startswith(b"%PDF"):
+        raise HTTPException(400, "Upload a PDF file smaller than 5 MB")
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as f: f.write(data)
+        from ..services.extract import extract_text_from_file
+        return parse_linkedin_text(extract_text_from_file(path) or "")
+    except Exception:
+        return parse_linkedin_text("")
+    finally:
+        if os.path.exists(path): os.remove(path)
 
 
 @router.post("/project-upload")

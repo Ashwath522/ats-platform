@@ -23,6 +23,10 @@ services:
         value: https://corelink.vercel.app,https://corelink-web.onrender.com,https://localhost,capacitor://localhost,http://localhost
       - key: APP_PUBLIC_URL     # used for links in emails
         value: https://corelink.vercel.app
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
