@@ -73,8 +73,9 @@ async def lifespan(app: FastAPI):
 
     try:
         import asyncio as _asyncio
-        from .services.llm_stream import auto_select_openrouter_models
-        _asyncio.get_event_loop().create_task(auto_select_openrouter_models())
+        from .services.llm_stream import model_refresh_loop
+        if os.environ.get("TESTING") != "1":
+            _asyncio.get_event_loop().create_task(model_refresh_loop())
     except Exception:
         logger.exception("[STARTUP] OpenRouter model check skipped")
     try:

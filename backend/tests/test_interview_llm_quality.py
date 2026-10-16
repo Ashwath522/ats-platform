@@ -559,3 +559,28 @@ def test_openrouter_free_model_fallback_choice():
     models = [{"id": "openai/gpt-4o"}, {"id": "google/gemma-3-27b-it:free"}, {"id": "qwen/qwen3-14b:free"}]
     assert pick_free_model(models, cur) == "qwen/qwen3-14b:free"
     assert pick_free_model([{"id": "openai/gpt-4o"}], cur) is None
+
+
+def test_choose_models_from_live_lists():
+    from app.services.llm_stream import choose_models
+    groq = ["whisper-large-v3", "llama-guard-4-12b", "openai/gpt-oss-20b", "openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"]
+    assert choose_models("groq", groq) == ("meta-llama/llama-4-scout-17b-16e-instruct", "openai/gpt-oss-120b")
+    assert choose_models("groq", ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]) == ("llama-3.1-8b-instant", "llama-3.3-70b-versatile")
+    gem = ["models/gemini-2.5-flash", "models/gemini-2.5-flash-lite", "models/gemini-3.5-flash-lite", "models/gemini-3.5-flash",
+           "models/gemini-3.5-pro-preview", "models/gemini-3.5-flash-image", "models/text-embedding-004", "models/gemini-3.5-flash-tts"]
+    assert choose_models("gemini", gem) == ("gemini-3.5-flash-lite", "gemini-3.5-flash")
+    orr = ["meta-llama/llama-3.3-70b-instruct", "qwen/qwen3-235b-a22b:free", "google/gemma-3-27b-it:free"]
+    assert choose_models("openrouter", orr) == ("qwen/qwen3-235b-a22b:free", "qwen/qwen3-235b-a22b:free")
+    assert choose_models("openrouter", ["meta-llama/llama-3.3-70b-instruct"]) is None
+
+
+def test_resolved_models_used_unless_pinned(monkeypatch):
+    from app.services import llm_stream as ls
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    monkeypatch.delenv("INTERVIEW_GROQ_FAST_MODEL", raising=False)
+    monkeypatch.setitem(ls._RESOLVED, "groq", ("new-fast", "new-smart"))
+    g = [p for p in ls.configured_providers() if p.name == "groq"][0]
+    assert (g.fast_model, g.smart_model) == ("new-fast", "new-smart")
+    monkeypatch.setenv("INTERVIEW_GROQ_FAST_MODEL", "pinned")
+    g = [p for p in ls.configured_providers() if p.name == "groq"][0]
+    assert g.fast_model == "pinned"
