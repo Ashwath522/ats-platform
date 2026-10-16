@@ -716,3 +716,46 @@ async def probe_providers(chat: bool = False, timeout: float = 4.0) -> Dict[str,
 
     pairs = await asyncio.gather(*[one(p) for p in configured_providers()])
     return dict(pairs)
+
+
+# ── OpenRouter free-model auto-selection ──────────────────────────────────────
+# OpenRouter rotates its ":free" models. If the configured one disappears every
+# call fails with 404, so at startup we check the public model list and, when
+# the default is gone (and the owner hasn't pinned a model), switch to the best
+# free chat model still listed.
+_OR_PREFERENCE = ("llama-3.3-70b", "llama-4", "qwen-2.5-72b", "qwen3", "gemma-3-27b", "mistral-small", "deepseek-chat", "deepseek-v3", "gemma")
+
+
+def pick_free_model(models: List[dict], current: str) -> Optional[str]:
+    """Return a replacement free model id, or None if `current` is still listed."""
+    ids = [str(m.get("id", "")) for m in models if isinstance(m, dict)]
+    if current in ids:
+        return None
+    free = [i for i in ids if i.endswith(":free")]
+    for pref in _OR_PREFERENCE:
+        for i in free:
+            if pref in i.lower():
+                return i
+    return free[0] if free else None
+
+
+async def auto_select_openrouter_models() -> Optional[str]:
+    env = os.environ
+    if not _first_key(env.get("OPENROUTER_API_KEY")):
+        return None
+    if env.get("INTERVIEW_OPENROUTER_FAST_MODEL") or env.get("INTERVIEW_OPENROUTER_SMART_MODEL"):
+        return None  # owner pinned a model on purpose
+    base = env.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    try:
+        r = await _get_client().get(f"{base}/models", timeout=8.0)
+        if r.status_code != 200:
+            return None
+        current = "meta-llama/llama-3.3-70b-instruct:free"
+        new = pick_free_model(r.json().get("data") or [], current)
+    except Exception:
+        return None
+    if new:
+        env["INTERVIEW_OPENROUTER_FAST_MODEL"] = new
+        env["INTERVIEW_OPENROUTER_SMART_MODEL"] = new
+        logger.warning("[llm] OpenRouter model %s is no longer listed; using %s", current, new)
+    return new
