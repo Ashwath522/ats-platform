@@ -50,8 +50,8 @@ export default function LinkedInCallback() {
         const remember = (k) => { try { localStorage.setItem(k, 'linkedin') } catch { /* ignore */ } }
         if (d.role === 'candidate') {
           remember('cl_last_signin_method')
-          celebrate(d.username, () => { loginCandidate(d.access_token, d.username); navigate(d.created ? '/candidate/onboarding/linkedin' : '/candidate/feed', { replace: true }) },
-            d.created ? 'LinkedIn verified · let’s set up your profile' : 'LinkedIn verified · taking you to your dashboard')
+          celebrate(d.username, () => { loginCandidate(d.access_token, d.username); navigate(d.created || d.needs_profile ? '/candidate/onboarding/linkedin' : '/candidate/feed', { replace: true }) },
+            d.created || d.needs_profile ? 'LinkedIn verified · let’s set up your profile' : 'LinkedIn verified · taking you to your dashboard')
         } else if (d.role === 'admin') {
           remember('cl_last_signin_method_recruiter')
           celebrate(d.name || d.email, () => { loginAdmin(d.access_token, d.email); navigate('/admin/dashboard', { replace: true }) }, 'Admin verified · opening the console')

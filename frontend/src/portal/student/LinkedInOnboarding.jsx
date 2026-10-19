@@ -91,6 +91,9 @@ export default function LinkedInOnboarding() {
       <CardBrand />
       <h1>Speed up your profile</h1>
       <p className="pub-auth-sub">Both steps are optional — you can skip and fill your profile later.</p>
+      <div style={{ marginBottom: 14 }}>
+        <Alert>LinkedIn sign-in only shares your name, email and photo. To bring in your <b>college, education, experience and skills</b>, upload your LinkedIn PDF in step 2 — it takes about 10 seconds.</Alert>
+      </div>
       {profile?.linkedin_verified && <p style={{ margin: '0 0 12px' }}><Chip tone="blue"><ShieldCheck size={14} /> LinkedIn verified</Chip></p>}
 
       <div className="cl-stack" style={{ gap: 16 }}>
