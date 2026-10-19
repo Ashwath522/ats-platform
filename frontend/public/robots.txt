@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /candidate/
+Disallow: /recruiter/
+Disallow: /admin/
+Disallow: /auth/
+Allow: /candidate/login
+Allow: /recruiter/login
+
+Sitemap: https://corelink-pi.vercel.app/sitemap.xml
