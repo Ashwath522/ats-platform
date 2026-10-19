@@ -256,11 +256,6 @@
 .pub-or::before, .pub-or::after { content: ''; flex: 1; height: 1px; background: var(--cl-line); }
 .pub-google-btn { display: flex; justify-content: center; min-height: 44px; }
 .pub-google[aria-busy="true"] { opacity: 0.6; pointer-events: none; }
-.pub-linkedin { width: 100%; max-width: 400px; height: 40px; margin: 0 auto; padding: 0 12px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; color: #3c4043; font: 500 14px/1 'Google Sans', Roboto, var(--cl-font, system-ui), sans-serif; letter-spacing: 0.25px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
-.pub-linkedin:hover:not(:disabled) { background: #f7fafd; border-color: #d2e3fc; }
-.pub-linkedin:focus-visible { outline: 3px solid rgba(10, 102, 194, 0.35); outline-offset: 2px; }
-.pub-linkedin:disabled { opacity: 0.7; cursor: progress; }
-.pub-linkedin svg { flex: 0 0 auto; }
 
 /* Privacy / Terms */
 .pub-legal { min-height: 100vh; background: #f6f8fc; }
@@ -272,3 +267,33 @@
 .pub-legal-body li { margin: 6px 0; }
 .pub-legal-date { color: var(--cl-muted); font-size: 13.5px; }
 .pub-legal-links { margin-top: 32px !important; color: var(--cl-muted); }
+
+/* ── Sign-in providers: Google · LinkedIn · Email as identical pills ─── */
+.pub-providers, .pub-social { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pub-providers { margin-top: 26px; }
+.pub-social > .pub-or { align-self: stretch; margin: 18px 0 2px; }
+.pub-provider-slot { min-height: 40px; display: flex; justify-content: center; border-radius: 999px; }
+.pub-provider-slot:has(.pub-google.pending) { background: linear-gradient(90deg, #eef2f7 25%, #f6f8fb 50%, #eef2f7 75%); background-size: 200% 100%; animation: pub-shimmer 1.2s linear infinite; }
+.pub-provider-slot .pub-google, .pub-provider-slot .pub-google-btn { width: 100%; min-height: 40px; }
+.pub-provider {
+  width: 100%; max-width: 400px; height: 40px; padding: 0 16px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  border: 1px solid #dadce0; border-radius: 999px; background: #fff; color: #1f1f1f;
+  font: 500 14px/1 'Google Sans', Roboto, var(--cl-font, system-ui), sans-serif; letter-spacing: 0.25px;
+  cursor: pointer; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.2s, transform 0.12s;
+}
+.pub-provider:hover:not(:disabled) { background: #f8faff; border-color: #c6d4f0; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 6px 16px rgba(11, 92, 255, 0.08); }
+.pub-provider:active:not(:disabled) { transform: scale(0.985); }
+.pub-provider:focus-visible { outline: 3px solid rgba(11, 92, 255, 0.35); outline-offset: 2px; }
+.pub-provider:disabled { opacity: 0.7; cursor: progress; }
+.pub-provider svg { flex: 0 0 auto; }
+.pub-email svg { color: #0b5cff; }
+
+/* Email form slides in after "Continue with Email" */
+.pub-reveal { animation: pub-reveal 0.32s cubic-bezier(.2, .8, .2, 1) both; }
+.pub-back-top { display: inline-flex; align-items: center; gap: 6px; margin: -4px 0 12px; padding: 4px 0; border: 0; background: none; color: var(--cl-muted, #64748b); font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.pub-back-top:hover { color: var(--cl-blue, #0b5cff); }
+.pub-auth-card .pub-chooser-note, .pub-chooser-note { margin: 18px auto 0; max-width: 320px; line-height: 1.5; text-align: center; font-size: 12.5px; color: var(--cl-faint, #94a3b8); }
+@keyframes pub-reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pub-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .pub-reveal, .pub-provider-slot { animation: none !important; } }

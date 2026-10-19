@@ -5,6 +5,7 @@ import { useAuth } from '../../auth.jsx'
 import { apiUrl } from '../../lib/api.js'
 import { Button } from '../../ui/index.jsx'
 import { AuthLayout, CardBrand, linkedinRedirectUri, takeLinkedInState } from './components/AuthKit.jsx'
+import { useLoginSuccess } from '../../ui/LoginSuccess.jsx'
 
 /** Friendly text for the ?error=… LinkedIn sends back. */
 export function linkedinErrorMessage(code, description) {
@@ -25,6 +26,7 @@ export default function LinkedInCallback() {
   const { loginCandidate, loginRecruiter, loginAdmin } = useAuth()
   const [error, setError] = useState(null)
   const ran = useRef(false)
+  const [overlay, celebrate] = useLoginSuccess()
 
   useEffect(() => {
     if (ran.current) return // React StrictMode runs effects twice in dev; the code is single-use
@@ -45,15 +47,17 @@ export default function LinkedInCallback() {
         })
         const d = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(d.detail || 'LinkedIn sign-in failed. Please try again.')
+        const remember = (k) => { try { localStorage.setItem(k, 'linkedin') } catch { /* ignore */ } }
         if (d.role === 'candidate') {
-          loginCandidate(d.access_token, d.username)
-          navigate(d.created ? '/candidate/onboarding/linkedin' : '/candidate/feed', { replace: true })
+          remember('cl_last_signin_method')
+          celebrate(d.username, () => { loginCandidate(d.access_token, d.username); navigate(d.created ? '/candidate/onboarding/linkedin' : '/candidate/feed', { replace: true }) },
+            d.created ? 'LinkedIn verified · let’s set up your profile' : 'LinkedIn verified · taking you to your dashboard')
         } else if (d.role === 'admin') {
-          loginAdmin(d.access_token, d.email)
-          navigate('/admin/dashboard', { replace: true })
+          remember('cl_last_signin_method_recruiter')
+          celebrate(d.name || d.email, () => { loginAdmin(d.access_token, d.email); navigate('/admin/dashboard', { replace: true }) }, 'Admin verified · opening the console')
         } else {
-          loginRecruiter(d.access_token, d.email || d.username)
-          navigate('/recruiter/dashboard', { replace: true })
+          remember('cl_last_signin_method_recruiter')
+          celebrate(d.name || d.email, () => { loginRecruiter(d.access_token, d.email || d.username); navigate('/recruiter/dashboard', { replace: true }) }, 'LinkedIn verified · opening your dashboard')
         }
       } catch (e) {
         back(e.message || 'LinkedIn sign-in failed. Please try again.')
@@ -64,6 +68,7 @@ export default function LinkedInCallback() {
   return (
     <AuthLayout image="/assets/images/crops/login-student.jpg" imageAlt="">
       <CardBrand />
+      {overlay}
       {error ? (
         <>
           <h1>Couldn’t sign you in</h1>
