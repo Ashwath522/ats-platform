@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Bookmark, MapPin, ArrowRight, Check, Cog, Building2, Zap, Cpu, FlaskConical, Plane, Car, Layers, Briefcase,
-  CheckCircle2, AlertCircle, ExternalLink, Clock,
+  CheckCircle2, AlertCircle, ExternalLink, Clock, Target,
 } from 'lucide-react'
 import { Alert, Badge, Button, Modal, Skeleton, Progress, StatusPill, useToast, fmtDate } from '../../../ui/index.jsx'
 import { useApi } from '../../../ui/useApi.js'
@@ -138,6 +138,7 @@ function InternalJobDetailsModal({ jobId, onClose, saved, onToggleSave, onApplie
       footer={job && !error && (
         <>
           <Button variant="secondary" icon={Bookmark} onClick={() => onToggleSave?.(job.id)}>{saved ? 'Saved' : 'Save job'}</Button>
+          {job.has_resume && <Button variant="secondary" icon={Target} to={`/candidate/resume-skills?job=${job.id}`}>Check resume fit</Button>}
           {job.applied
             ? <Button to="/candidate/applications" iconRight={ArrowRight}>View my application</Button>
             : <Button loading={applying} onClick={apply} disabled={!job.has_resume || job.status !== 'open'}>Apply now</Button>}
