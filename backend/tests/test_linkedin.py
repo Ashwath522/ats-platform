@@ -19,8 +19,17 @@ SITE = "https://corelink-pi.vercel.app"
 CALLBACK = SITE + "/auth/linkedin/callback"
 
 
+def _png():
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (10, 100, 200)).save(buf, "PNG")
+    return buf.getvalue()
+
+
 @pytest.fixture
 def client(monkeypatch):
+    monkeypatch.setattr(linkedin_auth, "fetch_photo", lambda url: _png())
     monkeypatch.setenv("LINKEDIN_CLIENT_ID", CID)
     monkeypatch.setenv("LINKEDIN_CLIENT_SECRET", "s3cret")
     monkeypatch.setenv("APP_PUBLIC_URL", SITE)
@@ -73,7 +82,22 @@ def test_new_student_created_verified_and_no_photo(client, monkeypatch):
     assert prof["linkedin_verified"] is True and prof["linkedin_verified_at"]
     assert "linkedin_verified" not in (prof.get("preferences") or {})
     assert prof["full_name"] == "Asha Rao"
-    assert not prof.get("avatar_path")
+    assert prof["avatar_url"]                  # LinkedIn photo saved as the avatar
+    assert body["needs_profile"] is True       # nothing filled yet → import step
+
+
+def test_photo_only_from_linkedin_cdn_and_never_blocks_login(client, monkeypatch):
+    assert linkedin_auth.fetch_photo is not None
+    with pytest.raises(ValueError):
+        linkedin_auth._download_photo("https://evil.example/p.jpg")
+    def boom(url):
+        raise RuntimeError("cdn down")
+    monkeypatch.setattr(linkedin_auth, "fetch_photo", boom)
+    monkeypatch.setattr(linkedin_auth, "exchange_code", fake_linkedin("nophoto@gmail.com"))
+    r = login(client)
+    assert r.status_code == 200
+    prof = client.get("/api/candidate/profile", headers={"Authorization": f"Bearer {r.json()['access_token']}"}).json()
+    assert not prof["avatar_url"]
 
 
 def test_existing_mixed_case_student_is_matched(client, monkeypatch):

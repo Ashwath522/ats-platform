@@ -37,6 +37,7 @@ describe('import merge', () => {
     expect(body.experience).toHaveLength(2)
     expect(body.linkedin_url).toBe('https://www.linkedin.com/in/asha')
     expect(education[0]).toMatchObject({ institution: 'Atria', field_of_study: 'BE, Mech', end_year: '2025' })
+    expect(body).toMatchObject({ college: 'Atria', degree: 'BE, Mech', grad_year: 2025 })
   })
   it('adds nothing when nothing is picked', () => {
     expect(buildProfileUpdate({ linkedin_url: 'x' }, { skills: ['A'] }, {})).toEqual({ body: {}, education: null })

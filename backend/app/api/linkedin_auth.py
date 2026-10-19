@@ -3,7 +3,9 @@
 Flow: the page sends the browser to LinkedIn's authorize URL; LinkedIn redirects
 back to <site>/auth/linkedin/callback?code=…&state=…; the page posts the code
 here; we make ONE call to LinkedIn's token endpoint and read name + email from
-the returned id_token. No profile scraping, no photo, no /userinfo call.
+the returned id_token. No profile scraping and no /userinfo call. The profile
+photo URL in the id_token (LinkedIn's own CDN) is downloaded once and saved as
+the student's avatar if they don't have one yet.
 
 The id_token comes straight from LinkedIn over TLS in our own back-channel
 request, so per OpenID Connect Core §3.1.3.7 we validate its claims
@@ -130,6 +132,67 @@ def linkedin_config():
     return {"enabled": ok, "client_id": client_id() if ok else None}
 
 
+PHOTO_HOSTS = (".licdn.com",)
+MAX_PHOTO = 2 * 1024 * 1024
+
+
+def _download_photo(url: str) -> bytes:
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    if urlparse(url).scheme != "https" or not host.endswith(PHOTO_HOSTS):
+        raise ValueError("photo host not allowed")
+    r = requests.get(url, timeout=8, stream=True)
+    r.raise_for_status()
+    if not (r.headers.get("content-type") or "").startswith("image/"):
+        raise ValueError("not an image")
+    data = b""
+    for chunk in r.iter_content(64 * 1024):
+        data += chunk
+        if len(data) > MAX_PHOTO:
+            raise ValueError("photo too large")
+    return data
+
+
+# Swappable in tests.
+fetch_photo: Callable[[str], bytes] = _download_photo
+
+
+def _save_photo_if_missing(username: str, url: str) -> None:
+    """Best effort: never blocks sign-in."""
+    if not url:
+        return
+    try:
+        with Session(engine) as s:
+            u = s.exec(select(CandidateUser).where(func.lower(CandidateUser.username) == username.lower())).first()
+            p = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == u.id)).first() if u else None
+            if not p or p.avatar_path:
+                return
+        import io
+        from starlette.datastructures import UploadFile
+        from ..services.media_utils import validate_and_save_image
+        rel = validate_and_save_image(UploadFile(file=io.BytesIO(fetch_photo(url)), filename="linkedin.jpg"), "avatars")
+        with Session(engine) as s:
+            p = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == u.id)).first()
+            if p and not p.avatar_path:
+                p.avatar_path = rel
+                p.updated_at = utc_now()
+                s.add(p)
+                s.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.info("LinkedIn photo not saved: %s", e)
+
+
+def _needs_profile(username: str) -> bool:
+    """True when the student hasn't added college/skills/experience yet (send them to the import step)."""
+    with Session(engine) as s:
+        u = s.exec(select(CandidateUser).where(func.lower(CandidateUser.username) == username.lower())).first()
+        p = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == u.id)).first() if u else None
+        if not p:
+            return True
+        empty = lambda raw: (raw or "[]").strip() in ("", "[]")
+        return not p.college and empty(p.skills_json) and empty(p.experience_json) and empty(p.education_json)
+
+
 def _mark_verified(username: str, email: str) -> None:
     with Session(engine) as s:
         u = s.exec(select(CandidateUser).where(func.lower(CandidateUser.username) == username.lower())).first()
@@ -195,5 +258,7 @@ def linkedin_login(request: Request, body: LinkedInLogin):
     if role == "candidate":
         result = _candidate_login(email, name, None)
         _mark_verified(result["username"], email)
+        _save_photo_if_missing(result["username"], str(claims.get("picture") or ""))
+        result["needs_profile"] = _needs_profile(result["username"])
         return result
     return _staff_login(email, role)

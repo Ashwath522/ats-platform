@@ -56,6 +56,14 @@ export function buildProfileUpdate(profile = {}, data = {}, pick = {}) {
       start_year: e.start_year || '', end_year: e.end_year || '', grade: e.grade || '',
     }))
     education = mergeRows(profile.education || [], rows, ['institution', 'start_year'])
+    // Fill the profile header (college / degree / graduation year) from the main degree.
+    const main = data.education.find((e) => e.level === 'degree' || e.level === 'pg') || data.education[0]
+    if (main && !profile.college && main.institution) {
+      body.college = main.institution
+      if (!profile.degree && main.degree) body.degree = [main.degree, main.field_of_study].filter(Boolean).join(', ').slice(0, 120)
+      const y = parseInt(main.end_year, 10)
+      if (!profile.grad_year && y > 1950 && y < 2100) body.grad_year = y
+    }
   }
   return { body, education }
 }
