@@ -1,7 +1,7 @@
 /** Live jobs from official company boards / job APIs (apply on the company site). */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Bookmark, CheckCircle2, Clock, ExternalLink, MapPin, Radio, ShieldCheck, X, AlertCircle } from 'lucide-react'
+import { Bookmark, CheckCircle2, Clock, ExternalLink, MapPin, Radio, ShieldCheck, X, AlertCircle, Target } from 'lucide-react'
 import { Alert, Badge, Button, Modal, Skeleton, timeAgo, useToast } from '../../../ui/index.jsx'
 import { CompanyLogo } from '../../shared/companies.jsx'
 import { useApi } from '../../../ui/useApi.js'
@@ -108,6 +108,7 @@ export function ExternalJobModal({ jobId, onClose, saved, onToggleSave, onChange
       footer={job && !error && (
         <>
           {!job.expired && onToggleSave && <Button variant="secondary" icon={Bookmark} onClick={() => onToggleSave?.(`ext-${job.external_job_id}`)}>{saved ? 'Saved' : 'Save job'}</Button>}
+          {!job.expired && <Button variant="secondary" icon={Target} to={`/candidate/resume-skills?job=ext-${job.external_job_id}`}>Check resume fit</Button>}
           {job.applied
             ? <Button variant="outline" onClick={() => ext.mark(job, 'not_applied')}>Unmark applied</Button>
             : !job.expired && <Button variant="outline" icon={CheckCircle2} onClick={() => ext.mark(job)}>Mark as applied</Button>}

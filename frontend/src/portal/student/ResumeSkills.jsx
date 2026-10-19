@@ -8,6 +8,7 @@ import { useApi, useQuery } from '../../ui/useApi.js'
 import { useStudent } from './StudentShell.jsx'
 import { useProfileSave, openAuthedFile } from './components/editors.jsx'
 import { CertificationsList, useCertModal } from './components/certs.jsx'
+import JobFit from './components/JobFit.jsx'
 import './components/student.css'
 
 const BAR_STYLE = {
@@ -159,6 +160,8 @@ export default function ResumeSkills() {
           )}
         </Card>
       </div>
+
+      <JobFit hasResume={!!ins?.has_resume} resumeScore={ins?.score} onAddSkill={addSkill} />
 
       <div className="st-split">
         <Card title={<><Users size={20} />Your Skills</>} subtitle="Add and organize your technical and core engineering skills.">
