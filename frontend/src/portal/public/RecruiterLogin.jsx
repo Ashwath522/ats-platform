@@ -4,7 +4,12 @@ import { ArrowRight, ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
 import RecruiterAccessRequest from '../../components/RecruiterAccessRequest.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, SocialSignIn, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, ProviderButtons, TextField, postForm, useProviders } from './components/AuthKit.jsx'
+import { useLoginSuccess } from '../../ui/LoginSuccess.jsx'
+
+const LAST = 'cl_last_signin_method_recruiter'
+const lastMethod = () => { try { return localStorage.getItem(LAST) } catch { return null } }
+const rememberMethod = (m) => { try { localStorage.setItem(LAST, m) } catch { /* ignore */ } }
 
 const IMG = '/assets/images/crops/login-recruiter.jpg'
 const COPY = {
@@ -35,8 +40,24 @@ export default function RecruiterLogin() {
   const [notice, setNotice] = useState(null)
   const [devCode, setDevCode] = useState(null)
   const [loading, setLoading] = useState(false)
+  const providers = useProviders()
+  const [emailChosen, setEmailChosen] = useState(() => lastMethod() !== 'google' && lastMethod() !== 'linkedin' && lastMethod() !== null)
+  const [overlay, celebrate] = useLoginSuccess()
 
-  useEffect(() => { if (recruiterToken) navigate('/recruiter/dashboard', { replace: true }) }, [recruiterToken, navigate])
+  useEffect(() => { if (recruiterToken && !overlay) navigate('/recruiter/dashboard', { replace: true }) }, [recruiterToken, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const anyProvider = providers.google !== false || providers.linkedin !== false
+  const showChooser = mode === 'login' && !emailChosen && anyProvider
+  const welcome = (data, method, fallback) => {
+    rememberMethod(method)
+    const who = data.email || data.username || fallback
+    if (data.role === 'admin') {
+      celebrate(data.name || who, () => { loginAdmin(data.access_token, who); navigate('/admin/dashboard') }, 'Admin verified · opening the console')
+    } else {
+      try { localStorage.setItem('ats_recruiter_must_change', data.must_change_password ? '1' : '0') } catch { /* ignore */ }
+      celebrate(data.name || who, () => { loginRecruiter(data.access_token, who); navigate('/recruiter/dashboard') }, 'Verified recruiter · opening your dashboard')
+    }
+  }
 
   const go = (m) => {
     setMode(m); setErrors({}); setError(null); setNotice(null); setPassword(''); setConfirm('')
@@ -67,13 +88,8 @@ export default function RecruiterLogin() {
     try {
       if (mode === 'login') {
         const data = await postForm('/api/recruiter/auth/login', { username: addr, password })
-        if (data.role === 'admin') {
-          loginAdmin(data.access_token, data.email || addr)
-          navigate('/admin/dashboard')
-        } else if (data.role === 'recruiter') {
-          try { localStorage.setItem('ats_recruiter_must_change', data.must_change_password ? '1' : '0') } catch { /* ignore */ }
-          loginRecruiter(data.access_token, data.email || data.username || addr)
-          navigate('/recruiter/dashboard')
+        if (data.role === 'admin' || data.role === 'recruiter') {
+          welcome(data, 'email', addr)
         } else {
           setError('This is a student account — use the student sign in page.')
         }
@@ -116,7 +132,21 @@ export default function RecruiterLogin() {
           <CardBrand />
           <h1>{title}</h1>
           <p className="pub-auth-sub">{sub}</p>
-          <form className="pub-form" onSubmit={submit} noValidate>
+          {showChooser ? (
+            <div className="pub-reveal" key="chooser">
+              {notice && <Alert tone="success">{notice}</Alert>}
+              {error && <div style={{ marginBottom: 14 }}><Alert tone="error">{error}</Alert></div>}
+              <ProviderButtons role="recruiter" providers={providers} emailLabel="Continue with Work Email"
+                onEmail={() => { setEmailChosen(true); setError(null) }}
+                onSuccess={(data) => welcome(data, 'google')}
+                onError={(msg) => setError(msg)} />
+              <p className="pub-chooser-note">Google and LinkedIn work for approved recruiter accounts.</p>
+            </div>
+          ) : (
+          <form className="pub-form pub-reveal" key="form" onSubmit={submit} noValidate>
+            {mode === 'login' && anyProvider && (
+              <button type="button" className="pub-back-top" onClick={() => { setEmailChosen(false); setErrors({}); setError(null) }}><ArrowLeft size={15} /> Other ways to sign in</button>
+            )}
             {notice && <Alert tone="success">{notice}</Alert>}
             {error && <Alert tone="error">{error}</Alert>}
             <TextField id="rc-email" label="Email address" icon={Mail} type="email" autoComplete="username" inputMode="email" value={email}
@@ -133,14 +163,8 @@ export default function RecruiterLogin() {
               {mode === 'login' ? 'Sign In' : mode === 'forgot' ? 'Send Reset Code' : 'Update Password'}
             </Button>
           </form>
-          {mode === 'login' && (
-            <SocialSignIn role="recruiter"
-              onSuccess={(data) => {
-                if (data.role === 'admin') { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }
-                else { loginRecruiter(data.access_token, data.email || data.username); navigate('/recruiter/dashboard') }
-              }}
-              onError={(msg) => setError(msg)} />
           )}
+          {overlay}
           {mode === 'login' && <p className="pub-switch">Don’t have an account?<button type="button" className="pub-linkbtn" onClick={() => go('request')}>Contact Us</button></p>}
           {mode !== 'login' && (
             <>

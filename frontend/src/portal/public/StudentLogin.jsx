@@ -3,7 +3,12 @@ import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
-import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, SocialSignIn, TextField, postForm } from './components/AuthKit.jsx'
+import { AuthLayout, CardBrand, EMAIL_RE, PasswordField, ProviderButtons, TextField, postForm, useProviders } from './components/AuthKit.jsx'
+import { useLoginSuccess } from '../../ui/LoginSuccess.jsx'
+
+const LAST = 'cl_last_signin_method'
+const lastMethod = () => { try { return localStorage.getItem(LAST) } catch { return null } }
+const rememberMethod = (m) => { try { localStorage.setItem(LAST, m) } catch { /* ignore */ } }
 
 const IMG = '/assets/images/crops/login-student.jpg'
 const COPY = {
@@ -34,8 +39,20 @@ export default function StudentLogin() {
   const [notice, setNotice] = useState(null)
   const [devCode, setDevCode] = useState(null)
   const [loading, setLoading] = useState(false)
+  const providers = useProviders()
+  const [emailChosen, setEmailChosen] = useState(() => lastMethod() === 'email')
+  const [overlay, celebrate] = useLoginSuccess()
 
-  useEffect(() => { if (candidateToken) navigate('/candidate/feed', { replace: true }) }, [candidateToken, navigate])
+  useEffect(() => { if (candidateToken && !overlay) navigate('/candidate/feed', { replace: true }) }, [candidateToken, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Google / LinkedIn / Email chooser first; the email form after "Continue with Email".
+  const anyProvider = providers.google !== false || providers.linkedin !== false
+  const showChooser = (mode === 'login' || mode === 'signup') && !emailChosen && anyProvider
+  const welcome = (data, method, created) => {
+    rememberMethod(method)
+    celebrate(data.username, () => { loginCandidate(data.access_token, data.username); navigate('/candidate/feed') },
+      created ? 'Account created · setting up your space' : undefined)
+  }
 
   const go = (m) => { setMode(m); setErrors({}); setError(null); setNotice(null); setPassword(''); setConfirm('') }
 
@@ -63,8 +80,7 @@ export default function StudentLogin() {
     try {
       if (mode === 'login' || mode === 'signup') {
         const data = await postForm(mode === 'login' ? '/api/candidate/auth/login' : '/api/candidate/auth/register', { username, password })
-        loginCandidate(data.access_token, data.username)
-        navigate('/candidate/feed')
+        welcome(data, 'email', mode === 'signup')
       } else if (mode === 'forgot') {
         const data = await postForm('/api/candidate/auth/password-reset/request', { username })
         setDevCode(data?.dev_only?.reset_token || null)
@@ -93,7 +109,22 @@ export default function StudentLogin() {
           <CardBrand />
           <h1>{title}</h1>
           <p className="pub-auth-sub">{sub}</p>
-          <form className="pub-form" onSubmit={submit} noValidate>
+          {showChooser ? (
+            <div className="pub-reveal" key="chooser">
+              {notice && <Alert tone="success">{notice}</Alert>}
+              {error && <div style={{ marginBottom: 14 }}><Alert tone="error">{error}</Alert></div>}
+              <ProviderButtons role="candidate" providers={providers} googleText={mode === 'signup' ? 'signup_with' : 'continue_with'}
+                emailLabel={mode === 'signup' ? 'Sign up with Email' : 'Continue with Email'}
+                onEmail={() => { setEmailChosen(true); setError(null) }}
+                onSuccess={(data) => welcome(data, 'google', data.created)}
+                onError={(msg) => setError(msg)} />
+              <p className="pub-chooser-note">By continuing you agree to our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
+            </div>
+          ) : (
+          <form className="pub-form pub-reveal" key="form" onSubmit={submit} noValidate>
+            {(mode === 'login' || mode === 'signup') && anyProvider && (
+              <button type="button" className="pub-back-top" onClick={() => { setEmailChosen(false); setErrors({}); setError(null) }}><ArrowLeft size={15} /> Other ways to {mode === 'signup' ? 'sign up' : 'sign in'}</button>
+            )}
             {notice && <Alert tone="success">{notice}</Alert>}
             {error && <Alert tone="error">{error}</Alert>}
             <TextField id="st-email" label="Email address" icon={Mail} type="email" autoComplete="email" inputMode="email" value={email}
@@ -117,10 +148,6 @@ export default function StudentLogin() {
               {mode === 'login' ? 'Sign In' : mode === 'signup' ? 'Create Account' : mode === 'forgot' ? 'Send Reset Code' : 'Update Password'}
             </Button>
           </form>
-          {(mode === 'login' || mode === 'signup') && (
-            <SocialSignIn role="candidate" googleText={mode === 'signup' ? 'signup_with' : 'continue_with'}
-              onSuccess={(data) => { loginCandidate(data.access_token, data.username); navigate('/candidate/feed') }}
-              onError={(msg) => setError(msg)} />
           )}
           {mode === 'login' && <p className="pub-switch">Don’t have an account?<button type="button" className="pub-linkbtn" onClick={() => go('signup')}>Sign Up</button></p>}
           {mode === 'signup' && <p className="pub-switch">Already have an account?<button type="button" className="pub-linkbtn" onClick={() => go('login')}>Sign In</button></p>}
@@ -131,6 +158,7 @@ export default function StudentLogin() {
             </p>
           )}
           {mode === 'forgot' && info?.support_email && <p className="pub-note" style={{ textAlign: 'center', marginTop: 12 }}>No email on file? Write to <a href={`mailto:${info.support_email}`}>{info.support_email}</a>.</p>}
+          {overlay}
           <p className="pub-roles"><Link to="/recruiter/login">Recruiter sign in</Link><span aria-hidden="true">·</span><Link to="/">Back to home</Link><span aria-hidden="true">·</span><Link to="/privacy">Privacy</Link></p>
         </>
       )}

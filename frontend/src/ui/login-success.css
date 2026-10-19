@@ -1,0 +1,68 @@
+.ls-root {
+  position: fixed; inset: 0; z-index: 1000;
+  display: grid; place-items: center;
+  background: radial-gradient(120% 90% at 50% 40%, rgba(255, 255, 255, 0.96), rgba(230, 238, 255, 0.97));
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  animation: ls-in 0.28s ease-out both, ls-out 0.3s ease-in 1.35s forwards;
+  cursor: pointer;
+}
+.ls-stage { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 24px; }
+.ls-badge { position: relative; width: 132px; height: 132px; display: grid; place-items: center; }
+
+/* Logo: lifts off, spins once and settles (like a drone taking off) */
+.ls-mark { width: 74px; height: 74px; filter: drop-shadow(0 10px 22px rgba(11, 79, 224, 0.35)); animation: ls-spin 0.95s cubic-bezier(.2, .9, .25, 1.1) both; }
+
+/* Ring closes around the logo */
+.ls-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.ls-ring circle { fill: none; stroke-width: 5; }
+.ls-ring-track { stroke: rgba(11, 92, 255, 0.10); }
+.ls-ring-fill { stroke: #2f7bff; stroke-linecap: round; stroke-dasharray: 340; stroke-dashoffset: 340; animation: ls-ring 0.7s 0.25s cubic-bezier(.65, 0, .35, 1) forwards; }
+
+/* Verified tick pops in */
+.ls-tick {
+  position: absolute; z-index: 2; right: 10px; bottom: 10px; width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: linear-gradient(145deg, #34d399, #059669);
+  box-shadow: 0 0 0 4px #fff, 0 8px 18px rgba(5, 150, 105, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transform: scale(0); animation: ls-pop 0.45s 0.85s cubic-bezier(.3, 1.6, .5, 1) forwards;
+}
+.ls-tick svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: ls-draw 0.3s 1.0s ease-out forwards; }
+
+/* Sparks burst once the ring closes */
+.ls-spark {
+  position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%;
+  background: #2f7bff; opacity: 0;
+  transform: rotate(var(--a)) translateY(0);
+  animation: ls-spark 0.6s calc(0.9s + var(--d)) ease-out forwards;
+}
+.ls-spark:nth-child(3n) { background: #34d399; }
+.ls-spark:nth-child(3n+1) { background: #f5a524; width: 5px; height: 5px; }
+
+.ls-title { margin: 6px 0 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a; opacity: 0; animation: ls-rise 0.45s 0.55s ease-out forwards; }
+.ls-sub { margin: 0; font-size: 14.5px; color: #475569; opacity: 0; animation: ls-rise 0.45s 0.7s ease-out forwards; }
+
+@keyframes ls-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ls-out { to { opacity: 0; transform: scale(1.02); } }
+@keyframes ls-spin {
+  0% { transform: translateY(26px) scale(0.4) rotate(-180deg); opacity: 0; }
+  55% { transform: translateY(-8px) scale(1.08) rotate(20deg); opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+}
+@keyframes ls-ring { to { stroke-dashoffset: 0; } }
+@keyframes ls-pop { to { transform: scale(1); } }
+@keyframes ls-draw { to { stroke-dashoffset: 0; } }
+@keyframes ls-spark {
+  0% { opacity: 1; transform: rotate(var(--a)) translateY(-64px) scale(1); }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(-104px) scale(0.3); }
+}
+@keyframes ls-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ls-root { animation: ls-in 0.15s ease-out both, ls-out 0.2s ease-in 0.45s forwards; }
+  .ls-mark, .ls-title, .ls-sub { animation: none; opacity: 1; }
+  .ls-ring-fill { animation: none; stroke-dashoffset: 0; }
+  .ls-tick { animation: none; transform: none; }
+  .ls-tick svg { animation: none; stroke-dashoffset: 0; }
+  .ls-spark { display: none; }
+}

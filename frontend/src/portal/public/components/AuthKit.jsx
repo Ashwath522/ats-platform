@@ -153,7 +153,7 @@ const isNativeApp = () => !!window.Capacitor?.isNativePlatform?.()
  * inside the native app (Google blocks its sign-in inside app webviews).
  * onSuccess(data) receives the same token payload as the password logins.
  */
-export function GoogleSignIn({ role = 'candidate', onSuccess, onError, text = 'continue_with', divider = true, onReady }) {
+export function GoogleSignIn({ role = 'candidate', onSuccess, onError, text = 'continue_with', divider = true, onReady, width: fixedWidth, shape = 'rectangular' }) {
   const box = React.useRef(null)
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -185,13 +185,13 @@ export function GoogleSignIn({ role = 'candidate', onSuccess, onError, text = 'c
           } finally { setBusy(false) }
         },
       })
-      const width = Math.min(400, Math.max(220, Math.round(box.current.getBoundingClientRect().width || 320)))
-      window.google.accounts.id.renderButton(box.current, { theme: 'outline', size: 'large', text, shape: 'rectangular', logo_alignment: 'center', width })
+      const width = fixedWidth || Math.min(400, Math.max(220, Math.round(box.current.getBoundingClientRect().width || 320)))
+      window.google.accounts.id.renderButton(box.current, { theme: 'outline', size: 'large', text, shape, logo_alignment: 'center', width })
       setReady(true)
       handlers.current.onReady?.()
     })()
     return () => { alive = false }
-  }, [role, text])
+  }, [role, text, fixedWidth, shape])
 
   if (isNativeApp()) return null
   return (
@@ -242,7 +242,7 @@ function LinkedInGlyph() {
   )
 }
 
-export function LinkedInSignIn({ role = 'candidate', onReady }) {
+export function LinkedInSignIn({ role = 'candidate', onReady, style }) {
   const [cfg, setCfg] = useState(null)
   const [going, setGoing] = useState(false)
   useEffect(() => {
@@ -257,26 +257,93 @@ export function LinkedInSignIn({ role = 'candidate', onReady }) {
     window.location.assign(startLinkedIn(cfg.client_id, role))
   }
   return (
-    <button type="button" className="pub-linkedin" onClick={start} disabled={going} aria-busy={going}>
+    <button type="button" className="pub-provider pub-linkedin" style={style} onClick={start} disabled={going} aria-busy={going}>
       <LinkedInGlyph />
       <span>{going ? 'Opening LinkedIn…' : 'Continue with LinkedIn'}</span>
     </button>
   )
 }
 
+/** Which sign-in providers the server has turned on ({google, linkedin}: true/false, null while loading). */
+export function useProviders() {
+  const [p, setP] = useState(() => (isNativeApp() ? { google: false, linkedin: false } : { google: null, linkedin: null }))
+  useEffect(() => {
+    if (isNativeApp()) return undefined
+    let alive = true
+    googleConfig().then((c) => alive && setP((x) => ({ ...x, google: !!(c?.enabled && c.client_id) })))
+    linkedinConfig().then((c) => alive && setP((x) => ({ ...x, linkedin: !!(c?.enabled && c.client_id) })))
+    return () => { alive = false }
+  }, [])
+  return p
+}
+
+function MailGlyph() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" />
+    </svg>
+  )
+}
+
+/** Width every provider button shares (Google's button is drawn at a fixed pixel width). */
+function useSharedWidth(ref) {
+  const [w, setW] = useState(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return undefined
+    const measure = () => setW(Math.min(400, Math.max(220, Math.floor(el.getBoundingClientRect().width))))
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    let t
+    const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(measure, 150) })
+    ro.observe(el)
+    return () => { ro.disconnect(); clearTimeout(t) }
+  }, [ref])
+  return w
+}
+
 /**
- * "or" divider + Google + LinkedIn, stacked at the same width. Each provider
- * only appears when the server has it configured; the divider appears once
- * at least one of them is ready.
+ * Three equal pills: Google · LinkedIn · Email. Google/LinkedIn appear only
+ * when the server has them configured; Email is always there.
+ */
+export function ProviderButtons({ role = 'candidate', providers, onSuccess, onError, onEmail, googleText = 'continue_with', emailLabel = 'Continue with Email' }) {
+  const box = React.useRef(null)
+  const width = useSharedWidth(box)
+  const style = width ? { width } : undefined
+  return (
+    <div className="pub-providers" ref={box}>
+      {providers.google !== false && width && (
+        <div className="pub-provider-slot" style={style}>
+          <GoogleSignIn role={role} text={googleText} divider={false} shape="pill" width={width} onSuccess={onSuccess} onError={onError} />
+        </div>
+      )}
+      {providers.linkedin && <LinkedInSignIn role={role} style={style} />}
+      <button type="button" className="pub-provider pub-email" style={style} onClick={onEmail}>
+        <MailGlyph /><span>{emailLabel}</span>
+      </button>
+    </div>
+  )
+}
+
+/**
+ * "or" divider + Google + LinkedIn, stacked at the same width (used where the
+ * email form stays visible, e.g. the recruiter page).
  */
 export function SocialSignIn({ role = 'candidate', onSuccess, onError, googleText = 'continue_with' }) {
-  const [any, setAny] = useState(false)
-  if (isNativeApp()) return null
+  const providers = useProviders()
+  const box = React.useRef(null)
+  const width = useSharedWidth(box)
+  if (isNativeApp() || (!providers.google && !providers.linkedin)) return <div ref={box} />
+  const style = width ? { width } : undefined
   return (
-    <div className="pub-social">
-      {any && <div className="pub-or"><span>or</span></div>}
-      <GoogleSignIn role={role} text={googleText} divider={false} onSuccess={onSuccess} onError={onError} onReady={() => setAny(true)} />
-      <LinkedInSignIn role={role} onReady={() => setAny(true)} />
+    <div className="pub-social" ref={box}>
+      <div className="pub-or"><span>or</span></div>
+      {providers.google && width && (
+        <div className="pub-provider-slot" style={style}>
+          <GoogleSignIn role={role} text={googleText} divider={false} shape="pill" width={width} onSuccess={onSuccess} onError={onError} />
+        </div>
+      )}
+      {providers.linkedin && <LinkedInSignIn role={role} style={style} />}
     </div>
   )
 }

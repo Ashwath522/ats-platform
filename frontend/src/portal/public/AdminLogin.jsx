@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ArrowRight, Mail, ShieldCheck } from 'lucide-react'
 import { Alert, Button } from '../../ui/index.jsx'
 import { useAuth } from '../../auth.jsx'
+import { useLoginSuccess } from '../../ui/LoginSuccess.jsx'
 import { AuthLayout, CardBrand, EMAIL_RE, GoogleSignIn, PasswordField, TextField, postForm } from './components/AuthKit.jsx'
 
 /**
@@ -18,8 +19,10 @@ export default function AdminLogin() {
   const [errors, setErrors] = useState({})
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [overlay, celebrate] = useLoginSuccess()
+  const welcome = (data) => celebrate(data.name || data.email, () => { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }, 'Admin verified · opening the console')
 
-  useEffect(() => { if (adminToken) navigate('/admin/dashboard', { replace: true }) }, [adminToken, navigate])
+  useEffect(() => { if (adminToken && !overlay) navigate('/admin/dashboard', { replace: true }) }, [adminToken, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (ev) => {
     ev.preventDefault()
@@ -38,8 +41,7 @@ export default function AdminLogin() {
         setError('This account does not have admin access.')
         return
       }
-      loginAdmin(data.access_token, data.email)
-      navigate('/admin/dashboard')
+      welcome(data)
     } catch (x) {
       setError(x.status === 401 ? 'Incorrect admin ID or password.' : x.message)
     } finally {
@@ -59,7 +61,8 @@ export default function AdminLogin() {
         <p className="pub-note">Forgot your password? Another admin can send you a reset link from User Management.</p>
         <Button type="submit" block className="pub-submit" loading={loading} iconRight={ArrowRight}>Sign In</Button>
       </form>
-      <GoogleSignIn role="admin" onSuccess={(data) => { loginAdmin(data.access_token, data.email); navigate('/admin/dashboard') }} onError={(msg) => setError(msg)} />
+      <GoogleSignIn role="admin" shape="pill" onSuccess={welcome} onError={(msg) => setError(msg)} />
+      {overlay}
       <p className="pub-roles"><Link to="/candidate/login">Student sign in</Link><span aria-hidden="true">·</span><Link to="/recruiter/login">Recruiter sign in</Link><span aria-hidden="true">·</span><Link to="/">Home</Link></p>
     </AuthLayout>
   )
