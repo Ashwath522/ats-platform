@@ -116,7 +116,7 @@ export default function StudentLogin() {
               <ProviderButtons role="candidate" providers={providers} googleText={mode === 'signup' ? 'signup_with' : 'continue_with'}
                 emailLabel={mode === 'signup' ? 'Sign up with Email' : 'Continue with Email'}
                 onEmail={() => { setEmailChosen(true); setError(null) }}
-                onSuccess={(data) => welcome(data, 'google', data.created)}
+                onSuccess={(data) => welcome(data, data.method || 'google', data.created)}
                 onError={(msg) => setError(msg)} />
               <p className="pub-chooser-note">By continuing you agree to our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
             </div>
