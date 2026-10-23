@@ -87,7 +87,9 @@ export default function Dashboard() {
           tall
           branch={branch}
           page="dashboard"
-          title={<h1 className="st-hero-title"><small>Welcome back,</small><span>{firstName}</span></h1>}
+          title={firstName && firstName !== 'There'
+            ? <h1 className="st-hero-title"><small>Welcome back,</small><span>{firstName}</span></h1>
+            : <h1 className="st-hero-title"><small>Welcome to CoreLink</small><span>Let’s get started</span></h1>}
           text="Continue building, learning and connecting with real opportunities."
           actions={<Button variant="white" to="/candidate/profile" iconRight={ArrowRight}>Update Profile</Button>}
         />
