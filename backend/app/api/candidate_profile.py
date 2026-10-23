@@ -155,8 +155,9 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
     v2.update({k: _j(getattr(profile, col, None), d) for k, (col, d) in _V2_JSON.items()})
     if isinstance(v2.get("preferences"), dict):
         verified = v2["preferences"].pop("linkedin_verified", None)
+        phone_v = v2["preferences"].pop("phone_verified", None)
         v2["preferences"].pop(_COLLEGE_META_KEY, None)
-    else: verified = None
+    else: verified = phone_v = None
     v2["college_meta"] = _college_meta(profile)
     return {
         **v2,
@@ -184,6 +185,8 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
         "updated_at": profile.updated_at.isoformat(),
         "linkedin_verified": bool(verified),
         "linkedin_verified_at": verified.get("at") if isinstance(verified, dict) else None,
+        "phone_verified": bool(isinstance(phone_v, dict) and phone_v.get("phone") and phone_v.get("phone") == (profile.contact_phone or "")),
+        "phone_verified_via": phone_v.get("via") if isinstance(phone_v, dict) else None,
     }
 
 
@@ -310,11 +313,12 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
         previous_prefs = _j(profile.preferences_json, {})
         prev_meta = previous_prefs.get(_COLLEGE_META_KEY)
         prev_linkedin_verified = previous_prefs.get("linkedin_verified")
+        prev_phone_verified = previous_prefs.get("phone_verified")
         for k, (col, _d) in _V2_JSON.items():
             v = getattr(update, k)
             if v is not None:
                 if k == "preferences" and isinstance(v, dict):
-                    v = {key: value for key, value in v.items() if key != "linkedin_verified"}
+                    v = {key: value for key, value in v.items() if key not in ("linkedin_verified", "phone_verified")}
                 setattr(profile, col, json.dumps(v))
         # Keep college metadata across preference rewrites; replace/clear it when asked.
         prefs = _j(profile.preferences_json, {})
@@ -333,6 +337,11 @@ def update_profile(update: ProfileUpdate, candidate: str = Depends(get_current_c
             prefs[_COLLEGE_META_KEY] = meta
         if verified:
             prefs["linkedin_verified"] = verified
+        # Phone verification only survives while the number stays the same.
+        if isinstance(prev_phone_verified, dict) and prev_phone_verified.get("phone") == (profile.contact_phone or ""):
+            prefs["phone_verified"] = prev_phone_verified
+        else:
+            prefs.pop("phone_verified", None)
         if prefs or profile.preferences_json:
             profile.preferences_json = json.dumps(prefs)
 

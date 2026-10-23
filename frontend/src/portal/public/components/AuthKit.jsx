@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { Eye, EyeOff, Lock, Megaphone } from 'lucide-react'
 import { BrandMark, Input, cx } from '../../../ui/index.jsx'
 import { apiUrl } from '../../../lib/api.js'
+import { runTruecaller, truecallerSupported } from '../../../lib/truecaller.js'
 import './public.css'
 
 let cache = null
@@ -145,6 +146,7 @@ function configLoader(path) {
 }
 const googleConfig = configLoader('/api/auth/google/config')
 const linkedinConfig = configLoader('/api/auth/linkedin/config')
+const truecallerConfig = configLoader('/api/auth/truecaller/config')
 
 const isNativeApp = () => !!window.Capacitor?.isNativePlatform?.()
 
@@ -266,12 +268,13 @@ export function LinkedInSignIn({ role = 'candidate', onReady, style }) {
 
 /** Which sign-in providers the server has turned on ({google, linkedin}: true/false, null while loading). */
 export function useProviders() {
-  const [p, setP] = useState(() => (isNativeApp() ? { google: false, linkedin: false } : { google: null, linkedin: null }))
+  const [p, setP] = useState(() => (isNativeApp() ? { google: false, linkedin: false, truecaller: false } : { google: null, linkedin: null, truecaller: truecallerSupported() ? null : false }))
   useEffect(() => {
     if (isNativeApp()) return undefined
     let alive = true
     googleConfig().then((c) => alive && setP((x) => ({ ...x, google: !!(c?.enabled && c.client_id) })))
     linkedinConfig().then((c) => alive && setP((x) => ({ ...x, linkedin: !!(c?.enabled && c.client_id) })))
+    if (truecallerSupported()) truecallerConfig().then((c) => alive && setP((x) => ({ ...x, truecaller: !!c?.enabled })))
     return () => { alive = false }
   }, [])
   return p
@@ -306,6 +309,32 @@ function useSharedWidth(ref) {
  * Three equal pills: Google · LinkedIn · Email. Google/LinkedIn appear only
  * when the server has them configured; Email is always there.
  */
+function TruecallerGlyph() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="12" fill="#0087FF" />
+      <path fill="#fff" d="M8.6 6.4c.4-.3 1-.2 1.3.2l1.3 1.9c.3.4.2 1-.2 1.3l-.9.7c.5 1.2 1.4 2.3 2.6 3l.8-.8c.4-.4 1-.4 1.3 0l1.7 1.5c.4.3.4.9.1 1.3l-.9 1.1c-.5.6-1.3.8-2 .6-3.1-1-5.5-3.5-6.5-6.6-.2-.7.1-1.5.7-2z" />
+    </svg>
+  )
+}
+
+/** "Continue with Truecaller" (Android phone browsers with the Truecaller app). */
+export function TruecallerButton({ onSuccess, onError, style, label = 'Continue with Truecaller' }) {
+  const [busy, setBusy] = useState(false)
+  const go = async () => {
+    setBusy(true)
+    try {
+      const r = await runTruecaller({ purpose: 'login' })
+      onSuccess?.(r)
+    } catch (e) { onError?.(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <button type="button" className="pub-provider pub-truecaller" style={style} onClick={go} disabled={busy} aria-busy={busy}>
+      <TruecallerGlyph /><span>{busy ? 'Waiting for Truecaller…' : label}</span>
+    </button>
+  )
+}
+
 export function ProviderButtons({ role = 'candidate', providers, onSuccess, onError, onEmail, googleText = 'continue_with', emailLabel = 'Continue with Email' }) {
   const box = React.useRef(null)
   const width = useSharedWidth(box)
@@ -318,6 +347,7 @@ export function ProviderButtons({ role = 'candidate', providers, onSuccess, onEr
         </div>
       )}
       {providers.linkedin && <LinkedInSignIn role={role} style={style} />}
+      {role === 'candidate' && providers.truecaller && <TruecallerButton style={style} onSuccess={(d) => onSuccess?.({ ...d, method: 'truecaller' })} onError={onError} />}
       <button type="button" className="pub-provider pub-email" style={style} onClick={onEmail}>
         <MailGlyph /><span>{emailLabel}</span>
       </button>

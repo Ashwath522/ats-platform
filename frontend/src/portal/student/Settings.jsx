@@ -11,6 +11,8 @@ import {
 import { useApi } from '../../ui/useApi.js'
 import { useAuth } from '../../auth.jsx'
 import { useStudent } from './StudentShell.jsx'
+import { runTruecaller, truecallerSupported } from '../../lib/truecaller.js'
+import { invalidateAll } from '../../ui/apiCache.js'
 import { CollegeName } from '../../ui/CollegePicker.jsx'
 import { ChipsModal, IdentityModal, openAuthedFile, useProfileSave } from './components/editors.jsx'
 import './components/student.css'
@@ -163,6 +165,31 @@ function Overview({ profile, displayName, branch, setModal }) {
   )
 }
 
+function PhoneValue({ profile }) {
+  const { candidateToken } = useAuth()
+  const { reload } = useStudent()
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const canTruecaller = truecallerSupported()
+  const verify = async () => {
+    setBusy(true)
+    try {
+      const r = await runTruecaller({ purpose: 'verify_phone', token: candidateToken })
+      toast(`Phone ${r.phone} verified with Truecaller`, 'success')
+      invalidateAll()
+      await reload?.()
+    } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
+  }
+  return (
+    <span className="cl-row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {profile.contact_phone || <span className="cl-muted">Not added</span>}
+      {profile.phone_verified
+        ? <span className="cl-chip blue" title="Verified with Truecaller">✓ Verified</span>
+        : canTruecaller && <Button size="sm" variant="secondary" loading={busy} onClick={verify}>Verify with Truecaller</Button>}
+    </span>
+  )
+}
+
 function PersonalCard({ profile, branch, onEdit }) {
   const { candidateUsername } = useAuth()
   return (
@@ -170,7 +197,7 @@ function PersonalCard({ profile, branch, onEdit }) {
       <div className="st-kv-box" style={{ padding: '0 14px' }}>
         <KV icon={User} label="Full Name" value={profile.full_name} />
         <KV icon={Mail} label="Email Address" value={profile.contact_email || candidateUsername} />
-        <KV icon={Phone} label="Phone Number" value={profile.contact_phone} />
+        <KV icon={Phone} label="Phone Number" value={<PhoneValue profile={profile} />} />
         <KV icon={CalendarDays} label="Date of Birth" value={profile.date_of_birth ? fmtDate(profile.date_of_birth) : null} />
         <KV icon={MapPin} label="Location" value={profile.location_text} />
         <KV icon={Layers} label="Engineering Branch" value={profile.branch ? branch.long : null} />

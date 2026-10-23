@@ -33,6 +33,7 @@ export function Privacy() {
       <h2>What we collect</h2>
       <ul>
         <li><strong>Account details:</strong> your email address and a hashed password. If you use <em>Sign in with Google or LinkedIn</em>, we receive only your name, email address and email-verified status. We do not use your photo or access anything else from either service.</li>
+        <li><strong>Phone verification with Truecaller:</strong> if you choose it, Truecaller shares your verified phone number, name and (if you added one) email with CoreLink. We store the number on your profile as verified and use it to sign you in; we don't receive your contacts or call history.</li>
         <li><strong>LinkedIn imports:</strong> a LinkedIn PDF is read once to pre-fill your form and is not stored. A pasted LinkedIn URL is stored only as a link; we never fetch profile pages.</li>
         <li><strong>Profile information you enter:</strong> education, branch, skills, projects, resume and links you choose to add.</li>
         <li><strong>Activity on CoreLink:</strong> jobs you save or apply to, interview practice answers and their scores, and messages from recruiters.</li>
