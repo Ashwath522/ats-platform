@@ -6,8 +6,9 @@
  */
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { createPortal } from 'react-dom'
 import { Eye, EyeOff, Lock, Megaphone } from 'lucide-react'
-import { BrandMark, Input, cx } from '../../../ui/index.jsx'
+import { BrandMark, Button, Input, Modal, cx } from '../../../ui/index.jsx'
 import { apiUrl } from '../../../lib/api.js'
 import { runTruecaller, truecallerSupported } from '../../../lib/truecaller.js'
 import './public.css'
@@ -268,13 +269,13 @@ export function LinkedInSignIn({ role = 'candidate', onReady, style }) {
 
 /** Which sign-in providers the server has turned on ({google, linkedin}: true/false, null while loading). */
 export function useProviders() {
-  const [p, setP] = useState(() => (isNativeApp() ? { google: false, linkedin: false, truecaller: false } : { google: null, linkedin: null, truecaller: truecallerSupported() ? null : false }))
+  const [p, setP] = useState(() => (isNativeApp() ? { google: false, linkedin: false, truecaller: false } : { google: null, linkedin: null, truecaller: null }))
   useEffect(() => {
     if (isNativeApp()) return undefined
     let alive = true
     googleConfig().then((c) => alive && setP((x) => ({ ...x, google: !!(c?.enabled && c.client_id) })))
     linkedinConfig().then((c) => alive && setP((x) => ({ ...x, linkedin: !!(c?.enabled && c.client_id) })))
-    if (truecallerSupported()) truecallerConfig().then((c) => alive && setP((x) => ({ ...x, truecaller: !!c?.enabled })))
+    truecallerConfig().then((c) => alive && setP((x) => ({ ...x, truecaller: !!c?.enabled })))
     return () => { alive = false }
   }, [])
   return p
@@ -318,6 +319,35 @@ function TruecallerGlyph() {
   )
 }
 
+/**
+ * Shown on computers / iPhones: phone sign-in runs through Truecaller, which
+ * only works in Android phone browsers, so explain how to use it.
+ */
+function PhoneInfoButton({ style }) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const link = `${window.location.origin}/candidate/login`
+  const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* ignore */ } }
+  return (
+    <>
+      <button type="button" className="pub-provider pub-phone" style={style} onClick={() => setOpen(true)}>
+        <TruecallerGlyph /><span>Continue with Phone</span>
+      </button>
+      {createPortal(<Modal open={open} onClose={() => setOpen(false)} title="Sign in with your phone number" footer={<Button onClick={() => setOpen(false)}>Got it</Button>}>
+        <div className="pub-phone-help">
+          <p>Phone sign-in uses <b>Truecaller</b> — one tap, no OTP, free. It works in <b>Chrome on an Android phone</b> with the Truecaller app.</p>
+          <ol>
+            <li>On your Android phone, open <b>{link.replace(/^https?:\/\//, '')}</b></li>
+            <li>Tap <b>Continue with Truecaller</b>, then <b>Continue</b> in the Truecaller pop-up.</li>
+          </ol>
+          <button type="button" className="pub-copy" onClick={copy}>{copied ? 'Link copied ✓' : 'Copy link to send to your phone'}</button>
+          <p className="pub-phone-note">On this device, use Google, LinkedIn or Email. You can verify your phone number later in <b>Settings → Personal Information</b>.</p>
+        </div>
+      </Modal>, document.body)}
+    </>
+  )
+}
+
 /** "Continue with Truecaller" (Android phone browsers with the Truecaller app). */
 export function TruecallerButton({ onSuccess, onError, style, label = 'Continue with Truecaller' }) {
   const [busy, setBusy] = useState(false)
@@ -347,7 +377,9 @@ export function ProviderButtons({ role = 'candidate', providers, onSuccess, onEr
         </div>
       )}
       {providers.linkedin && <LinkedInSignIn role={role} style={style} />}
-      {role === 'candidate' && providers.truecaller && <TruecallerButton style={style} onSuccess={(d) => onSuccess?.({ ...d, method: 'truecaller' })} onError={onError} />}
+      {role === 'candidate' && providers.truecaller && (truecallerSupported()
+        ? <TruecallerButton style={style} onSuccess={(d) => onSuccess?.({ ...d, method: 'truecaller' })} onError={onError} />
+        : <PhoneInfoButton style={style} />)}
       <button type="button" className="pub-provider pub-email" style={style} onClick={onEmail}>
         <MailGlyph /><span>{emailLabel}</span>
       </button>
