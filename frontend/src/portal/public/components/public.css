@@ -297,3 +297,10 @@
 @keyframes pub-reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes pub-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .pub-reveal, .pub-provider-slot { animation: none !important; } }
+
+/* Phone sign-in help (computers / iPhone) */
+.pub-phone-help { display: flex; flex-direction: column; gap: 12px; font-size: 14px; color: var(--cl-text); line-height: 1.55; }
+.pub-phone-help ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.pub-copy { align-self: flex-start; border: 1px solid #c6d4f0; background: #f5f8ff; color: var(--cl-blue, #0b5cff); font: inherit; font-weight: 600; font-size: 13.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.pub-copy:hover { background: #eaf1ff; }
+.pub-phone-note { margin: 0; font-size: 13px; color: var(--cl-muted, #64748b); }
