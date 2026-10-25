@@ -2241,14 +2241,22 @@ def public_stats():
 def _public_stats_uncached() -> dict:
     st = load_platform_settings()
     with Session(engine) as s:
-        companies = [c for c in _companies_rows(s) if c["status"] in {"verified", "approved"}]
+        from ..services.company_directory import is_demo_company_name
+        from ..services.demo_activity import STUDENT_DOMAIN
+        from ..services.demo_company_data import DEMO_EMAIL_DOMAIN
+        # Public numbers never include demo companies, demo jobs or demo students.
+        companies = [c for c in _companies_rows(s) if c["status"] in {"verified", "approved"} and not is_demo_company_name(c.get("name"))
+                     and not str(c.get("email") or "").lower().endswith("." + DEMO_EMAIL_DOMAIN)]
+        demo_rids = select(RecruiterUser.id).where(RecruiterUser.username.like(f"%.{DEMO_EMAIL_DOMAIN}"))
         # ONE round trip for all the counters (was four)
-        students_q = select(func.count()).select_from(CandidateUser).where(or_(CandidateUser.status == None, CandidateUser.status != "suspended")).scalar_subquery()  # noqa: E711
-        jobs_q = select(func.count()).select_from(Job).where(Job.status == "open").scalar_subquery()
+        students_q = select(func.count()).select_from(CandidateUser).where(or_(CandidateUser.status == None, CandidateUser.status != "suspended"),  # noqa: E711
+                                                                          ~CandidateUser.username.like(f"%@{STUDENT_DOMAIN}")).scalar_subquery()
+        jobs_q = select(func.count()).select_from(Job).where(Job.status == "open", Job.recruiter_id.not_in(demo_rids)).scalar_subquery()
         projects_q = select(func.count()).select_from(StudentProject).where(StudentProject.status == "verified").scalar_subquery()
         students, open_jobs, verified_projects = s.exec(select(students_q, jobs_q, projects_q)).one()
         from ..services.hot_data import open_jobs as _open_jobs
-        branches = {branch_id(j.branch) for j in _open_jobs() if j.branch}
+        demo_ids = set(s.exec(demo_rids).all())
+        branches = {branch_id(j.branch) for j in _open_jobs() if j.branch and j.recruiter_id not in demo_ids}
     top = sorted(companies, key=lambda c: (-c["jobs"], c["name"]))[:6]
     out = {
         "students": students, "companies": len(companies), "open_jobs": open_jobs,

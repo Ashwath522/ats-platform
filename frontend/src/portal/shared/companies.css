@@ -85,3 +85,6 @@
   .co-logins td { border: 0; padding: 3px 10px; }
   .co-logins td::before { content: attr(data-label) ': '; color: var(--cl-muted); font-size: 12px; }
 }
+
+.adm-demo-students { margin: 4px 0 14px; padding: 12px 14px; border: 1px dashed #d8c7ff; border-radius: 12px; background: #fbf8ff; }
+.adm-demo-students code { font-size: 12px; }

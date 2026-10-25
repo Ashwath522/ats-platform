@@ -176,6 +176,8 @@ def status() -> dict:
 
 
 def remove_all() -> dict:
+    from . import demo_activity
+    students = demo_activity.remove()
     with Session(engine) as s:
         recs = _demo_recruiters(s)
         rids = list(recs) or [-1]
@@ -220,4 +222,4 @@ def remove_all() -> dict:
             s.execute(sa_delete(User).where(User.email.in_(emails), User.role == "recruiter"))
         s.execute(sa_delete(RecruiterUser).where(RecruiterUser.id.in_(rids)))
         s.commit()
-    return {"deleted": True, **counts}
+    return {"deleted": True, **counts, "demo_students": students.get("demo_students", 0)}

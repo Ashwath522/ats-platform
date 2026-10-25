@@ -5,7 +5,7 @@
  * plain text.
  */
 import React, { useState } from 'react'
-import { Download, FlaskConical, KeyRound, RefreshCw, Trash2 } from 'lucide-react'
+import { Download, FlaskConical, GraduationCap, KeyRound, RefreshCw, Trash2, Users } from 'lucide-react'
 import { Alert, Button, Card, Skeleton, downloadCsv, useToast } from '../../../ui/index.jsx'
 import { useApi, useQuery } from '../../../ui/useApi.js'
 import { DemoBadge } from '../../shared/companies.jsx'
@@ -40,6 +40,22 @@ export default function DemoCompaniesCard() {
       st.reload()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(null) }
   }
+  const addStudents = async () => {
+    setBusy('students')
+    try {
+      const r = await api.post('/api/admin/demo/activity')
+      toast(r.students_created ? `${r.students_created} demo students added with ${r.applications_created} applications` : 'Demo students refreshed', 'success')
+      st.reload()
+    } catch (e) { toast(e.message, 'error') } finally { setBusy(null) }
+  }
+  const removeStudents = async () => {
+    setBusy('rmstudents')
+    try {
+      const r = await api.del('/api/admin/demo/activity')
+      toast(`Removed ${r.demo_students} demo students and ${r.demo_student_applications} applications`, 'success')
+      st.reload()
+    } catch (e) { toast(e.message, 'error') } finally { setBusy(null) }
+  }
   const newLogins = (result?.logins || []).filter((l) => l.password)
   const csv = () => downloadCsv('corelink-demo-recruiter-logins.csv',
     (result?.logins || []).map((l) => ({ company: l.company, email: l.email, password: l.password || '(unchanged — existing account)', jobs: l.jobs })),
@@ -59,6 +75,25 @@ export default function DemoCompaniesCard() {
           <MiniStat icon={KeyRound} tone="purple" value={fmtNum(s.recruiters)} label="Recruiter logins" />
           <MiniStat icon={RefreshCw} tone="teal" value={fmtNum(s.jobs)} label="Demo jobs" />
           <MiniStat icon={Download} tone="green" value={fmtNum(s.applications)} label="Applications to demo jobs" />
+        </div>
+      )}
+      {s && (
+        <div className="adm-demo-students">
+          <div className="cl-row" style={{ gap: 10, alignItems: 'flex-start' }}>
+            <span className="cl-ico purple"><GraduationCap size={18} /></span>
+            <div className="cl-grow">
+              <strong>Demo students & applications</strong>
+              <small className="cl-muted" style={{ display: 'block' }}>
+                24 fictional students (<code>…@students.demo.corelink</code>) applying to the demo jobs at different stages, so demo recruiters see a realistic pipeline.
+                They never apply to real jobs and are left out of the public homepage numbers.
+              </small>
+              <small style={{ display: 'block', marginTop: 4 }}><Users size={13} /> {fmtNum(s.demo_students || 0)} demo students · {fmtNum(s.demo_student_applications || 0)} applications</small>
+            </div>
+            <div className="cl-row cl-wrap" style={{ gap: 8 }}>
+              <Button size="sm" variant="secondary" icon={GraduationCap} loading={busy === 'students'} disabled={!!busy || !s.companies} onClick={addStudents}>{s.demo_students ? 'Refresh' : 'Add demo students'}</Button>
+              <Button size="sm" variant="danger" icon={Trash2} loading={busy === 'rmstudents'} disabled={!!busy || !s.demo_students} onClick={removeStudents}>Remove</Button>
+            </div>
+          </div>
         </div>
       )}
       {result && (
@@ -88,7 +123,7 @@ export default function DemoCompaniesCard() {
         </div>
       )}
       <ConfirmModal open={confirm} danger title="Remove all demo data?" confirmLabel="Remove demo data" busy={busy === 'remove'}
-        text="This deletes the 20 demo companies, their recruiter accounts and jobs, and every application, interview, offer and saved job on those jobs. Real companies and jobs are not touched."
+        text="This deletes the 20 demo companies, their recruiter accounts and jobs, the demo students, and every application, interview, offer and saved job on those jobs. Real companies, students and jobs are not touched."
         requireText="DELETE" onConfirm={remove} onClose={() => setConfirm(false)} />
     </Card>
   )
