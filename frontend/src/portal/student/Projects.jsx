@@ -7,6 +7,8 @@ import { Alert, Button, Card, EmptyState, Field, Hero, Input, Menu, Modal, Searc
 import { useApi, useQuery } from '../../ui/useApi.js'
 import { branchThumb } from '../../branding/branches.js'
 import { mediaUrl } from '../../lib/api.js'
+import { normalizeYouTubeUrl } from '../../lib/projectAnalysis.js'
+import { startAnalysis, capabilities, uploadEvidenceWithRetry, clientStatusPayload } from '../../lib/analysis-engine/engine.js'
 import { useStudent } from './StudentShell.jsx'
 import './components/student.css'
 
@@ -194,6 +196,7 @@ function ProjectView({ project: p, branch, onClose, onEdit, onSubmit }) {
       <div className="cl-col" style={{ gap: 14 }}>
         <img src={p.image_url ? mediaUrl(p.image_url) : branchThumb(branch, 0)} alt="" style={{ width: '100%', maxHeight: 300, objectFit: 'cover', borderRadius: 12 }} />
         <div className="cl-row cl-wrap"><StatusBadge status={p.status} /><Badge>{CAT_LABEL[p.category]}</Badge>{p.month && <Badge>{p.month}</Badge>}<Badge><Users size={12} /> Team of {p.team_size}</Badge></div>
+        <AnalysisPanel project={p} />
         {p.verification_note && <Alert tone="warn">{p.verification_note}</Alert>}
         <p className="st-pre">{p.description || 'No description.'}</p>
         <div className="st-tag-row">{[...p.tags, ...p.tools].map((t) => <span key={t} className="st-tag blue">{t}</span>)}</div>
@@ -206,6 +209,12 @@ function ProjectView({ project: p, branch, onClose, onEdit, onSubmit }) {
       </div>
     </Modal>
   )
+}
+
+function AnalysisPanel({ project }) {
+  const api = useApi('candidate'); const [job, setJob] = useState(null); const [files, setFiles] = useState([]); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
+  const run = async () => { setBusy(true); setNotice(''); try { const started=await api.post(`/api/student/projects/${project.id}/analyse`); const fs=(await api.get(`/api/student/projects/${project.id}/files`)).files||[]; setFiles(fs.map(f=>({...f,status:'waiting'}))); if(!capabilities().worker || !capabilities().indexedDB){setNotice("Your browser can't run the file reader — only basic checks will be done."); return} const result=await startAnalysis({projectId:project.id,jobId:started.id,files:fs.map(f=>({...f,url:f.media_url})),onProgress:async (m)=>{if(m.file) setFiles(x=>x.map(f=>f.filename===m.file?{...f,status:m.status||'reading'}:f)); if(m.type==='progress') { const done=fs.findIndex(f=>f.filename===m.file); await api.post(`/api/student/projects/${project.id}/analysis/${started.id}/client-status`,clientStatusPayload(((done+1)/Math.max(fs.length,1))*100,m.file)) }}}); for(const f of fs){ const evidence=result.evidence.filter(e=>e.source_ref===f.filename); if(evidence.length) await uploadEvidenceWithRetry({payload:{file_id:f.id,sha256:f.sha256,evidence,warnings:result.warnings},upload:(payload)=>api.post(`/api/student/projects/${project.id}/analysis/${started.id}/evidence`,payload)}) } let latest; for(let n=0;n<100;n+=1){ latest=await api.get(`/api/student/projects/${project.id}/analysis`); setJob(latest); if(latest.status==='failed'||latest.stages?.find(s=>s.name==='extract_files')?.state==='done') break; await new Promise(r=>setTimeout(r,3000)) } } catch(e){setNotice(e.message)} finally{setBusy(false)} }
+  return <div className="cl-col" style={{gap:8}}><div className="cl-row cl-wrap"><Button size="sm" loading={busy} onClick={run}>Analyse project</Button>{notice&&<span className="cl-muted">{notice}</span>}</div>{files.length>0&&<div aria-live="polite">{files.map(f=><div key={f.id} className="cl-row" style={{justifyContent:'space-between',fontSize:13}}><span>{f.filename}</span><span>{f.status}</span></div>)}</div>}{job?.result?.evidence?.length>0&&<div className="cl-col" style={{gap:5}}><strong>Evidence</strong>{job.result.evidence.map(e=><div key={e.id} style={{fontSize:13}}>{e.fact} <Badge>{e.confirmed?'server-checked':'on-device'}</Badge></div>)}</div>}<small className="cl-muted">Keep this tab open while your files are read on your device. If you close it, we'll continue where we stopped.</small></div>
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -227,6 +236,7 @@ function ProjectModal({ project, onClose, onSaved }) {
       tags: (project.tags || []).join(', '), tools: (project.tools || []).join(', '), team_size: project.team_size || 1,
       month: m || '', year: y || String(new Date().getFullYear()),
       link_label: project.links?.[0]?.label || '', link_url: project.links?.[0]?.url || '',
+      domain: project.domain || 'other', video_url: project.video_url || '',
     })
     setImage(null); setFile(null); setErr({})
   }, [project])
@@ -236,6 +246,7 @@ function ProjectModal({ project, onClose, onSaved }) {
     const e = {}
     if (f.title.trim().length < 2) e.title = 'Title is required'
     if (f.link_url && !/^https?:\/\/\S+/i.test(f.link_url)) e.link_url = 'Must start with http:// or https://'
+    if (f.video_url && !normalizeYouTubeUrl(f.video_url)) e.video_url = 'Use a valid HTTPS YouTube watch, Shorts or youtu.be link'
     if (Number(f.team_size) < 1 || Number(f.team_size) > 50) e.team_size = '1–50'
     if (image && image.size > 5 * 1024 * 1024) e.image = 'Image must be ≤ 5 MB'
     if (file) {
@@ -250,6 +261,7 @@ function ProjectModal({ project, onClose, onSaved }) {
       title: f.title.trim(), description: f.description.trim(), category: f.category, tags: split(f.tags), tools: split(f.tools),
       team_size: Number(f.team_size) || 1, month: f.month ? `${f.month} ${f.year}` : '',
       links: f.link_url ? [{ label: f.link_label.trim() || 'Link', url: f.link_url.trim() }] : [],
+      domain: f.domain || 'other', video_url: f.video_url ? normalizeYouTubeUrl(f.video_url) : null,
     }
     setBusy(true)
     try {
@@ -269,6 +281,7 @@ function ProjectModal({ project, onClose, onSaved }) {
         <Field label="Project title *" error={err.title} className="span-2"><Input value={f.title || ''} onChange={set('title')} maxLength={160} placeholder="e.g. Design and Analysis of Spur Gearbox" /></Field>
         <Field label="Description" className="span-2" hint="Problem, your approach, tools and measurable results."><Textarea value={f.description || ''} onChange={set('description')} maxLength={4000} /></Field>
         <Field label="Category"><Select value={f.category} onChange={set('category')} options={[{ value: 'academic', label: 'Academic' }, { value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }]} /></Field>
+        <Field label="Engineering domain"><Select value={f.domain || 'other'} onChange={set('domain')} options={[{ value: 'electronics', label: 'Electronics' }, { value: 'mechanical', label: 'Mechanical' }, { value: 'civil', label: 'Civil' }, { value: 'software', label: 'Software' }, { value: 'ai_ml', label: 'AI / ML' }, { value: 'robotics_iot', label: 'Robotics / IoT' }, { value: 'other', label: 'Other' }]} /></Field>
         <Field label="Team size" error={err.team_size}><Input type="number" min={1} max={50} value={f.team_size} onChange={set('team_size')} /></Field>
         <Field label="Tags" hint="Comma separated, e.g. CAD Design, FEA"><Input value={f.tags || ''} onChange={set('tags')} /></Field>
         <Field label="Tools / software" hint="e.g. SolidWorks, ANSYS"><Input value={f.tools || ''} onChange={set('tools')} /></Field>
@@ -276,6 +289,8 @@ function ProjectModal({ project, onClose, onSaved }) {
         <Field label="Year"><Input type="number" min={2000} max={2040} value={f.year} onChange={set('year')} /></Field>
         <Field label="Link label"><Input value={f.link_label || ''} onChange={set('link_label')} placeholder="GitHub / GrabCAD / Report" maxLength={40} /></Field>
         <Field label="Link URL" error={err.link_url}><Input value={f.link_url || ''} onChange={set('link_url')} placeholder="https://…" /></Field>
+        <Field label="Demo video (YouTube)" error={err.video_url} hint="Upload your video to YouTube as Unlisted and paste the link"><Input value={f.video_url || ''} onChange={set('video_url')} placeholder="https://youtu.be/…" /></Field>
+        {!isNew && project.challenge_code && <Alert tone="info">Say or show this code in your video: <strong>{project.challenge_code}</strong></Alert>}
         <Field label={project.image_url ? 'Replace image' : 'Project image'} error={err.image} hint="PNG / JPG / WEBP, max 5 MB"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => setImage(e.target.files?.[0] || null)} /></Field>
         <Field label={project.file_name ? `Replace attachment (${project.file_name})` : 'Attachment'} error={err.file} hint="ZIP, PDF, STEP, STL or DWG, max 20 MB"><input type="file" accept={ATTACH_EXT.join(',')} onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
       </div>

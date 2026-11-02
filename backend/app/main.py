@@ -94,9 +94,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ATS Platform API", lifespan=lifespan)
 
 # CORS_ORIGINS env var: comma-separated list of allowed origins, e.g.
-# "https://app.example.com,https://admin.example.com". Defaults to "*" for
-# local dev - set this explicitly before any real deployment.
-_cors_origins_env = os.environ.get("CORS_ORIGINS", "*")
+# "https://app.example.com,https://admin.example.com". Local development uses
+# localhost and Capacitor origins; production must use an explicit allowlist.
+_cors_origins_env = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:8080,capacitor://localhost",
+)
+_is_production = os.environ.get("ENV", "development").lower() in {"production", "prod"}
+if _is_production and _cors_origins_env.strip() == "*":
+    raise RuntimeError("CORS_ORIGINS='*' is not allowed when ENV=production")
 allow_origins = ["*"] if _cors_origins_env.strip() == "*" else [
     o.strip() for o in _cors_origins_env.split(",") if o.strip()
 ]

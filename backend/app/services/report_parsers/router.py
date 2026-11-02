@@ -11,6 +11,7 @@ Guarantees:
 """
 
 import os
+import re
 
 
 # Extension → parser function name (resolved lazily inside route_file so
@@ -66,11 +67,18 @@ def route_file(file_path: str) -> tuple[str, str]:
 
         # ── 3D model (no text to extract) ────────────────────────
         if ext in ("stl", "obj", "step", "stp", "iges", "igs"):
-            return (
-                f"3D model file: {filename}. "
-                f"Keywords: 3D modelling, CAD, design, mechanical engineering.",
-                "3d_model_filename",
-            )
+            if ext in ("step", "stp"):
+                raw=open(file_path, "rb").read()
+                text=raw.decode("utf-8", "ignore")
+                names=re.findall(r"PRODUCT\s*\(\s*'([^']+)'", text, re.I)
+                suffix=f" Parts named in file: {', '.join(dict.fromkeys(names))}." if names else ""
+                return (f"3D model file: {filename} (STEP). Contents not analysed." + suffix, "3d_model_unparsed")
+            if ext == "stl":
+                from app.services.report_parsers.stl_utils import stl_metadata
+                count,bbox=stl_metadata(file_path)
+                box='unavailable' if bbox is None else 'x={:.3g}, y={:.3g}, z={:.3g}'.format(*bbox)
+                return (f"3D model file: {filename} (STL). Triangle count: {count}. Bounding box: {box}.", "3d_model_unparsed")
+            return (f"3D model file: {filename} ({ext.upper()}). Contents not analysed.", "3d_model_unparsed")
 
         # ── Unknown → best-effort text read ──────────────────────
         from app.services.report_parsers.txt_parser import parse_txt

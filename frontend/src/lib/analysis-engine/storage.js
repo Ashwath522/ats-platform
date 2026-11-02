@@ -1,0 +1,4 @@
+const DB = 'corelink-analysis-v1'
+export async function loadState(jobId) { try { if (!indexedDB) return null; return await new Promise((resolve) => { const r=indexedDB.open(DB,1); r.onupgradeneeded=()=>r.result.createObjectStore('jobs'); r.onsuccess=()=>{ const q=r.result.transaction('jobs').objectStore('jobs').get(String(jobId)); q.onsuccess=()=>resolve(q.result||null); q.onerror=()=>resolve(null) }; r.onerror=()=>resolve(null) }) } catch { return null } }
+export async function saveState(jobId,value) { try { if (!indexedDB) return; const r=indexedDB.open(DB,1); r.onupgradeneeded=()=>r.result.createObjectStore('jobs'); r.onsuccess=()=>r.result.transaction('jobs','readwrite').objectStore('jobs').put({...value,updatedAt:Date.now()},String(jobId)) } catch {} }
+export async function clearState(jobId) { try { const r=indexedDB.open(DB,1); r.onsuccess=()=>r.result.transaction('jobs','readwrite').objectStore('jobs').delete(String(jobId)) } catch {} }

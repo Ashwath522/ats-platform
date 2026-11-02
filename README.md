@@ -168,6 +168,14 @@ docs/               # design references
 
 ## Roadmap
 
+### Project analysis (Phase 1)
+
+CoreLink now supports engineering-project domains, YouTube demo links with an owner challenge code, multiple evidence files, and a tracked foundation analysis job. Phase 1 validates uploads and records factual evidence only; AI, video processing, domain analysis, and scoring are planned for later updates. Human reviewer verification remains the only path to a verified project.
+
+Phase 2 adds an optional browser-side extraction engine. Text and image metadata are read in a Web Worker and submitted as untrusted client evidence; the server stores it, re-checks supported formats, and only server-origin or server-confirmed evidence may support verified claims. IndexedDB stores resumable step state, never raw file bytes.
+
+Project analysis is recruiter-safe: recruiters see only completed analysis for candidates already visible through existing application/privacy rules. They receive the domain, human verification status, scores, claim statuses and evidence references; raw files, transcripts, challenge codes and internal warnings remain private. Human admin approval remains the only verification gate.
+
 - Firebase phone OTP for iPhone/desktop
 - Moving hosting closer to India
 - Recruiter analytics dashboard

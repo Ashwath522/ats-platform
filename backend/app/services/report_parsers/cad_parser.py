@@ -16,10 +16,8 @@ def parse_cad(file_path: str) -> tuple[str, str]:
     if lower.endswith(".dwg"):
         name = os.path.splitext(os.path.basename(file_path))[0]
         return (
-            f"CAD drawing (AutoCAD .dwg binary): '{name}'. "
-            f"Likely a mechanical/civil design drawing. "
-            f"Keywords: CAD, AutoCAD, drafting, engineering drawing, design.",
-            "dwg_filename",
+            f"CAD drawing file: '{name}.dwg'. Contents not analysed.",
+            "dwg_unparsed",
         )
 
     # ── .dxf → parse with ezdxf.

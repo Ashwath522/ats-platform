@@ -224,6 +224,9 @@ function Projects({ api, version, onChanged }) {
               <span className="cl-muted">Updated {timeAgo(p.updated_at)}</span>
             </div>
             {p.note && <div className="adm-note"><p>{p.note}</p><small>Reviewer note</small></div>}
+            {p.analysis && <div className="adm-note"><strong>Analysis: {p.analysis.status}</strong> · {p.analysis.stage} · {p.analysis.progress}%
+              {!!p.analysis.evidence?.length && <div style={{ marginTop: 6 }}>{p.analysis.evidence.map((e) => <div key={e.id}>{e.fact} <small>({e.method}, {e.confidence})</small></div>)}</div>}
+            </div>}
           </div>
           <div className="adm-proj-actions">
             {p.status !== 'verified' && <Button size="sm" icon={Check} onClick={() => setDecide({ project: p, verified: true })}>Verify</Button>}

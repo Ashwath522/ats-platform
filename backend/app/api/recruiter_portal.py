@@ -41,6 +41,7 @@ from ..db import (
     SavedJob,
     ScheduledInterview,
     StudentProject,
+    ProjectAnalysisJob,
     engine,
     utc_now,
 )
@@ -1047,6 +1048,7 @@ def candidate_detail(candidate_id: int, recruiter: str = Depends(get_current_rec
                 "id": pr.id, "title": pr.title, "description": pr.description, "category": pr.category,
                 "tags": _loads(pr.tags_json, []), "tools": _loads(pr.tools_json, []), "image_path": pr.image_path,
                 "links": _loads(pr.links_json, []), "status": pr.status, "month": pr.month, "team_size": pr.team_size,
+                **_recruiter_analysis(session, pr),
             } for pr in projects],
             "project_score": p.project_score, "project_summary": p.project_summary,
             "applications": [ctx.app_item(a) for a in my_apps],
@@ -1057,6 +1059,24 @@ def candidate_detail(candidate_id: int, recruiter: str = Depends(get_current_rec
             "invitable_jobs": [{"id": j.id, "title": j.title, "code": job_code(ctx.prefix, j)} for j in ctx.jobs if j.status == "open" and j.id not in applied_job_ids],
         })
         return item
+
+def _recruiter_analysis(session, project):
+    """Return only the recruiter-safe analysis projection; never raw files or warnings."""
+    row=session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id==project.id).order_by(ProjectAnalysisJob.id.desc())).first()
+    if not row or row.status != "done": return {"analysis": None}
+    result=_loads(row.result_json, {}) if row.result_json else {}
+    evidence={e.get("id"): {"source_ref":e.get("source_ref"),"locator":e.get("locator"),"fact":e.get("fact")} for e in result.get("evidence",[]) if e.get("confirmed") or e.get("origin")=="server"}
+    return {"analysis":{"job_id":row.id,"domain":project.domain,"verification_status":project.status,"overall":result.get("scores",{}).get("overall"),"coverage":result.get("scores",{}).get("coverage"),"claims":[{k:c.get(k) for k in ("id","text","status","reasoning","evidence_ids")} for c in result.get("claims",[])],"sections":result.get("report",{}).get("sections",{}),"evidence":evidence}}
+
+@router.get("/projects/{project_id}/analysis")
+def recruiter_project_analysis(project_id:int, recruiter:str=Depends(get_current_recruiter)):
+    with Session(engine) as session:
+        project=session.get(StudentProject,project_id)
+        if not project: raise HTTPException(status_code=404,detail="Project not found")
+        _visible_candidate(Ctx(session,recruiter,light=True),project.candidate_id)
+        from ..services.audit import record_audit_event
+        record_audit_event(session=session,event_type="recruiter_project_report_view",human_action=f"project-{project_id}",candidate_id=project.candidate_id)
+        return _recruiter_analysis(session,project).get("analysis") or {"status":"unavailable"}
 
 
 def _resume_for(ctx: Ctx, cid: int) -> Resume:

@@ -134,6 +134,12 @@ def _create_user(
 def ensure_admin_user() -> None:
     email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
     password = os.environ.get("ADMIN_PASSWORD", "")
+    # The repository's local .env contains a development admin identity. Do
+    # not seed that account during the isolated test suite: individual tests
+    # create the admin rows they need, while tests that explicitly set an
+    # ADMIN_EMAIL still exercise startup provisioning.
+    if os.environ.get("TESTING") == "1" and email == "admin@corelink.test":
+        return
     if not email or not password:
         return
     if len(password) < 8:

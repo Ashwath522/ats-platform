@@ -44,7 +44,7 @@ from ..auth import get_current_admin, hash_password
 from ..db import (
     Application, CandidateProfile, CandidateUser, Company, CompanyProfile, ContentFlag, DecisionAuditLog,
     EmailLog, EmailToken, InterviewSession, Job, Offer, Post, RecruiterNote, RecruiterPost, RecruiterProfile,
-    RecruiterRequest, RecruiterUser, Resume, SavedJob, ScheduledInterview, StudentProject, TeamMember, User, PlatformSetting,
+    RecruiterRequest, RecruiterUser, Resume, SavedJob, ScheduledInterview, StudentProject, ProjectAnalysisJob, TeamMember, User, PlatformSetting,
     engine, utc_now,
 )
 from ..services.audit import record_audit_event
@@ -1715,15 +1715,21 @@ def list_projects(status: str = "under_review", admin: str = Depends(get_current
         rows = s.exec(stmt).all()
         profiles = {p.candidate_id: p for p in s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id.in_([r.candidate_id for r in rows] or [0]))).all()}
         cands = {c.id: c for c in s.exec(select(CandidateUser).where(CandidateUser.id.in_([r.candidate_id for r in rows] or [0]))).all()}
+        jobs = {}
+        for j in s.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id.in_([r.id for r in rows] or [0])).order_by(ProjectAnalysisJob.id.desc())).all():
+            jobs.setdefault(j.project_id, j)
         counts = dict(s.exec(select(StudentProject.status, func.count()).group_by(StudentProject.status)).all())
         out = []
         for r in rows:
             p = profiles.get(r.candidate_id)
             c = cands.get(r.candidate_id)
+            aj = jobs.get(r.id)
+            result = _jl(aj.result_json, {}) if aj and aj.result_json else {}
             out.append({"id": r.id, "title": r.title, "description": r.description, "category": r.category,
                         "tags": _jl(r.tags_json, []), "tools": _jl(r.tools_json, []), "links": _jl(r.links_json, []),
                         "image": r.image_path, "file": r.file_path, "status": r.status, "note": r.verification_note,
                         "team_size": r.team_size, "month": r.month, "created_at": _iso(r.created_at), "updated_at": _iso(r.updated_at),
+                        "analysis": {"status": aj.status, "stage": aj.stage, "progress": aj.progress, "evidence": result.get("evidence", []), "claims": result.get("claims", [])} if aj else None,
                         "candidate": {"id": f"c-{r.candidate_id}", "name": (p.full_name if p and p.full_name else (c.username if c else "Student")),
                                       "college": p.college if p else None, "branch": branch_id(p.branch) if p else None,
                                       "branch_label": branch_label(p.branch) if p else None}})
