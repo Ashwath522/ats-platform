@@ -12,9 +12,12 @@ per resume + job so the page stays fast on the free tier.
 """
 import asyncio
 import hashlib
+import threading
+from collections import OrderedDict
 import json
 import logging
 import re
+from datetime import timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -83,13 +86,36 @@ def _ext_text(e) -> str:
     return "\n\n".join(p for p in parts if p)[:9000]
 
 
+_EMB: "OrderedDict[str, list]" = OrderedDict()
+_EMB_MAX = 3000
+_EMB_LOCK = threading.Lock()
+
+
+def _embed(text: str):
+    """Embeddings are the slow part; job descriptions rarely change, so keep them in memory."""
+    from ..services.embeddings import EmbeddingModel
+
+    k = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+    with _EMB_LOCK:
+        hit = _EMB.get(k)
+        if hit is not None:
+            _EMB.move_to_end(k)
+            return hit
+    v = EmbeddingModel.get().embed_text(text)
+    with _EMB_LOCK:
+        _EMB[k] = v
+        while len(_EMB) > _EMB_MAX:
+            _EMB.popitem(last=False)
+    return v
+
+
 def _analyse(text: str, jd: str, title: str, bid: Optional[str], pskills: List[str], job_skills: List[str], resume_emb=None) -> dict:
     from ..services.embeddings import EmbeddingModel
     from ..services.scoring import _extract_skills_present, score_resume_against_jd
 
     model = EmbeddingModel.get()
-    emb = resume_emb if resume_emb is not None else model.embed_text(text[:12000])
-    res = score_resume_against_jd(text, jd, emb, model.embed_text(jd), branch=bid)
+    emb = resume_emb if resume_emb is not None else _embed(text[:12000])
+    res = score_resume_against_jd(text, jd, emb, _embed(jd), branch=bid)
     score = int(res["ats_score"])
     low = text.lower()
 
@@ -241,8 +267,8 @@ def _match_one(candidate: str, job_key: str, refresh: bool) -> dict:
             hit["cached"] = True
             return {"result": hit}
     analysis = _analyse(ctx["text"], target["jd"], target["title"], ctx["bid"], ctx["pskills"], target["skills"])
-    return {"analysis": analysis, "key": key, "ctx_text": ctx["text"], "jd": target["jd"], "title": target["title"], "card": target["card"],
-            "resume": {"id": ctx["resume"].id, "filename": ctx["resume"].filename}}
+    return {"analysis": analysis, "key": key, "job_key": job_key, "ctx_text": ctx["text"], "jd": target["jd"], "title": target["title"],
+            "card": target["card"], "resume": {"id": ctx["resume"].id, "filename": ctx["resume"].filename}}
 
 
 async def _finish(work: dict, ai: bool) -> dict:
@@ -250,9 +276,12 @@ async def _finish(work: dict, ai: bool) -> dict:
         return work["result"]
     out = dict(work["analysis"])
     out["ai_tips"] = await _ai_tips(work["ctx_text"], work["jd"], work["title"], out) if ai else []
-    out.update({"job": work["card"], "resume": work["resume"], "computed_at": utc_now().isoformat(), "cached": False})
+    out.update({"job": work["card"], "resume": work["resume"], "computed_at": utc_now().isoformat() + "Z", "cached": False})
     if work.get("key"):
-        await run_in_threadpool(_cache_put, work["key"], {k: v for k, v in out.items() if k != "job"})
+        card = work["card"] or {}
+        saved = {k: v for k, v in out.items() if k != "job"}
+        saved["job_ref"] = {"key": work.get("job_key"), "title": card.get("title"), "company": card.get("company"), "external": bool(card.get("external"))}
+        await run_in_threadpool(_cache_put, work["key"], saved)
     return out
 
 
@@ -285,69 +314,105 @@ async def job_match_pasted(body: PastedJD, ai: bool = True, candidate: str = Dep
 
 
 # ── best-fit jobs ───────────────────────────────────────────────────────
+#
+# Ranking ~40 jobs with embeddings takes a few seconds on the free server, so the
+# page never waits for it: the last saved ranking for this student is returned
+# at once, and when it's out of date (new resume, new skills, jobs added or
+# removed, or older than BEST_MAX_AGE) a fresh ranking runs in the background.
+
+BEST_MAX_AGE = timedelta(hours=6)
+
+
+def _best_key(cid: int, origin: str) -> str:
+    return f"{CACHE_VERSION}:best:{cid}:{origin}"
+
+
+def _pools(origin: str):
+    from ..services.hot_data import open_jobs, visible_external_jobs
+    internal = open_jobs() if origin in ("all", "corelink") else []
+    external = visible_external_jobs() if origin in ("all", "live") else []
+    return internal, external
+
+
+def _best_sig(ctx: dict, internal, external) -> str:
+    ids = ",".join(str(j.id) for j in internal) + "|" + ",".join(str(e.id) for e in external)
+    return f"{ctx['resume'].id}:{len(ctx['pskills'])}:{hashlib.sha1(ids.encode()).hexdigest()[:12]}"
+
+
+def rank_best_jobs(candidate: str, origin: str = "all", warm_matches: int = 5) -> None:
+    """Compute + save the ranking (runs in the background), then pre-analyse the top jobs."""
+    from ..services.scoring import _extract_skills_present
+    from .student_portal import branch_id, job_skills
+
+    with Session(engine) as session:
+        ctx = _resume_ctx(session, candidate)
+    internal, external = _pools(origin)
+    resume_skills = {s.lower() for s in _extract_skills_present(ctx["text"], ctx["bid"])} | {s.lower() for s in ctx["pskills"]}
+
+    def cheap(skills: List[str], branch: Optional[str]) -> float:
+        ov = (sum(1 for s in skills if s.lower() in resume_skills) / len(skills)) if skills else 0.15
+        return 0.7 * ov + 0.3 * (1.0 if branch and ctx["bid"] and branch == ctx["bid"] else 0.0)
+
+    pool = []
+    for j in internal:
+        js = job_skills(j)
+        pool.append((cheap(js, branch_id(j.branch)), "job", j, js))
+    for e in external:
+        try:
+            es = [str(x) for x in json.loads(e.skills_json or "[]")]
+        except ValueError:
+            es = []
+        pool.append((cheap(es, e.branch), "ext", e, es))
+    pool.sort(key=lambda t: -t[0])
+    pool = pool[:BEST_POOL]
+
+    remb = _embed(ctx["text"][:12000])
+    ranked = []
+    for _, kind, obj, skills in pool:
+        jd = _job_text(obj, skills) if kind == "job" else _ext_text(obj)
+        a = _analyse(ctx["text"], jd, obj.title, ctx["bid"], ctx["pskills"], skills, resume_emb=remb)
+        ranked.append({"kind": kind, "id": obj.id, "score": a["score"], "matched": a["matched_skills"][:6], "missing": a["missing_skills"][:5]})
+    ranked.sort(key=lambda r: -r["score"])
+    ranked = ranked[:20]
+    _cache_put(_best_key(ctx["user"].id, origin), {"ranked": ranked, "sig": _best_sig(ctx, internal, external),
+                                                   "computed_at": utc_now().isoformat() + "Z"})
+
+    # Warm the per-job analysis for the top few, so "Analyse" opens instantly.
+    for r in ranked[:warm_matches]:
+        try:
+            work = _match_one(candidate, f"ext-{r['id']}" if r["kind"] == "ext" else str(r["id"]), False)
+            if "result" not in work:
+                asyncio.run(_finish(work, ai=False))
+        except Exception as e:  # noqa: BLE001
+            logger.info("[JOB-MATCH] warm-up skipped: %s", e)
+
 
 def _best_jobs(candidate: str, limit: int, origin: str, refresh: bool) -> dict:
-    from datetime import timedelta
-
-    from ..services.embeddings import EmbeddingModel
-    from ..services.hot_data import open_jobs, visible_external_jobs
-    from ..services.scoring import _extract_skills_present
+    from ..services import precompute
     from .live_data import external_card, student_state
-    from .student_portal import _Companies, _job_card, branch_id, job_skills, match_score
+    from .student_portal import _Companies, _job_card, job_skills, match_score
 
     with Session(engine) as session:
         ctx = _resume_ctx(session, candidate)
         uid = ctx["user"].id
+        internal, external = _pools(origin)
+        saved = _cache_get(_best_key(uid, origin))
+        task = f"best:{uid}:{origin}"
+        stale = True
+        if saved:
+            at, now = saved.get("_at"), utc_now()
+            if at is not None and at.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            stale = saved.get("sig") != _best_sig(ctx, internal, external) or at is None or now - at > BEST_MAX_AGE
+        if refresh or stale:
+            precompute.submit(task, rank_best_jobs, candidate, origin)
+            if precompute.SYNC:          # tests: the work already ran inline
+                saved, stale = _cache_get(_best_key(uid, origin)), False
+        ranked = (saved or {}).get("ranked") or []
+
         apps = {a.job_id: a for a in session.exec(select(Application).where(Application.candidate_id == uid)).all()}
         saved_ext, applied_ext, _ = student_state(session, uid)
         companies = _Companies(session)
-
-        internal = open_jobs() if origin in ("all", "corelink") else []
-        external = visible_external_jobs() if origin in ("all", "live") else []
-        key = f"{CACHE_VERSION}:best:{ctx['resume'].id}:{origin}:{len(internal)}:{len(external)}:{len(ctx['pskills'])}"
-        if not refresh:
-            hit = _cache_get(key)
-            at, now = (hit or {}).get("_at"), utc_now()
-            if at is not None and at.tzinfo is None:
-                now = now.replace(tzinfo=None)
-            if hit and at is not None and now - at < timedelta(minutes=BEST_TTL_MIN):
-                ranked = hit.get("ranked") or []
-            else:
-                ranked = None
-        else:
-            ranked = None
-
-        if ranked is None:
-            resume_skills = {s.lower() for s in _extract_skills_present(ctx["text"], ctx["bid"])} | {s.lower() for s in ctx["pskills"]}
-
-            def cheap(skills: List[str], branch: Optional[str]) -> float:
-                ov = (sum(1 for s in skills if s.lower() in resume_skills) / len(skills)) if skills else 0.15
-                return 0.7 * ov + 0.3 * (1.0 if branch and ctx["bid"] and branch == ctx["bid"] else 0.0)
-
-            pool = []
-            for j in internal:
-                js = job_skills(j)
-                pool.append((cheap(js, branch_id(j.branch)), "job", j, js))
-            for e in external:
-                try:
-                    es = [str(x) for x in json.loads(e.skills_json or "[]")]
-                except ValueError:
-                    es = []
-                pool.append((cheap(es, e.branch), "ext", e, es))
-            pool.sort(key=lambda t: -t[0])
-            pool = pool[:BEST_POOL]
-
-            model = EmbeddingModel.get()
-            remb = model.embed_text(ctx["text"][:12000])
-            ranked = []
-            for _, kind, obj, skills in pool:
-                jd = _job_text(obj, skills) if kind == "job" else _ext_text(obj)
-                a = _analyse(ctx["text"], jd, obj.title, ctx["bid"], ctx["pskills"], skills, resume_emb=remb)
-                ranked.append({"kind": kind, "id": obj.id, "score": a["score"], "matched": a["matched_skills"][:6], "missing": a["missing_skills"][:5]})
-            ranked.sort(key=lambda r: -r["score"])
-            ranked = ranked[:20]
-            _cache_put(key, {"ranked": ranked})
-
         by_job = {j.id: j for j in internal}
         by_ext = {e.id: e for e in external}
         items = []
@@ -360,15 +425,47 @@ def _best_jobs(candidate: str, limit: int, origin: str, refresh: bool) -> dict:
                 e = by_ext[r["id"]]
                 card = external_card(e, pskills=ctx["pskills"], pbranch=ctx["bid"], saved=e.id in saved_ext, applied_at=applied_ext.get(e.id))
             else:
-                continue
+                continue          # job closed since the ranking — skip it
             card.update({"ats_score": r["score"], "verdict": _verdict(r["score"]), "matched_skills": r["matched"], "missing_skills": r["missing"]})
             items.append(card)
             if len(items) >= limit:
                 break
-    return {"items": items, "resume": {"id": ctx["resume"].id, "filename": ctx["resume"].filename}, "scored": len(ranked)}
+    refreshing = precompute.is_running(task) or (not precompute.SYNC and (refresh or stale))
+    return {"items": items, "resume": {"id": ctx["resume"].id, "filename": ctx["resume"].filename}, "scored": len(ranked),
+            "computed_at": (saved or {}).get("computed_at"), "pending": saved is None, "refreshing": refreshing}
 
 
 @router.get("/api/student/resume/best-jobs")
 async def best_jobs(limit: int = Query(8, ge=1, le=20), origin: str = Query("all", pattern="^(all|corelink|live)$"),
                     refresh: bool = False, candidate: str = Depends(get_current_candidate)):
     return await run_in_threadpool(_best_jobs, candidate, limit, origin, refresh)
+
+
+# ── recent analyses ─────────────────────────────────────────────────────
+
+def _recent(candidate: str, limit: int) -> dict:
+    with Session(engine) as session:
+        ctx = _resume_ctx(session, candidate)
+        rows = session.exec(select(AnalysisCache).where(AnalysisCache.cache_key.like(f"{CACHE_VERSION}:{ctx['resume'].id}:%"))
+                            .order_by(AnalysisCache.created_at.desc()).limit(limit * 3)).all()
+    items, seen = [], set()
+    for r in rows:
+        try:
+            d = json.loads(r.payload_json)
+        except ValueError:
+            continue
+        ref = d.get("job_ref") or {}
+        if not ref.get("key") or ref["key"] in seen:
+            continue
+        seen.add(ref["key"])
+        items.append({"job": ref["key"], "title": ref.get("title"), "company": ref.get("company"), "external": ref.get("external"),
+                      "score": d.get("score"), "verdict": d.get("verdict"), "computed_at": d.get("computed_at")})
+        if len(items) >= limit:
+            break
+    return {"items": items}
+
+
+@router.get("/api/student/resume/job-match/recent")
+async def recent_matches(limit: int = Query(8, ge=1, le=20), candidate: str = Depends(get_current_candidate)):
+    """Jobs this student already analysed with their current resume (open instantly from cache)."""
+    return await run_in_threadpool(_recent, candidate, limit)

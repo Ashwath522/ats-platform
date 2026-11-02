@@ -684,7 +684,8 @@ export const fmtDate = (d, opts = { day: '2-digit', month: 'short', year: 'numer
 export const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '')
 export const timeAgo = (d) => {
   if (!d) return ''
-  const s = (Date.now() - new Date(d).getTime()) / 1000
+  const iso = typeof d === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(d) ? `${d}Z` : d
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`

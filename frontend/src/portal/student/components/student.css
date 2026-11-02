@@ -369,3 +369,14 @@ a.st-tip { color: var(--cl-text) !important; }
   .jf-meter { grid-template-columns: 110px 1fr 40px; }
 }
 @media (prefers-reduced-motion: reduce) { .jf-result, .jf-best-row { animation: none; } }
+
+/* Saved results: freshness + recent analyses */
+.jf-fresh { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--cl-muted); margin: -4px 0 10px; }
+.jf-fresh-busy { display: inline-flex; align-items: center; gap: 6px; color: var(--cl-blue); font-weight: 600; }
+.jf-fresh-busy i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: jf-pulse 1.2s ease-in-out infinite; }
+@keyframes jf-pulse { 50% { opacity: .25; transform: scale(.7); } }
+.jf-recent { display: flex; flex-direction: column; gap: 6px; }
+.jf-recent-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 260px; height: 32px; padding: 0 12px 0 6px; border: 1px solid var(--cl-line); border-radius: 999px; background: #fff; cursor: pointer; font: inherit; font-size: 13px; color: var(--cl-ink); transition: border-color .15s, box-shadow .2s; }
+.jf-recent-chip:hover { border-color: #9dbbff; box-shadow: 0 4px 12px rgba(11, 92, 255, .08); }
+.jf-recent-chip b { display: grid; place-items: center; min-width: 26px; height: 22px; border-radius: 999px; background: #f2f6ff; font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .jf-fresh-busy i { animation: none; } }

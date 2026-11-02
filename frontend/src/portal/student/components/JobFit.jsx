@@ -3,10 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Briefcase, Check, ClipboardPaste, ExternalLink, FileText, Lightbulb, Plus, RefreshCw, Search, Sparkles, Target, X, Zap,
 } from 'lucide-react'
-import { Alert, Badge, Button, Card, Chip, EmptyState, Ring, Segmented, Skeleton, Textarea, useToast } from '../../../ui/index.jsx'
+import { Alert, Badge, Button, Card, Chip, EmptyState, Ring, Segmented, Skeleton, Textarea, timeAgo, useToast } from '../../../ui/index.jsx'
 import { useApi } from '../../../ui/useApi.js'
 import { JobDetailsModal } from './shared.jsx'
 import { useExternalApply } from './liveJobs.jsx'
+import { usePersistedResult } from '../../../lib/persisted.js'
 
 const TONE_COLOR = { green: 'var(--cl-green)', blue: 'var(--cl-blue)', amber: '#f5a524', red: 'var(--cl-red)' }
 const forms = (t) => { const s = String(t || '').toLowerCase().trim(); const base = s.replace(/\s*\(.*?\)\s*/g, ' ').trim(); const inner = [...s.matchAll(/\(([^)]+)\)/g)].map((m) => m[1].trim()); return [s, base, ...inner].filter(Boolean) }
@@ -30,9 +31,13 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [best, setBest] = useState(null)
-  const [bestErr, setBestErr] = useState(null)
   const [origin, setOrigin] = useState('all')
+  const bestQ = usePersistedResult(`best-jobs:${origin}`,
+    (o = {}) => api.get(`/api/student/resume/best-jobs?limit=8&origin=${origin}${o.refresh ? '&refresh=true' : ''}`, { cache: false }),
+    { enabled: !!hasResume })
+  const best = bestQ.data
+  const bestErr = bestQ.error && !best ? bestQ.error.message : null
+  const recentQ = usePersistedResult('job-match-recent', () => api.get('/api/student/resume/job-match/recent?limit=8', { cache: false }), { enabled: !!hasResume })
   const [openJob, setOpenJob] = useState(null)
   const ext = useExternalApply({ onChange: () => loadBest(true) })
   const panelRef = useRef(null)
@@ -41,6 +46,7 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
     setMode('job'); setTarget(key); setBusy(true); setError(null)
     try {
       setResult(await api.get(`/api/student/resume/job-match?job=${encodeURIComponent(key)}${refresh ? '&refresh=true' : ''}`, { cache: false }))
+      recentQ.reload()
       requestAnimationFrame(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     } catch (e) { setError(e.message); setResult(null) } finally { setBusy(false) }
   }
@@ -49,10 +55,7 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
     setTarget('pasted'); setBusy(true); setError(null)
     try { setResult(await api.post('/api/student/resume/job-match', { jd_text: pasted.jd, title: pasted.title })) } catch (e) { setError(e.message); setResult(null) } finally { setBusy(false) }
   }
-  const loadBest = async (refresh = false) => {
-    setBestErr(null)
-    try { setBest(await api.get(`/api/student/resume/best-jobs?limit=8&origin=${origin}${refresh ? '&refresh=true' : ''}`, { cache: false })) } catch (e) { setBestErr(e.message); setBest(null) }
-  }
+  const loadBest = (refresh = false) => bestQ.reload({ refresh })
 
   // Deep link from a job's details: /candidate/resume-skills?job=12
   const jobParam = params.get('job')
@@ -65,7 +68,6 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
       setParams(next, { replace: true })
     }
   }, [hasResume, jobParam]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (hasResume) { setBest(null); loadBest() } }, [hasResume, origin]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Job picker search (debounced)
   useEffect(() => {
@@ -101,6 +103,19 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
         {mode === 'job' ? (
           <div className="jf-picker">
             <div className="cl-input-icon"><Search size={17} /><input className="cl-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search jobs by title, company or skill…" aria-label="Search jobs to analyse" /></div>
+            {recentQ.data?.items?.length > 0 && (
+              <div className="jf-recent">
+                <span className="jf-label">Your recent analyses</span>
+                <div className="jf-chips">
+                  {recentQ.data.items.map((r) => (
+                    <button key={r.job} type="button" className="jf-recent-chip" onClick={() => analyse(String(r.job))} title={r.company || ''}>
+                      <b style={{ color: TONE_COLOR[r.verdict?.tone || toneOf(r.score)] }}>{r.score}</b>
+                      <span className="cl-ellipsis">{r.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="jf-options" role="listbox" aria-label="Jobs">
               {searching && options.length === 0 ? [0, 1, 2].map((i) => <Skeleton key={i} h={46} />) : options.length === 0 ? <p className="cl-muted">No open jobs match that search.</p> : options.map((j) => (
                 <button key={j.id} type="button" role="option" aria-selected={target === String(j.id)} className={`jf-option ${String(target) === String(j.id) ? 'on' : ''}`} onClick={() => analyse(String(j.id))}>
@@ -128,9 +143,14 @@ export default function JobFit({ resumeScore, hasResume, onAddSkill }) {
       <Card title={<><Zap size={20} color="#f5a524" />Jobs that fit your resume</>} subtitle="Ranked with the same ATS scoring recruiters see."
         action={<div className="cl-row" style={{ gap: 8 }}>
           <Segmented value={origin} onChange={setOrigin} options={[{ id: 'all', label: 'All' }, { id: 'corelink', label: 'CoreLink' }, { id: 'live', label: 'Company sites' }]} />
-          <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => { setBest(null); loadBest(true) }} aria-label="Refresh best-fit jobs" />
+          <Button variant="ghost" size="sm" icon={RefreshCw} loading={bestQ.busy} onClick={() => loadBest(true)} aria-label="Refresh best-fit jobs" />
         </div>}>
-        {bestErr ? <Alert tone="error">{bestErr}</Alert> : !best ? <div className="cl-col" style={{ gap: 10 }}>{[0, 1, 2].map((i) => <Skeleton key={i} h={74} />)}</div>
+        <FreshLine data={best} busy={bestQ.busy} />
+        {bestErr ? <Alert tone="error">{bestErr}</Alert> : !best || (best.pending && !best.items?.length) ? (
+          <div className="cl-col" style={{ gap: 10 }}>
+            {best?.pending && <small className="cl-muted">Finding the jobs that fit your resume — the first time takes about 20 seconds. You can keep using the page.</small>}
+            {[0, 1, 2].map((i) => <Skeleton key={i} h={74} />)}
+          </div>)
           : best.items.length === 0 ? <EmptyState title="No open jobs to rank yet" text="Check back soon — new roles sync every few hours." />
           : <div className="jf-best">{best.items.map((j, i) => (
             <div key={j.id} className="jf-best-row" style={{ '--i': i }}>
@@ -239,6 +259,17 @@ function Meter({ label, value }) {
       <span>{label}</span>
       <div className="jf-meter-track"><i style={{ width: `${v}%`, background: TONE_COLOR[toneOf(v)] }} /></div>
       <b>{v}%</b>
+    </div>
+  )
+}
+
+/** "Updated 2 h ago · Refreshing…" under a saved result. */
+export function FreshLine({ data, busy }) {
+  if (!data?.computed_at && !busy) return null
+  return (
+    <div className="jf-fresh" aria-live="polite">
+      {data?.computed_at && <span>Updated {timeAgo(data.computed_at)}</span>}
+      {busy && <span className="jf-fresh-busy"><i />Refreshing</span>}
     </div>
   )
 }

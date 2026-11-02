@@ -2,7 +2,7 @@
 import json
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.db import ExternalJob, engine, utc_now
 from app.services import hot_data, llm_stream
@@ -118,3 +118,56 @@ def test_skill_aliases_and_tags_are_cleaned(client):
     assert "demo" not in req and "is" not in req
     assert sum(1 for s in req if s.startswith("fea")) == 1
     assert "Gear design" in d["missing_skills"]
+
+
+# ── always-fast pages: saved results + background refresh ─────────────────
+
+def test_best_jobs_serves_saved_ranking_and_refreshes_in_background(client, monkeypatch):
+    from app.services import precompute
+    _student(with_resume=True)
+    rid = _recruiter()
+    _job(rid, title="Mechanical Design Intern", reqs="SolidWorks, ANSYS, GD&T")
+    first = client.get("/api/student/resume/best-jobs", headers=H()).json()       # inline in tests
+    assert first["items"] and first["pending"] is False and first["computed_at"]
+
+    queued = []
+    monkeypatch.setattr(precompute, "SYNC", False)
+    monkeypatch.setattr(precompute, "submit", lambda key, fn, *a, **k: queued.append(key) or True)
+    # Unchanged inputs: served from the saved ranking, nothing queued.
+    again = client.get("/api/student/resume/best-jobs", headers=H()).json()
+    assert [i["id"] for i in again["items"]] == [i["id"] for i in first["items"]] and not queued and again["refreshing"] is False
+    # A new job appears: the old ranking is shown at once and a refresh is queued.
+    _job(rid, title="CAD Engineer", reqs="SolidWorks, CATIA")
+    stale = client.get("/api/student/resume/best-jobs", headers=H()).json()
+    assert stale["items"] and stale["refreshing"] is True
+    assert len(queued) == 1 and queued[0].startswith("best:") and queued[0].endswith(":all")
+
+
+def test_insights_shows_last_result_while_recomputing(client, monkeypatch):
+    from app.services import precompute
+    _student(with_resume=True)
+    first = client.get("/api/student/resume/insights", headers=H()).json()
+    assert first["has_resume"] and first["refreshing"] is False
+    queued = []
+    monkeypatch.setattr(precompute, "submit", lambda key, fn, *a, **k: queued.append(key) or True)
+    # Adding a certification changes the analysis inputs -> last result shown instantly, refresh queued.
+    with Session(engine) as s:
+        from app.db import CandidateProfile
+        p = s.exec(select(CandidateProfile)).first()
+        p.certifications_json = json.dumps([{"name": "CSWA", "issuing_organization": "Dassault"}])
+        s.add(p)
+        s.commit()
+    second = client.get("/api/student/resume/insights", headers=H()).json()
+    assert second["refreshing"] is True and second["score"] == first["score"] and queued and queued[0].startswith("insights:")
+
+
+def test_recent_analyses_list(client):
+    _student(with_resume=True)
+    rid = _recruiter()
+    j1 = _job(rid, title="Mechanical Design Intern")
+    j2 = _job(rid, title="Thermal Engineer", reqs="ANSYS, MATLAB, HVAC")
+    client.get(f"/api/student/resume/job-match?job={j1}", headers=H())
+    client.get(f"/api/student/resume/job-match?job={j2}", headers=H())
+    items = client.get("/api/student/resume/job-match/recent", headers=H()).json()["items"]
+    assert {i["job"] for i in items} == {str(j1), str(j2)}
+    assert all(i["title"] and isinstance(i["score"], int) for i in items)
