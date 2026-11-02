@@ -1,9 +1,18 @@
 # Database migrations
 
-Update the SQLModel in `app/db.py`, then run `alembic revision --autogenerate -m "describe change"`. Review the generated SQL for SQLite and Postgres, run `alembic upgrade head`, and commit the model plus revision. `init_db()` remains available for local SQLite and tests.
+Production schema changes use the checked-in Alembic workflow: from `backend/`, run `alembic upgrade head` and inspect SQL for the target database before deployment. `init_db()` remains available for local SQLite and tests, but is not a substitute for production migrations.
 
 ## Current status
 
 Alembic is not initialised yet (there is no `alembic.ini` or `alembic/` folder), so production relies on `init_db()`, which creates tables and adds missing columns at startup. The Docker start command only runs `alembic upgrade head` when `alembic.ini` exists, so the server always starts.
 
-To turn Alembic on later: `cd backend && alembic init alembic`, point `alembic/env.py` at `app.db.engine` and `SQLModel.metadata`, run `alembic revision --autogenerate -m "baseline"`, then `alembic stamp head` once against the production database.
+The first revision adds proctor idempotency columns and unique indexes. Before upgrading an existing installation, inspect duplicates with:
+
+```sql
+SELECT session_id, client_event_id, COUNT(*) FROM proctorevent
+WHERE client_event_id IS NOT NULL GROUP BY session_id, client_event_id HAVING COUNT(*) > 1;
+SELECT session_id, client_event_id, COUNT(*) FROM proctorsnapshot
+WHERE client_event_id IS NOT NULL GROUP BY session_id, client_event_id HAVING COUNT(*) > 1;
+```
+
+Do not delete evidence automatically. Export and reconcile duplicate rows with an operator-approved audit record, then apply the migration. A failed unique-index creation is intentionally a migration failure, not a warning to ignore.

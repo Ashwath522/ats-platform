@@ -43,6 +43,7 @@ from ..db import (
     CandidateUser,
     Company,
     InterviewSession,
+    ProctorEvent,
     Job,
     Resume,
     StudentProject,
@@ -766,17 +767,15 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
 
     qa, evaluation = await _evaluate(ctx, plan, transcript, practice=False)
 
-    try:
-        risk_score = int(max(0, min(100, float(proctoring.get("risk_score", 0)))))
-    except Exception:
-        risk_score = 0
-    risk_level = str(proctoring.get("risk_level") or ("high" if risk_score >= 60 else "medium" if risk_score >= 30 else "low"))
-    if risk_level not in {"low", "medium", "high"}:
-        risk_level = "low"
-
     with Session(engine) as session:
         s = session.get(InterviewSession, sid)
         app_record = session.get(Application, s.application_id)
+        stored_events = session.exec(select(ProctorEvent).where(ProctorEvent.session_id == sid)).all()
+        # Server-derived indicator: duplicate client IDs are already prevented by
+        # the database constraint; only persisted rows contribute to this score.
+        weights = {"low": 2, "medium": 8, "high": 18}
+        risk_score = min(100, sum(weights.get(e.severity, 0) for e in stored_events))
+        risk_level = "high" if risk_score >= 60 else "medium" if risk_score >= 30 else "low"
         lat = _jl(s.latency_json, [])
         usage = _llm_usage(lat, evaluation, plan_provider)
         evaluation["llm_usage"] = usage
@@ -791,7 +790,7 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
         s.latency_json = json.dumps(lat)
         s.status = "completed"
         s.completed_at = utc_now()
-        s.eval_json = json.dumps({**evaluation, "ended_reason": ended_reason, "proctoring": proctoring})
+        s.eval_json = json.dumps({**evaluation, "ended_reason": ended_reason, "proctoring": {**proctoring, "server_derived_risk_score": risk_score, "server_derived_risk_level": risk_level, "server_event_count": len(stored_events), "integrity_status": "client_unverified"}})
         session.add(s)
 
         app_record.interview_id = s.id

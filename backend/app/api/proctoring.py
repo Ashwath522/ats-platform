@@ -30,6 +30,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import delete as sa_delete, func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from ..auth import get_current_candidate, get_current_user
@@ -58,6 +59,7 @@ MAX_EVENTS_PER_BATCH = 50
 MAX_EVENTS_PER_SESSION = 600
 MAX_DIMENSION = 1280
 EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 SEVERITIES = {"low", "medium", "high"}
 SNAPSHOT_SEVERITIES = {"info", "medium", "high"}
 PRACTICE_DETAIL = "Practice sessions are private — no proctoring evidence is stored."
@@ -114,6 +116,12 @@ def _job_id_for(s: Session, iv: InterviewSession) -> Optional[int]:
         return iv.job_id
     app = s.get(Application, iv.application_id) if iv.application_id else None
     return app.job_id if app else None
+
+
+def _lock_proctor_session(s: Session, sid: int) -> None:
+    """Serialize per-session quota allocation across Postgres workers."""
+    if s.bind is not None and s.bind.dialect.name == "postgresql":
+        s.exec(text("SELECT pg_advisory_xact_lock(:key)"), {"key": int(sid)})
 
 
 _last_purge = 0.0
@@ -187,12 +195,16 @@ async def upload_snapshot(
     severity: str = Form("info"),
     label: Optional[str] = Form(None),
     client_ts: Optional[str] = Form(None),
+    client_event_id: Optional[str] = Form(None),
     candidate: str = Depends(get_current_candidate),
 ):
     event_type = (event_type or "").strip().lower()
     if not EVENT_TYPE_RE.match(event_type):
         raise HTTPException(status_code=400, detail="Invalid event type")
     severity = (severity or "info").strip().lower()
+    if client_event_id and not CLIENT_ID_RE.fullmatch(client_event_id.strip()):
+        raise HTTPException(status_code=400, detail="Invalid client_event_id")
+    client_event_id = client_event_id.strip() if client_event_id else None
     if event_type == "baseline":
         severity = "info"
     elif severity not in {"medium", "high"}:
@@ -205,6 +217,11 @@ async def upload_snapshot(
 
     with Session(engine) as s:
         iv = _candidate_session(s, sid, candidate)
+        if client_event_id:
+            existing = s.exec(select(ProctorSnapshot).where(ProctorSnapshot.session_id == sid, ProctorSnapshot.client_event_id == client_event_id)).first()
+            if existing:
+                return {"id": existing.id, "stored": True, "deduplicated": True, "size_bytes": existing.size_bytes}
+        _lock_proctor_session(s, sid)
         total = s.exec(select(func.count()).select_from(ProctorSnapshot).where(ProctorSnapshot.session_id == sid)).one()
         if total >= MAX_SNAPSHOTS_PER_SESSION:
             raise HTTPException(status_code=429, detail="Snapshot limit reached for this interview")
@@ -215,6 +232,7 @@ async def upload_snapshot(
                 raise HTTPException(status_code=429, detail="Baseline snapshot already stored")
         snap = ProctorSnapshot(
             session_id=sid,
+            client_event_id=(client_event_id or "")[:100] or None,
             application_id=iv.application_id,
             candidate_id=iv.candidate_id,
             job_id=_job_id_for(s, iv),
@@ -229,7 +247,14 @@ async def upload_snapshot(
             data=data,
         )
         s.add(snap)
-        s.commit()
+        try:
+            s.commit()
+        except IntegrityError:
+            s.rollback()
+            existing = s.exec(select(ProctorSnapshot).where(ProctorSnapshot.session_id == sid, ProctorSnapshot.client_event_id == client_event_id)).first()
+            if existing:
+                return {"id": existing.id, "stored": True, "deduplicated": True, "size_bytes": existing.size_bytes}
+            raise
         s.refresh(snap)
         out = {"id": snap.id, "stored": True, "size_bytes": snap.size_bytes, "remaining": MAX_SNAPSHOTS_PER_SESSION - total - 1}
     _maybe_purge()
@@ -246,16 +271,37 @@ async def upload_events(request: Request, sid: int, payload: dict = Body(...), c
         raise HTTPException(status_code=400, detail=f"At most {MAX_EVENTS_PER_BATCH} events per request")
     with Session(engine) as s:
         iv = _candidate_session(s, sid, candidate)
+        _lock_proctor_session(s, sid)
         have = s.exec(select(func.count()).select_from(ProctorEvent).where(ProctorEvent.session_id == sid)).one()
         room = max(0, MAX_EVENTS_PER_SESSION - have)
         stored = 0
+        stored_ids, duplicate_ids, rejected, capacity_dropped = [], [], [], []
+        seen_batch = set()
         own_snaps = None
-        for ev in events[:room]:
+        for ev in events:
+            if stored >= room:
+                if isinstance(ev, dict) and ev.get("client_event_id"):
+                    capacity_dropped.append(str(ev.get("client_event_id")))
+                break
             if not isinstance(ev, dict):
+                rejected.append({"client_event_id": None, "reason": "not_an_object"})
                 continue
             et = str(ev.get("type") or "").strip().lower()
+            client_event_id = str(ev.get("client_event_id") or "").strip() or None
+            if client_event_id and not CLIENT_ID_RE.fullmatch(client_event_id):
+                rejected.append({"client_event_id": client_event_id, "reason": "invalid_client_event_id"})
+                continue
+            if client_event_id and client_event_id in seen_batch:
+                duplicate_ids.append(client_event_id)
+                continue
+            if client_event_id:
+                seen_batch.add(client_event_id)
+            if client_event_id and s.exec(select(ProctorEvent).where(ProctorEvent.session_id == sid, ProctorEvent.client_event_id == client_event_id)).first():
+                duplicate_ids.append(client_event_id)
+                continue
             sev = str(ev.get("severity") or "low").strip().lower()
             if not EVENT_TYPE_RE.match(et) or sev not in SEVERITIES:
+                rejected.append({"client_event_id": client_event_id, "reason": "invalid_event"})
                 continue
             details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
             dj = json.dumps(details, default=str)[:1000]
@@ -265,11 +311,26 @@ async def upload_events(request: Request, sid: int, payload: dict = Body(...), c
                     own_snaps = set(s.exec(select(ProctorSnapshot.id).where(ProctorSnapshot.session_id == sid)).all())
                 snap_id = snap_id if isinstance(snap_id, int) and snap_id in own_snaps else None
             s.add(ProctorEvent(session_id=sid, application_id=iv.application_id, candidate_id=iv.candidate_id,
+                               client_event_id=client_event_id,
                                event_type=et, severity=sev, client_ts=_parse_ts(ev.get("ts")), details_json=dj,
                                snapshot_id=snap_id))
+            if client_event_id:
+                stored_ids.append(client_event_id)
             stored += 1
-        s.commit()
-    return {"stored": stored, "dropped": len(events) - stored}
+        try:
+            s.commit()
+        except IntegrityError:
+            s.rollback()
+            # A concurrent request may have won the unique idempotency race.
+            # Retry the batch's IDs as lookups; unrelated integrity failures remain errors.
+            existing_ids = {x for x in s.exec(select(ProctorEvent.client_event_id).where(ProctorEvent.session_id == sid, ProctorEvent.client_event_id.in_([str(e.get("client_event_id")) for e in events if isinstance(e, dict) and e.get("client_event_id")]))).all()}
+            if not existing_ids:
+                raise
+            duplicate_ids.extend(sorted(existing_ids))
+    return {"stored": stored, "dropped": len(rejected) + len(capacity_dropped),
+            "stored_ids": stored_ids, "duplicate_ids": duplicate_ids,
+            "acknowledged": stored_ids + duplicate_ids, "rejected": rejected,
+            "capacity_dropped": capacity_dropped}
 
 
 # ── reviewers: recruiter (own job) + admin ────────────────────────────────────
@@ -289,7 +350,13 @@ def _assert_can_review(s: Session, user: User, job_id: Optional[int]) -> None:
         raise HTTPException(status_code=404, detail="Interview not found")
 
 
-def _proctoring_summary(iv: InterviewSession, app: Optional[Application]) -> dict:
+def _derived_risk(events: list[ProctorEvent]) -> dict:
+    weights = {"low": 2, "medium": 8, "high": 18}
+    score = min(100, sum(weights.get(e.severity, 0) for e in events))
+    return {"score": score, "level": "high" if score >= 60 else "medium" if score >= 30 else "low", "formula": "sum(low=2, medium=8, high=18), capped at 100; client-reported values are not used"}
+
+
+def _proctoring_summary(iv: InterviewSession, app: Optional[Application], events: Optional[list[ProctorEvent]] = None) -> dict:
     ev = {}
     try:
         ev = json.loads(iv.eval_json or "{}") or {}
@@ -297,11 +364,14 @@ def _proctoring_summary(iv: InterviewSession, app: Optional[Application]) -> dic
         ev = {}
     p = ev.get("proctoring") if isinstance(ev, dict) else None
     p = p if isinstance(p, dict) else {}
-    score = p.get("risk_score", app.interview_risk_score if app else None)
-    level = p.get("risk_level", app.interview_risk_level if app else None)
+    derived = _derived_risk(events or [])
     return {
-        "risk_score": score,
-        "risk_level": level,
+        "risk_score": derived["score"],
+        "risk_level": derived["level"],
+        "client_reported_risk_score": p.get("risk_score"),
+        "client_reported_risk_level": p.get("risk_level"),
+        "integrity_status": "client_unverified",
+        "scoring": derived,
         "status": p.get("proctoring_status"),
         "counts": p.get("counts") if isinstance(p.get("counts"), dict) else {},
         "breakdown": p.get("breakdown") if isinstance(p.get("breakdown"), dict) else {},
@@ -316,7 +386,7 @@ def _report(s: Session, iv: InterviewSession) -> dict:
     prof = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == iv.candidate_id)).first()
     cand = s.get(CandidateUser, iv.candidate_id)
     events = s.exec(select(ProctorEvent).where(ProctorEvent.session_id == iv.id)
-                    .order_by(ProctorEvent.client_ts, ProctorEvent.id).limit(MAX_EVENTS_PER_SESSION)).all()
+                    .order_by(ProctorEvent.created_at, ProctorEvent.id).limit(MAX_EVENTS_PER_SESSION)).all()
     snaps = s.exec(select(ProctorSnapshot.id, ProctorSnapshot.kind, ProctorSnapshot.event_type, ProctorSnapshot.severity,
                           ProctorSnapshot.label, ProctorSnapshot.client_ts, ProctorSnapshot.created_at,
                           ProctorSnapshot.width, ProctorSnapshot.height, ProctorSnapshot.size_bytes)
@@ -331,12 +401,13 @@ def _report(s: Session, iv: InterviewSession) -> dict:
             "started_at": _iso(iv.started_at), "completed_at": _iso(iv.completed_at),
             "candidate_name": name, "job_title": job.title if job else None,
         },
-        "risk": _proctoring_summary(iv, app),
+        "risk": _proctoring_summary(iv, app, events),
         "event_counts": by_type,
         "events": [{
             "id": e.id, "type": e.event_type, "severity": e.severity,
-            "at": _iso(e.client_ts or e.created_at), "snapshot_id": e.snapshot_id,
+            "at": _iso(e.client_ts or e.created_at), "received_at": _iso(e.created_at), "snapshot_id": e.snapshot_id,
             "details": (json.loads(e.details_json) if e.details_json else {}),
+            "evidence_source": "client_reported",
         } for e in events],
         "snapshots": [{
             "id": r[0], "kind": r[1], "event_type": r[2], "severity": r[3], "label": r[4],
@@ -385,6 +456,13 @@ async def snapshot_image(snap_id: int, user: User = Depends(get_reviewer)):
         snap = s.get(ProctorSnapshot, snap_id)
         if not snap:
             raise HTTPException(status_code=404, detail="Snapshot not found")
-        _assert_can_review(s, user, snap.job_id)
+        iv = s.get(InterviewSession, snap.session_id)
+        if not iv or (iv.application_id is None and snap.application_id is not None):
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        current_job_id = _job_id_for(s, iv)
+        if snap.job_id is not None and current_job_id != snap.job_id:
+            logger.warning("snapshot ownership mismatch: snapshot=%s session=%s", snap.id, snap.session_id)
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        _assert_can_review(s, user, current_job_id)
         return Response(content=snap.data, media_type=snap.content_type or "image/jpeg",
                         headers={"Cache-Control": "private, max-age=600", "X-Content-Type-Options": "nosniff"})

@@ -419,7 +419,9 @@ class ProctorSnapshot(SQLModel, table=True):
     frame at the start. Bytes live in the DB (like MediaBlob) so they survive
     restarts on free-tier hosts; size is capped (≤150 KB, ≤32 per session) and
     rows are purged after PROCTOR_RETENTION_DAYS."""
+    __table_args__ = (UniqueConstraint("session_id", "client_event_id", name="uq_proctor_snapshot_session_client"),)
     id: Optional[int] = Field(default=None, primary_key=True)
+    client_event_id: Optional[str] = Field(default=None, index=True)
     session_id: int = Field(foreign_key="interviewsession.id", index=True)
     application_id: Optional[int] = Field(default=None, index=True)
     candidate_id: int = Field(index=True)
@@ -439,7 +441,9 @@ class ProctorSnapshot(SQLModel, table=True):
 
 class ProctorEvent(SQLModel, table=True):
     """Timeline of on-device proctoring events for a real AI interview."""
+    __table_args__ = (UniqueConstraint("session_id", "client_event_id", name="uq_proctor_event_session_client"),)
     id: Optional[int] = Field(default=None, primary_key=True)
+    client_event_id: Optional[str] = Field(default=None, index=True)
     session_id: int = Field(foreign_key="interviewsession.id", index=True)
     application_id: Optional[int] = Field(default=None, index=True)
     candidate_id: int = Field(index=True)
@@ -762,6 +766,17 @@ def init_db():
         _migrate_sqlite()
     _add_missing_columns()
     _relax_not_null("interviewsession", "application_id")
+    _ensure_proctor_idempotency_indexes()
+
+
+def _ensure_proctor_idempotency_indexes() -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_proctor_event_session_client ON proctorevent (session_id, client_event_id)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_proctor_snapshot_session_client ON proctorsnapshot (session_id, client_event_id)"))
+    except Exception as exc:
+        import logging
+        logging.getLogger("ats-platform").warning("[MIGRATE] proctor uniqueness indexes unavailable: %s", exc)
 
 
 def _relax_not_null(table: str, column: str) -> None:

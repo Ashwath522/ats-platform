@@ -1,10 +1,40 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { useApi } from '../ui/useApi.js'
+
+function AuthSnapshotImage({ api, snapshot }) {
+  const [src, setSrc] = useState(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    let live = true; let objectUrl = null
+    api.request('GET', snapshot.url, undefined, { raw: true }).then(async (res) => {
+      if (!res.ok) throw new Error(String(res.status))
+      objectUrl = URL.createObjectURL(await res.blob())
+      if (live) setSrc(objectUrl)
+    }).catch(() => live && setError(true))
+    return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [api, snapshot.url])
+  if (error) return <div className="w-24 h-16 rounded bg-slate-800 text-[10px] text-slate-500 flex items-center justify-center">Unavailable</div>
+  return src ? <img src={src} alt="Client-reported proctoring evidence" className="w-24 h-16 object-cover rounded" /> : <div className="w-24 h-16 rounded bg-slate-800 animate-pulse" />
+}
 
 export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo, onUnlockInterview }) {
+  const reviewerApi = useApi('recruiter')
   const [showTranscript, setShowTranscript] = useState(false)
   const [showRepoDetails, setShowRepoDetails] = useState(false)
+  const [proctorReport, setProctorReport] = useState(null)
+  const [proctorLoading, setProctorLoading] = useState(false)
+  const [proctorError, setProctorError] = useState('')
 
   if (!application) return null
+
+  const loadProctorReport = async () => {
+    const reportPath = application.id ? `/api/proctoring/applications/${application.id}` : null
+    if (!reportPath) return
+    setProctorLoading(true); setProctorError('')
+    try {
+      setProctorReport(await reviewerApi.get(reportPath, { cache: false }))
+    } catch (e) { setProctorError(e.message) } finally { setProctorLoading(false) }
+  }
 
   const {
     id,
@@ -204,6 +234,11 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
                 📹 View Video & Proctoring Evidence
               </a>
             )}
+            {application.id && (
+              <button onClick={loadProctorReport} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-slate-800 text-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-700">
+                {proctorLoading ? 'Loading evidence…' : proctorReport ? 'Refresh evidence timeline' : 'Inspect proctoring timeline'}
+              </button>
+            )}
             {interview_evidence_url && interview_evidence_url.startsWith('[') && (
               <span className="text-xs text-slate-500 italic">
                 {interview_evidence_url}
@@ -222,6 +257,29 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
           <span className="text-xs text-slate-500">
             Interview Engine: CV Risk First → LLM Next-Step Second
           </span>
+        </div>
+      )}
+
+      {(proctorReport || proctorError) && (
+        <div className="border-t border-slate-800 pt-4 space-y-3">
+          {proctorError && <p className="text-xs text-amber-300">{proctorError}</p>}
+          {proctorReport && <>
+            <div className="flex flex-wrap gap-2 text-xs text-slate-300">
+              <span className={`px-2 py-1 rounded border ${getRiskBadge(proctorReport.risk?.risk_level)}`}>Risk: {proctorReport.risk?.risk_level || 'unknown'} ({proctorReport.risk?.risk_score ?? 'N/A'})</span>
+              <span className="px-2 py-1 rounded border border-slate-700">Session: {proctorReport.session?.status}</span>
+              <span className="px-2 py-1 rounded border border-slate-700">Events: {proctorReport.events?.length || 0}</span>
+            </div>
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {(proctorReport.events || []).map((event) => {
+                const snap = (proctorReport.snapshots || []).find((s) => s.id === event.snapshot_id)
+                return <div key={event.id} className="bg-slate-950 border border-slate-800 rounded-lg p-3 flex gap-3">
+                  {snap && <AuthSnapshotImage api={reviewerApi} snapshot={snap} />}
+                  <div className="min-w-0 text-xs"><div className="flex gap-2"><strong className="text-slate-200">{event.type}</strong><span className="text-amber-300 uppercase">{event.severity}</span><span className="text-slate-500">Client-reported</span></div><p className="text-slate-400">{event.at}</p><p className="text-slate-300">{event.details?.detector || event.details?.description || 'Detector event recorded for human review.'}</p></div>
+                </div>
+              })}
+              {!proctorReport.events?.length && <p className="text-xs text-slate-500">No proctoring events were recorded. This does not by itself indicate a problem.</p>}
+            </div>
+          </>}
         </div>
       )}
 

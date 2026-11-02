@@ -28,12 +28,21 @@ import { ObjectDetector } from '../lib/cv/object-detector'
 import { analyzeLighting } from '../lib/cv/lighting-utils'
 import { calculateRiskScore } from '../lib/cv/risk-engine'
 import { DetectorPacer, EVENT_LABELS, ProctorRules, SnapshotGate } from './proctor-rules.js'
+import { loadProctorQueue, saveProctorQueue, loadSnapshotQueue, saveSnapshotQueue, makeQueuedEvent } from './proctor-queue.js'
 
 export { EVENT_LABELS }
 
 const TICK_MS = 250
 const FLUSH_MS = 10000
 const SNAPSHOT_CAP = 30
+const RETRY_BASE_MS = 1000
+const RETRY_MAX_MS = 60000
+const RETRY_MAX_ATTEMPTS = 8
+
+function retryDelay(attempts) {
+  const ceiling = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ** Math.min(attempts, 8)))
+  return Math.round(ceiling * (0.75 + Math.random() * 0.5))
+}
 
 /** Phone / tablet (touch-first) — no forced full screen there. */
 export function isMobileDevice() {
@@ -131,6 +140,10 @@ export class Proctor {
 
     this.status = 'starting' // starting | active | limited
     this.detectors = { face: 'loading', headpose: 'off', objects: 'off', lighting: 'ok' }
+    this.detectorHealth = Object.fromEntries(Object.keys(this.detectors).map((name) => [name, {
+      name, status: 'RUNNING', initialized: false, ran: 0, failures: 0,
+      last_success_at: null, last_error_at: null, error: null, last_duration_ms: null, skipped_reason: null,
+    }]))
     this.models = {}
     this.pacers = {
       face: new DetectorPacer({ baseMs: this.tier === 'desktop' ? 1000 : 1500, budgetMs: 60 }),
@@ -140,7 +153,8 @@ export class Proctor {
     }
     this.rules = new ProctorRules({ onEvent: (ev) => this._onEvent(ev) })
     this.gate = new SnapshotGate({ cooldownMs: 20000, cap: SNAPSHOT_CAP })
-    this.queue = []          // events waiting to be sent
+    this.queue = []          // durable events waiting to be sent
+    this.snapshotQueue = []  // durable blobs waiting for server acknowledgement
     this.inflight = new Set() // snapshot upload promises
     this.baselineTaken = false
     this.uploadBlocked = false
@@ -192,6 +206,9 @@ export class Proctor {
 
   async start() {
     this._startedAt = this.now()
+    if (this.uploads) this.queue = await loadProctorQueue(this.sessionId)
+    if (this.uploads) this.snapshotQueue = await loadSnapshotQueue(this.sessionId)
+    if (this.uploads && this.snapshotQueue.length) this._startupRetry = this._retrySnapshots()
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this._onVis)
       document.addEventListener('fullscreenchange', this._onFs)
@@ -228,6 +245,8 @@ export class Proctor {
     if (this.tier === 'low') { // ≤ 2 cores / ≤ 2 GB: presence + lighting + browser signals only
       this.detectors.headpose = 'skipped'
       this.detectors.objects = 'skipped'
+      this.detectorHealth.headpose = { ...this.detectorHealth.headpose, status: 'SKIPPED', skipped_reason: 'low_device_tier' }
+      this.detectorHealth.objects = { ...this.detectorHealth.objects, status: 'SKIPPED', skipped_reason: 'low_device_tier' }
       this._refreshStatus()
       return
     }
@@ -245,9 +264,11 @@ export class Proctor {
       if (model.usingFallback) throw new Error('model unavailable')
       if (this._stopped) { model.release(); return null }
       this.detectors[key] = 'ok'
+      this.detectorHealth[key] = { ...this.detectorHealth[key], status: 'RUNNING', initialized: true, error: null }
       return model
     } catch (e) {
       this.detectors[key] = 'unavailable'
+      this.detectorHealth[key] = { ...this.detectorHealth[key], status: 'UNAVAILABLE', error: e?.message || 'initialization failed', last_error_at: new Date(this.now()).toISOString() }
       try { model.release() } catch { /* ignore */ }
       return null
     }
@@ -320,8 +341,10 @@ export class Proctor {
         this.rules.light(t, analyzeLighting(this._lc).brightness)
       }
     } catch (e) {
+      this.detectorHealth[key] = { ...this.detectorHealth[key], status: 'FAILED', failures: this.detectorHealth[key].failures + 1, error: e?.message || 'inference failed', last_error_at: new Date(this.now()).toISOString() }
       /* one bad frame never breaks the interview */
     }
+    if (this.detectorHealth[key].status !== 'FAILED') this.detectorHealth[key] = { ...this.detectorHealth[key], status: 'RUNNING', ran: this.detectorHealth[key].ran + 1, last_success_at: new Date(this.now()).toISOString(), last_duration_ms: Math.round(performance.now() - t0) }
     pacer.record(this.now(), performance.now() - t0)
     if (pacer.disabled && this.detectors[key] === 'ok') {
       this.detectors[key] = 'slow'
@@ -337,10 +360,12 @@ export class Proctor {
   }
 
   _onEvent(ev) {
-    const item = { type: ev.type, severity: ev.severity, ts: new Date(ev.ts).toISOString(), details: { ...ev.details, corroborated: ev.corroborated || undefined }, snapshot_id: null, waiting: false }
+    if (this._finalizing || this._stopped) return
+    const item = makeQueuedEvent({ type: ev.type, severity: ev.severity, ts: new Date(ev.ts).toISOString(), details: { ...ev.details, corroborated: ev.corroborated || undefined }, snapshot_id: null, waiting: false })
     if (ev.severity !== 'low' && NOTICES[ev.type]) this.onNotice({ type: ev.type, severity: ev.severity, text: NOTICES[ev.type] })
     if (this.uploads) {
       this.queue.push(item)
+      this._persistEvents()
       if (this.gate.allow(ev)) {
         item.waiting = true
         this._snapshot(ev, EVENT_LABELS[ev.type] || ev.type, this.getVideo(), item)
@@ -350,24 +375,32 @@ export class Proctor {
   }
 
   _snapshot(ev, label, video, item = null) {
-    if (!this.uploads || this.uploadBlocked) { if (item) item.waiting = false; return }
+    if (!this.uploads || this.uploadBlocked || this._finalizing || this._stopped) { if (item) item.waiting = false; return }
     const p = (async () => {
       try {
         const shot = await captureSnapshot(video, label)
         if (!shot) return
+        const record = { client_event_id: item?.client_event_id || `snapshot-${ev.type}-${ev.ts}`, event_type: ev.type, severity: ev.severity, label, client_ts: new Date(ev.ts).toISOString(), blob: shot.blob, attempts: 0, next_retry_at: 0, upload_status: 'PENDING' }
+        this.snapshotQueue.push(record)
+        await this._persistSnapshots()
         const fd = new FormData()
         fd.append('image', shot.blob, `${ev.type}.jpg`)
         fd.append('event_type', ev.type)
         fd.append('severity', ev.severity)
         fd.append('label', label)
         fd.append('client_ts', new Date(ev.ts).toISOString())
+        fd.append('client_event_id', record.client_event_id)
         const res = await this.api(`/api/interview/${this.sessionId}/proctor/snapshot`, { method: 'POST', body: fd })
         if (res.ok) {
           const data = await res.json().catch(() => ({}))
           this.snapshotsStored += 1
           if (item && data.id) item.snapshot_id = data.id
-        } else if (res.status === 409 || res.status === 400 || res.status === 429) {
-          this.uploadBlocked = res.status !== 400 // inactive session / cap reached
+          this.snapshotQueue = this.snapshotQueue.filter((x) => x !== record)
+          await this._persistSnapshots()
+        } else if (res.status === 400 || res.status === 409) {
+          record.upload_status = 'FAILED'; record.error = `server_${res.status}`; await this._persistSnapshots()
+        } else {
+          record.attempts += 1; record.next_retry_at = this.now() + retryDelay(record.attempts); record.upload_status = record.attempts >= RETRY_MAX_ATTEMPTS ? 'FAILED' : 'PENDING'; record.error = `server_${res.status}`; await this._persistSnapshots()
         }
       } catch { /* offline: the event is still logged */ } finally {
         if (item) item.waiting = false
@@ -378,40 +411,95 @@ export class Proctor {
     return p
   }
 
+  async _retrySnapshots() {
+    for (const record of [...this.snapshotQueue].filter((x) => x.upload_status !== 'FAILED' && (x.next_retry_at || 0) <= this.now())) {
+      try {
+        const fd = new FormData()
+        fd.append('image', record.blob, `${record.event_type}.jpg`)
+        fd.append('event_type', record.event_type); fd.append('severity', record.severity)
+        fd.append('label', record.label); fd.append('client_ts', record.client_ts); fd.append('client_event_id', record.client_event_id)
+        const res = await this.api(`/api/interview/${this.sessionId}/proctor/snapshot`, { method: 'POST', body: fd })
+        if (!res.ok) {
+          record.attempts = (record.attempts || 0) + 1
+          record.next_retry_at = this.now() + retryDelay(record.attempts)
+          record.upload_status = (res.status === 400 || res.status === 409 || res.status === 429 || record.attempts >= RETRY_MAX_ATTEMPTS) ? 'FAILED' : 'PENDING'
+          record.error = `server_${res.status}`
+          await this._persistSnapshots(); break
+        }
+        this.snapshotQueue = this.snapshotQueue.filter((x) => x !== record)
+        this.snapshotsStored += 1
+        await this._persistSnapshots()
+      } catch { break }
+    }
+  }
+
   async _flush(beacon = false) {
     if (!this.uploads || this._flushing) return
-    const ready = this.queue.filter((e) => !e.waiting)
+    const ready = this.queue.filter((e) => !e.waiting && e.upload_status !== 'FAILED' && (e.next_retry_at || 0) <= this.now())
     if (!ready.length) return
     this._flushing = true
     try {
       for (let i = 0; i < ready.length; i += 50) {
         const batch = ready.slice(i, i + 50)
-        const body = JSON.stringify({ events: batch.map(({ waiting, ...rest }) => rest) })
+        const body = JSON.stringify({ events: batch.map(({ waiting, upload_status, ...rest }) => rest) })
         const res = await this.api(`/api/interview/${this.sessionId}/proctor/events`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: beacon,
         })
-        if (res.ok || res.status === 409 || res.status === 400) {
-          this.queue = this.queue.filter((e) => !batch.includes(e))
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}))
+          const acknowledged = new Set(data.acknowledged || [])
+          this.queue = this.queue.filter((e) => !acknowledged.has(e.client_event_id))
+          ;(data.rejected || []).forEach((r) => {
+            const item = this.queue.find((e) => e.client_event_id === r.client_event_id)
+            if (item) { item.upload_status = 'FAILED'; item.error = r.reason || 'invalid_event' }
+          })
+          await this._persistEvents()
+        } else if (res.status === 400 || res.status === 409) {
+          batch.forEach((e) => { e.upload_status = 'FAILED'; e.error = `server_${res.status}` })
+          await saveProctorQueue(this.sessionId, this.queue)
+          break
+        } else if (res.status >= 500 || res.status === 408 || res.status === 429) {
+          batch.forEach((e) => { e.attempts = (e.attempts || 0) + 1; e.upload_status = e.attempts >= RETRY_MAX_ATTEMPTS ? 'FAILED' : 'PENDING'; e.next_retry_at = this.now() + retryDelay(e.attempts); e.error = `server_${res.status}` })
+          await this._persistEvents(); break
         } else break
       }
-    } catch { /* retry on next flush */ } finally {
+    } catch {
+      ready.forEach((e) => { e.attempts = (e.attempts || 0) + 1; e.upload_status = e.attempts >= RETRY_MAX_ATTEMPTS ? 'FAILED' : 'PENDING'; e.next_retry_at = this.now() + retryDelay(e.attempts); e.error = 'network_error' })
+      await this._persistEvents()
+    } finally {
       this._flushing = false
     }
   }
 
   /** Wait for in-flight snapshot uploads (≤ timeoutMs) and send remaining events. Call before /finish. */
   async finalize(timeoutMs = 4000) {
+    this._finalizing = true
+    if (this._startupRetry) await Promise.race([this._startupRetry, new Promise((r) => setTimeout(r, timeoutMs))])
     if (this.inflight.size) {
       await Promise.race([Promise.allSettled([...this.inflight]), new Promise((r) => setTimeout(r, timeoutMs))])
     }
     this.queue.forEach((e) => { e.waiting = false })
     for (let i = 0; this._flushing && i < 100; i++) await new Promise((r) => setTimeout(r, 50)) // a periodic flush is in flight
     await this._flush()
+    await this._retrySnapshots()
+    await this._persistSnapshots()
+    this._syncIssues = this.queue.some((e) => e.upload_status !== 'SYNCED') || this.snapshotQueue.length > 0
+    return { state: this._syncIssues ? 'partial' : 'synced', pending_events: this.queue.length, pending_snapshots: this.snapshotQueue.length, failed_events: this.queue.filter((e) => e.upload_status === 'FAILED').length, failed_snapshots: this.snapshotQueue.filter((e) => e.upload_status === 'FAILED').length }
+  }
+
+  _persistEvents() {
+    this._eventPersist = (this._eventPersist || Promise.resolve()).then(() => saveProctorQueue(this.sessionId, this.queue)).catch(() => {})
+    return this._eventPersist
+  }
+
+  _persistSnapshots() {
+    this._snapshotPersist = (this._snapshotPersist || Promise.resolve()).then(() => saveSnapshotQueue(this.sessionId, this.snapshotQueue)).catch(() => {})
+    return this._snapshotPersist
   }
 
   liveState() {
     const alerts = this.rules.events.filter((e) => e.severity !== 'low').length
-    return { status: this.status, detectors: { ...this.detectors }, alerts, counts: { ...this.rules.counts }, snapshots: this.snapshotsStored }
+    return { status: this.status, detectors: { ...this.detectors }, detector_health: { ...this.detectorHealth }, alerts, counts: { ...this.rules.counts }, snapshots: this.snapshotsStored, queue_pending: this.queue.length }
   }
 
   _emitUpdate() {
@@ -432,9 +520,10 @@ export class Proctor {
       counts: { ...this.rules.counts },
       flags,
       detectors: { ...this.detectors },
+      detector_health: { ...this.detectorHealth },
       device_tier: this.tier,
       baseline: this.rules.baseline,
-      proctoring_status: this.status,
+      proctoring_status: this._syncIssues ? 'completed_with_sync_issues' : (this._finalizing ? 'completed' : this.status),
       event_count: this.rules.events.length,
       snapshots: this.snapshotsStored,
       corroborated_events: this.rules.events.filter((e) => e.corroborated).length,
