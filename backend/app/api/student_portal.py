@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+import secrets
 import uuid
 from collections import Counter
 from datetime import timedelta
@@ -44,6 +45,9 @@ from ..db import (
     SavedJob,
     ScheduledInterview,
     StudentProject,
+    ProjectAnalysisJob,
+    ProjectFile,
+    ProjectVideoEvidence,
     User,
     engine,
     utc_now,
@@ -624,6 +628,8 @@ class ProjectIn(BaseModel):
     team_size: int = PField(1, ge=1, le=50)
     month: Optional[str] = PField(None, max_length=20)
     featured: bool = False
+    domain: str = "other"
+    video_url: Optional[str] = PField(None, max_length=300)
 
 
 class ProjectPatch(BaseModel):
@@ -636,6 +642,29 @@ class ProjectPatch(BaseModel):
     team_size: Optional[int] = PField(None, ge=1, le=50)
     month: Optional[str] = PField(None, max_length=20)
     featured: Optional[bool] = None
+    domain: Optional[str] = None
+    video_url: Optional[str] = PField(None, max_length=300)
+
+
+_YT_RE = re.compile(r"^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})(?:[?&#/].*)?$")
+
+
+def _video_url(value: Optional[str]) -> Optional[str]:
+    """Accept YouTube watch / youtu.be / shorts / live links; store one canonical form. '' clears it."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    m = _YT_RE.match(v)
+    if not m:
+        raise HTTPException(status_code=422, detail="Demo video must be a YouTube link (watch, youtu.be or shorts). Upload it as Unlisted.")
+    return f"https://www.youtube.com/watch?v={m.group(1)}"
+
+
+def _domain(value: str) -> str:
+    from ..services.project_analysis.domains import DOMAIN_MAP
+    if value not in DOMAIN_MAP:
+        raise HTTPException(status_code=422, detail="Unknown engineering domain")
+    return value
 
 
 def _clean_list(items, limit=15, maxlen=40) -> List[str]:
@@ -680,6 +709,9 @@ def _project_dict(p: StudentProject) -> dict:
         "featured": bool(p.featured),
         "created_at": _iso(p.created_at),
         "updated_at": _iso(p.updated_at),
+        "domain": p.domain or "other",
+        "video_url": p.video_url,
+        "challenge_code": p.challenge_code or None,
     }
 
 
@@ -741,6 +773,9 @@ def create_project(body: ProjectIn, candidate: str = Depends(get_current_candida
             month=(body.month or "").strip() or None,
             featured=body.featured,
             status="draft",
+            domain=_domain(body.domain),
+            video_url=_video_url(body.video_url),
+            challenge_code=f"{secrets.randbelow(9000) + 1000}",
         )
         session.add(p)
         session.commit()
@@ -788,6 +823,12 @@ def update_project(pid: int, body: ProjectPatch, candidate: str = Depends(get_cu
             p.featured = body.featured
             if body.featured:
                 _set_featured(session, user.id, p.id)
+        if body.domain is not None:
+            p.domain = _domain(body.domain)
+        if body.video_url is not None:
+            p.video_url = _video_url(body.video_url)
+        if not p.challenge_code:
+            p.challenge_code = f"{secrets.randbelow(9000) + 1000}"
         # Changing what was verified sends the project back to draft.
         if content_changed and p.status in {"verified", "under_review"}:
             p.status = "draft"
@@ -809,6 +850,12 @@ def delete_project(pid: int, candidate: str = Depends(get_current_candidate)):
         for path in (p.image_path, p.file_path):
             if path:
                 delete_media_file(path)
+        for model in (ProjectFile, ProjectVideoEvidence, ProjectAnalysisJob):
+            for row in session.exec(select(model).where(model.project_id == pid)).all():
+                path = getattr(row, "media_path", None)
+                if path and path != p.file_path:
+                    delete_media_file(path)
+                session.delete(row)
         session.delete(p)
         session.commit()
         return {"deleted": True, "id": pid}
@@ -903,6 +950,8 @@ def upload_project_attachment(pid: int, file: UploadFile = File(...), candidate:
     with Session(engine) as session:
         p = session.get(StudentProject, pid)
         if p.file_path and p.file_path != rel:
+            for old in session.exec(select(ProjectFile).where(ProjectFile.project_id == pid, ProjectFile.media_path == p.file_path)).all():
+                session.delete(old)
             delete_media_file(p.file_path)
         p.file_path = rel
         p.updated_at = utc_now()
@@ -923,7 +972,8 @@ def submit_project(pid: int, candidate: str = Depends(get_current_candidate)):
             raise HTTPException(status_code=409, detail="Project is already under review")
         if len((p.description or "").strip()) < 30:
             raise HTTPException(status_code=400, detail="Add a description of at least 30 characters before submitting")
-        if not (p.image_path or p.file_path or _j(p.links_json, [])):
+        has_files = session.exec(select(ProjectFile.id).where(ProjectFile.project_id == p.id)).first()
+        if not (p.image_path or p.file_path or _j(p.links_json, []) or has_files or p.video_url):
             raise HTTPException(status_code=400, detail="Add an image, attachment or link as evidence before submitting")
         p.status = "under_review"
         p.verification_note = None
@@ -1712,7 +1762,9 @@ def export_data(candidate: str = Depends(get_current_candidate)):
             "exported_at": _iso(utc_now()),
             "account": {"username": user.username, "created_at": _iso(user.created_at), "last_login_at": _iso(user.last_login_at)},
             "profile": _profile_to_dict(profile, resume),
-            "projects": [_project_dict(p) for p in session.exec(select(StudentProject).where(StudentProject.candidate_id == user.id)).all()],
+            "projects": [_project_dict(p) | {"analyses": [{"id": j.id, "status": j.status, "result": json.loads(j.result_json) if j.result_json else None}
+                                                          for j in session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id == p.id)).all()]}
+                         for p in session.exec(select(StudentProject).where(StudentProject.candidate_id == user.id)).all()],
             "applications": apps,
             "saved_jobs": _saved_list(session, user.id),
             "offers": [{"id": o.id, "application_id": o.application_id, "ctc": o.ctc, "status": o.status, "joining_date": o.joining_date,
@@ -1749,10 +1801,17 @@ def delete_account(body: DeleteAccountIn = Body(...), candidate: str = Depends(g
         projects = session.exec(select(StudentProject).where(StudentProject.candidate_id == cid)).all()
         for p in projects:
             media += [p.image_path, p.file_path]
+        pids = [p.id for p in projects] or [0]
+        extra = (session.exec(select(ProjectFile).where(ProjectFile.project_id.in_(pids))).all()
+                 + session.exec(select(ProjectVideoEvidence).where(ProjectVideoEvidence.project_id.in_(pids))).all())
+        media += [r.media_path for r in extra]
 
         def purge(rows):
             for r in rows:
                 session.delete(r)
+
+        purge(extra)
+        purge(session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id.in_(pids))).all())
 
         purge(session.exec(select(InterviewSession).where(InterviewSession.candidate_id == cid)).all())
         purge(session.exec(select(ScheduledInterview).where(ScheduledInterview.candidate_id == cid)).all())

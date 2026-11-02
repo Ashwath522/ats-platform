@@ -168,6 +168,27 @@ docs/               # design references
 
 ## Roadmap
 
+### Project analysis (evidence-based)
+
+Students pick the project's engineering domain, upload evidence files and a demo video, and press **Analyse project**. CoreLink reads every file, watches the video, checks each claim in the description against the evidence and builds **one report** with an explainable score.
+
+| Domain | What is read from the files |
+|---|---|
+| Electronics | KiCad schematic / netlist / PCB, Wokwi `diagram.json`, TinkerCAD JSON, Arduino/ESP code (pins, libraries, serial, Wi-Fi/MQTT). Code pins are cross-checked against the real wiring. |
+| Robotics / IoT | Everything from electronics + software, plus MQTT topics and the sensor → controller → actuator chain. |
+| Software | Source files and ZIPs (imports, API routes, tests, TODOs), dependency files, and the linked GitHub repo (languages, tests, CI, commit authors, forks). |
+| AI / ML | Notebooks (models, metrics printed in outputs, leakage/evaluation risks), CSV datasets (rows, missing values, duplicates, class balance). Claimed metrics are compared with real outputs. |
+| Mechanical | STEP (part names, solids, assembly links), STL/OBJ (size, closed solid, volume), DXF drawings (layers, dimensions, notes). |
+| Civil | IFC/BIM (walls, slabs, beams, columns, storeys, materials), DXF and PDF drawings. Safety and code-compliance claims are never marked verified. |
+
+How it stays honest:
+- Facts come only from files, the video or the student's own words. Values read by AI from photos or video are marked *medium confidence*.
+- A claim is **verified** only when server-parsed evidence supports it; the rules are enforced in code after any AI step. Missing evidence is reported as "not enough evidence", never as a fail.
+- Scores are calculated by rules per domain (same input → same score). AI is used for three things only: listing claims, matching claims to evidence, and watching the video/photos (Gemini free tier). Without AI keys everything still works, with simpler claim matching.
+- Demo videos: a YouTube link (Unlisted) is watched directly; or the student picks a video file and only 12 key frames chosen in the browser are uploaded. A random 4-digit code must be said or shown in the video.
+- Uploaded code is never executed. Recruiters see a reduced report (no files, transcripts or codes). The **Verified** badge is still given by a human admin.
+- Limits: 10 files per project, 15 MB each, 60 MB total; `PROJECT_ANALYSIS_MAX_LLM_CALLS_PER_DAY` (default 40) and `PROJECT_ANALYSIS_MAX_PER_STUDENT_DAILY` (default 5). Unsupported formats: DWG, SolidWorks/Fusion native files (export DXF/STEP/STL instead).
+
 - Firebase phone OTP for iPhone/desktop
 - Moving hosting closer to India
 - Recruiter analytics dashboard

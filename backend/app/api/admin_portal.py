@@ -48,6 +48,7 @@ from ..db import (
     engine, utc_now,
 )
 from ..services.audit import record_audit_event
+from .project_analysis import summary as _pa_summary
 
 router = APIRouter(tags=["admin_portal"])
 log = logging.getLogger("ats-platform.admin_portal")
@@ -1724,6 +1725,7 @@ def list_projects(status: str = "under_review", admin: str = Depends(get_current
                         "tags": _jl(r.tags_json, []), "tools": _jl(r.tools_json, []), "links": _jl(r.links_json, []),
                         "image": r.image_path, "file": r.file_path, "status": r.status, "note": r.verification_note,
                         "team_size": r.team_size, "month": r.month, "created_at": _iso(r.created_at), "updated_at": _iso(r.updated_at),
+                        "domain": r.domain, "video_url": r.video_url, "analysis": _pa_summary(s, r.id),
                         "candidate": {"id": f"c-{r.candidate_id}", "name": (p.full_name if p and p.full_name else (c.username if c else "Student")),
                                       "college": p.college if p else None, "branch": branch_id(p.branch) if p else None,
                                       "branch_label": branch_label(p.branch) if p else None}})

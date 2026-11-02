@@ -48,35 +48,9 @@ def _get_gemini_client():
 
 
 def _filename_fallback(filename: str) -> tuple[str, str]:
-    """Derive engineering keywords from the filename when vision is
-    unavailable or returns nothing usable. Better than an empty/placeholder
-    string, which would drag the AI project score to 0."""
-    low = (filename or "").lower()
-
-    if any(k in low for k in ("circuit", "arduino", "esp", "iot", "sensor",
-                              "pcb", "raspberry", "microcontroller")):
-        topic = ("Arduino / IoT / electronics project. Keywords: Arduino, "
-                 "IoT, embedded systems, sensors, circuit design, electronics, "
-                 "microcontroller.")
-    elif any(k in low for k in ("cad", "mech", "engine", "gear", "pump",
-                                "solidwork", "assembly", "turbine")):
-        topic = ("CAD / mechanical design project. Keywords: CAD, mechanical "
-                 "design, SolidWorks, 3D modeling, engineering drawing, "
-                 "manufacturing.")
-    elif any(k in low for k in ("civil", "struct", "arch", "building",
-                                "bridge", "beam", "truss")):
-        topic = ("Structural / civil engineering project. Keywords: civil "
-                 "engineering, structural analysis, AutoCAD, construction, "
-                 "design.")
-    elif any(k in low for k in ("face", "detect", "vision", "ml", "ai",
-                                "neural", "cnn", "opencv")):
-        topic = ("Computer vision / ML project. Keywords: computer vision, "
-                 "OpenCV, machine learning, image processing, Python, AI.")
-    else:
-        topic = ("Engineering project image. Keywords: engineering, design, "
-                 "technical project, prototype.")
-
-    return (f"Image file '{filename}'. {topic}", "filename_fallback")
+    """Vision unavailable: report only that an image exists — never keywords
+    guessed from the file name (they inflated scores without evidence)."""
+    return (f"Image file '{os.path.basename(filename or 'image')}'. Contents not analysed.", "image_unanalysed")
 
 
 def parse_image_bytes(image_bytes: bytes, filename: str = "image.png") -> tuple[str, str]:

@@ -1,5 +1,7 @@
 # Deploying CoreLink for free
 
+Project analysis defaults: `PROJECT_ANALYSIS_MAX_LLM_CALLS_PER_DAY=40` and `PROJECT_ANALYSIS_MAX_PER_STUDENT_DAILY=5`. File reading, engineering checks and scoring work without any AI key; `GEMINI_API_KEY` adds video and photo reading, and `GITHUB_TOKEN` (optional, read-only) raises the GitHub API limit.
+
 | Piece | Free service | Why |
 |---|---|---|
 | Backend API (FastAPI, Docker) | **Render** free web service, region **Singapore** | Docker support, HTTPS, closest free region to India (lower interview latency) |
@@ -29,7 +31,7 @@ Everything is pre-configured in [`render.yaml`](render.yaml). You only paste sec
    - `ADMIN_EMAIL`, `ADMIN_PASSWORD` (your first admin login)
 4. If Render gives your services different URLs than `corelink-api.onrender.com` / `corelink-web.onrender.com`, update:
    - on **corelink-web**: `VITE_API_URL` → your API URL, then *Manual Deploy → Clear cache & deploy*
-   - on **corelink-api**: `CORS_ORIGINS` and `APP_PUBLIC_URL` → your web URL
+   - on **corelink-api**: `CORS_ORIGINS` and `APP_PUBLIC_URL` → your web URL. Keep `CORS_ORIGINS` as an explicit comma-separated allowlist; wildcard origins are rejected in production.
 
 First build takes ~6–8 minutes (it bakes the embedding model into the image).
 

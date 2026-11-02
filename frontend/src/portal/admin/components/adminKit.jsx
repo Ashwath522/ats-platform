@@ -182,10 +182,10 @@ export function ConfirmModal({ open, title, text, confirmLabel = 'Confirm', dang
 }
 
 /** Modal asking for a short note (reject / flag reasons). */
-export function NoteModal({ open, title, label = 'Note', placeholder, confirmLabel = 'Submit', required, busy, onSubmit, onClose, danger, extra }) {
+export function NoteModal({ open, title, label = 'Note', placeholder, confirmLabel = 'Submit', required, busy, onSubmit, onClose, danger, extra, initial = '' }) {
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
-  useEffect(() => { if (open) { setNote(''); setErr('') } }, [open])
+  useEffect(() => { if (open) { setNote(initial || ''); setErr('') } }, [open, initial])
   const submit = () => {
     if (required && note.trim().length < 3) return setErr('Please add a short note (3+ characters)')
     onSubmit(note.trim())

@@ -28,7 +28,7 @@ from .api import candidate, recruiter, auth
 from .api import candidate_auth, candidate_profile, candidate_jobs, candidate_posts
 from .api import recruiter_jobs, recruiter_profile, admin, interview
 from .api import student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data, google_auth, linkedin_auth
-from .api import proctoring, company_directory, job_match, truecaller_auth
+from .api import proctoring, company_directory, job_match, truecaller_auth, project_analysis
 from .services.media_utils import MEDIA_DIR
 from .rate_limit import RateLimitExceeded, _rate_limit_exceeded_handler, limiter
 
@@ -94,9 +94,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ATS Platform API", lifespan=lifespan)
 
 # CORS_ORIGINS env var: comma-separated list of allowed origins, e.g.
-# "https://app.example.com,https://admin.example.com". Defaults to "*" for
-# local dev - set this explicitly before any real deployment.
-_cors_origins_env = os.environ.get("CORS_ORIGINS", "*")
+# "https://app.example.com,https://admin.example.com". Local development uses
+# localhost and Capacitor origins; production must use an explicit allowlist.
+_cors_origins_env = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:8080,capacitor://localhost",
+)
+_is_production = os.environ.get("ENV", "development").lower() in {"production", "prod"}
+if _is_production and _cors_origins_env.strip() == "*":
+    raise RuntimeError("CORS_ORIGINS='*' is not allowed when ENV=production")
 allow_origins = ["*"] if _cors_origins_env.strip() == "*" else [
     o.strip() for o in _cors_origins_env.split(",") if o.strip()
 ]
@@ -150,7 +156,7 @@ app.include_router(admin.router)
 app.include_router(interview.router)
 app.include_router(google_auth.router)
 app.include_router(linkedin_auth.router)
-for _r in (student_portal, recruiter_portal, hiring, admin_portal, notifications, live_data, proctoring, company_directory, job_match, truecaller_auth):
+for _r in (student_portal, project_analysis, recruiter_portal, hiring, admin_portal, notifications, live_data, proctoring, company_directory, job_match, truecaller_auth):
     app.include_router(_r.router)
 
 # Aliases for candidate project-upload and simplified status without /profile prefix

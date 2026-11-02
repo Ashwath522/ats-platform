@@ -471,6 +471,52 @@ class StudentProject(SQLModel, table=True):
     featured: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    domain: str = Field(default="other", index=True)
+    video_url: Optional[str] = None
+    challenge_code: str = ""
+
+
+class ProjectFile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="studentproject.id", index=True)
+    candidate_id: int = Field(index=True)
+    filename: str
+    ext: str
+    mime: str = "application/octet-stream"
+    size_bytes: int = 0
+    sha256: str = Field(index=True)
+    media_path: str
+    kind: str = "other"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ProjectAnalysisJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(index=True)
+    candidate_id: int = Field(index=True)
+    input_hash: str = Field(index=True)
+    status: str = Field(default="queued", index=True)
+    stage: str = "validate_files"
+    progress: int = 0
+    stages_json: str = "[]"
+    result_json: Optional[str] = None
+    error: Optional[str] = None
+    attempts: int = 0
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    finished_at: Optional[datetime] = None
+
+class ProjectVideoEvidence(SQLModel, table=True):
+    """Key frames picked in the student's browser from a local demo video.
+    The video itself is never uploaded; frames expire after 90 days."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(index=True)
+    job_id: Optional[int] = Field(default=None, index=True)
+    media_path: Optional[str] = None
+    timestamp: str = "00:00"
+    sha256: str = ""
+    transcript: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now, index=True)
 
 
 class SavedJob(SQLModel, table=True):

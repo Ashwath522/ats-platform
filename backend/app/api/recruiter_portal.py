@@ -1047,6 +1047,7 @@ def candidate_detail(candidate_id: int, recruiter: str = Depends(get_current_rec
                 "id": pr.id, "title": pr.title, "description": pr.description, "category": pr.category,
                 "tags": _loads(pr.tags_json, []), "tools": _loads(pr.tools_json, []), "image_path": pr.image_path,
                 "links": _loads(pr.links_json, []), "status": pr.status, "month": pr.month, "team_size": pr.team_size,
+                "domain": pr.domain, "analysis": _pa_badge(session, pr.id),
             } for pr in projects],
             "project_score": p.project_score, "project_summary": p.project_summary,
             "applications": [ctx.app_item(a) for a in my_apps],
@@ -1057,6 +1058,35 @@ def candidate_detail(candidate_id: int, recruiter: str = Depends(get_current_rec
             "invitable_jobs": [{"id": j.id, "title": j.title, "code": job_code(ctx.prefix, j)} for j in ctx.jobs if j.status == "open" and j.id not in applied_job_ids],
         })
         return item
+
+
+def _pa_badge(session: Session, project_id: int):
+    from .project_analysis import summary
+    sm = summary(session, project_id)
+    if not sm or sm["status"] != "done":
+        return None
+    return {k: sm[k] for k in ("overall", "coverage", "claims", "verified", "contradicted")}
+
+
+@router.get("/projects/{project_id}/analysis")
+def project_analysis_report(project_id: int, recruiter: str = Depends(get_current_recruiter)):
+    """Read-only, recruiter-safe project analysis report (same visibility rules as the candidate profile)."""
+    from .project_analysis import recruiter_view
+    from ..services.audit import record_audit_event
+    with Session(engine) as session:
+        project = session.get(StudentProject, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        _visible_candidate(Ctx(session, recruiter, light=True), project.candidate_id)
+        view = recruiter_view(session, project)
+        if not view:
+            raise HTTPException(status_code=404, detail="This project has no finished analysis yet")
+        try:
+            record_audit_event(session=session, event_type="recruiter_project_report_view", human_action=f"project-{project_id}",
+                               candidate_id=project.candidate_id)
+        except Exception:
+            pass
+        return view | {"title": project.title}
 
 
 def _resume_for(ctx: Ctx, cid: int) -> Resume:

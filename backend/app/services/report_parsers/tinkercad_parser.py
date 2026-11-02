@@ -25,15 +25,8 @@ def _collect_names(node, found: list):
 
 
 def _filename_fallback(file_path: str) -> tuple[str, str]:
-    """Derive keywords from the filename when the JSON yields nothing."""
-    base = os.path.basename(file_path)
-    stem = os.path.splitext(base)[0].replace("_", " ").replace("-", " ")
-    return (
-        f"TinkerCAD / circuit design file '{base}' (topic: {stem}). "
-        f"Keywords: circuit design, electronics, embedded systems, "
-        f"Arduino, TinkerCAD, prototyping, hardware.",
-        "tinkercad_fallback",
-    )
+    """No readable content: report only the file name — never invented keywords."""
+    return (f"Circuit design file '{os.path.basename(file_path)}'. Contents could not be read.", "tinkercad_unreadable")
 
 
 def parse_tinkercad(file_path: str) -> tuple[str, str]:
