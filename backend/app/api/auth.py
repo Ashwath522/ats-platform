@@ -15,7 +15,9 @@ from ..auth import create_access_token, get_current_admin, hash_password, record
 from ..db import EmailToken, RecruiterRequest, RecruiterUser, CandidateUser, User, engine, utc_now
 from ..rate_limit import limiter
 from ..services import email_templates
-from ..services.email_delivery import EmailDeliveryError, queue_email, send_email
+from ..services.email_delivery import EmailDeliveryError, EmailQueuedForRetry, queue_email
+# Request handlers send with one attempt (retries continue in the background).
+from ..services.email_delivery import send_email_interactive as send_email
 from ..services.recruiter_verification import verify_recruiter
 
 router = APIRouter(tags=["auth"])
@@ -77,6 +79,13 @@ def _send_email_or_dev(
     try:
         send_email(to, subject, body, html=html, category=category)
         return {"email_sent": True}
+    except EmailQueuedForRetry as exc:
+        log.warning("Email (%s) to %s: first attempt failed, retrying in background: %s", category, to, exc)
+        out = {"email_sent": False, "email_queued": True,
+               "warning": "Email delivery is slow right now — it is being retried and should arrive in a minute."}
+        if _dev_mode_enabled():
+            out["dev_only"] = dev_payload or {}
+        return out
     except EmailDeliveryError as exc:
         log.warning("Email (%s) to %s not delivered: %s", category, to, exc)
         if _dev_mode_enabled():

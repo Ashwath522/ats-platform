@@ -74,13 +74,13 @@ def candidate_companies():
     """FLOW 2: Candidate wants to check ATS against a SPECIFIC company's JD."""
     with Session(engine) as session:
         companies = session.exec(select(Company).order_by(Company.created_at.desc())).all()
+        # Latest JD per company in one query instead of one query per company.
+        latest = {}
+        for jd in session.exec(select(JobDescription).order_by(JobDescription.updated_at.desc())).all():
+            latest.setdefault(jd.company_id, jd)
         results = []
         for company in companies:
-            jd = session.exec(
-                select(JobDescription)
-                .where(JobDescription.company_id == company.id)
-                .order_by(JobDescription.updated_at.desc())
-            ).first()
+            jd = latest.get(company.id)
             if jd:
                 results.append({
                     "id": company.id,
@@ -365,14 +365,19 @@ def score_project(
     if size > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Project file too large (max 10MB)")
 
+    # A client/proxy may omit the filename; without an extension we can't pick a parser.
+    filename = os.path.basename(file.filename or "")
+    ext = os.path.splitext(filename)[1].lower()
+    if not ext:
+        raise HTTPException(status_code=400, detail="The uploaded file needs a name with an extension (e.g. report.pdf)")
+
     # Save to temp file
-    fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename)[1])
+    fd, temp_path = tempfile.mkstemp(suffix=ext)
     try:
         with os.fdopen(fd, 'wb') as f:
             shutil.copyfileobj(file.file, f)
         
         from ..services.mime_check import validate_file_content_matches_extension, ALLOWED_MIME_BY_EXTENSION
-        ext = os.path.splitext(file.filename)[1].lower()
         if ext in ALLOWED_MIME_BY_EXTENSION:
             try:
                 validate_file_content_matches_extension(temp_path, ext)

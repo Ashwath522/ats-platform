@@ -25,7 +25,6 @@ alembic
 striprtf==0.0.26
 spacy
 groq
-google-generativeai
 google-auth>=2.20      # verifies "Sign in with Google" ID tokens
 requests             # transport for google-auth
 

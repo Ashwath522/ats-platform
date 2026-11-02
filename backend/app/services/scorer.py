@@ -118,7 +118,7 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         logger.error(f"Embedding error: {e}")
         semantic_score = 0.0
 
-    # ── DUAL-LLM SCORING: Both Groq and Gemini run unconditionally ───────────
+    # ── DUAL-LLM SCORING: Groq and Gemini both run (in parallel) ─────────────
     # Key rotation: iterate comma-separated keys, retry on rate-limit
     groq_key_raw = os.environ.get("GROQ_API_KEY", "")
     groq_keys = [k.strip() for k in groq_key_raw.replace("\n", ",").split(",") if k.strip()]
@@ -126,36 +126,57 @@ def score_student_job(student: dict, project_texts: list, job: dict):
     gemini_key_raw = os.environ.get("GEMINI_API_KEY", "")
     gemini_keys = [k.strip() for k in gemini_key_raw.replace("\n", ",").split(",") if k.strip()]
 
-    groq_result = None
-    if groq_keys:
+    def _usable(r) -> bool:
+        return bool(r) and (r.get('project_score', 0) > 0 or count_words(r) >= 20)
+
+    def _run_groq():
         for k in groq_keys:
             try:
-                gc = GroqClient(k)
-                groq_result = gc.analyze_project(student, combined, job)
-                if groq_result and (groq_result.get('project_score', 0) > 0 or count_words(groq_result) >= 20):
-                    break
-                groq_result = None  # useless result, try next key
+                r = GroqClient(k).analyze_project(student, combined, job)
+                if _usable(r):
+                    return r
             except GRateLimitError:
                 logger.warning("[SCORER] Groq key rate-limited, rotating to next key")
-                continue
             except Exception as e:
                 logger.error(f"[SCORER] Groq exception: {e}")
+        return None
 
-    # Gemini always runs regardless of Groq outcome (unconditional dual-LLM)
-    gemini_result = None
-    if gemini_keys:
+    def _run_gemini():
         for k in gemini_keys:
             try:
-                gmc = GeminiClient(k)
-                gemini_result = gmc.analyze_project(student, combined, job)
-                if gemini_result and (gemini_result.get('project_score', 0) > 0 or count_words(gemini_result) >= 20):
-                    break
-                gemini_result = None  # useless result, try next key
+                r = GeminiClient(k).analyze_project(student, combined, job)
+                if _usable(r):
+                    return r
             except GemRateLimitError:
                 logger.warning("[SCORER] Gemini key rate-limited, rotating to next key")
-                continue
             except Exception as e:
                 logger.error(f"[SCORER] Gemini exception: {e}")
+        return None
+
+    # Both models still run, but in parallel (was sequential: Groq then Gemini),
+    # bounded by SCORER_LLM_TIMEOUT so one slow provider can't hold the request.
+    groq_result = gemini_result = None
+    jobs = {name: fn for name, fn, keys in (("groq", _run_groq, groq_keys), ("gemini", _run_gemini, gemini_keys)) if keys}
+    if jobs:
+        from concurrent.futures import ThreadPoolExecutor, wait
+        budget = float(os.environ.get("SCORER_LLM_TIMEOUT", "60"))
+        pool = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="scorer-llm")
+        futures = {name: pool.submit(fn) for name, fn in jobs.items()}
+        wait(list(futures.values()), timeout=budget)
+        pool.shutdown(wait=False, cancel_futures=True)
+        for name, fut in futures.items():
+            if not fut.done():
+                logger.warning("[SCORER] %s did not answer within %.0fs — continuing without it", name, budget)
+                continue
+            try:
+                res = fut.result()
+            except Exception as e:  # pragma: no cover - runners already catch
+                logger.error(f"[SCORER] {name} failed: {e}")
+                res = None
+            if name == "groq":
+                groq_result = res
+            else:
+                gemini_result = res
 
     groq_words = count_words(groq_result) if groq_result else 0
     gemini_words = count_words(gemini_result) if gemini_result else 0
@@ -211,8 +232,9 @@ def score_student_job(student: dict, project_texts: list, job: dict):
         api_used = 'fallback'
 
     # ── Third LLM call: synthesized conclusion referencing both models ─────────
+    # Only worth a third call when there are two opinions to reconcile.
     conclusion = ""
-    if groq_result or gemini_result:
+    if groq_result and gemini_result:
         conclusion_client = None
         if groq_keys:
             conclusion_client = GroqClient(groq_keys[0])
@@ -316,7 +338,7 @@ Return ONLY a JSON object with this exact structure:
             
     if gemini_key:
         try:
-            import google.generativeai as genai
+            from app.services import gemini_rest as genai  # REST shim (SDK deprecated)
             genai.configure(api_key=gemini_key)
             model = genai.GenerativeModel(gemini_model)
             resp = model.generate_content(prompt, request_options={"timeout": 5.0})
@@ -407,7 +429,7 @@ Return ONLY a JSON object with this exact structure:
             
     if gemini_key:
         try:
-            import google.generativeai as genai
+            from app.services import gemini_rest as genai  # REST shim (SDK deprecated)
             genai.configure(api_key=gemini_key)
             model = genai.GenerativeModel(gemini_model)
             resp = model.generate_content(prompt, request_options={"timeout": 5.0})

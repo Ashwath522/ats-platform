@@ -270,3 +270,27 @@ def test_templates_render_links(monkeypatch):
     ):
         s, t, h = builder()
         assert s and t and h.startswith("<!doctype html>") and "CoreLink" in h
+
+
+def test_interactive_send_makes_one_attempt_then_retries_in_background(monkeypatch):
+    """A flaky provider must not hold a sign-up request for several timeouts."""
+    import time
+    from app.services import email_delivery as ed
+    calls = []
+
+    def flaky(to, subject, body, html):
+        calls.append(time.monotonic())
+        raise ed.EmailDeliveryError("timeout talking to provider")
+
+    monkeypatch.setitem(ed._PROVIDERS, "brevo", flaky)
+    monkeypatch.setattr(ed, "provider_name", lambda: "brevo")
+    monkeypatch.setattr(ed, "_provider_ready", lambda p: True)
+    monkeypatch.setattr(ed, "BACKOFF_SECONDS", 0)
+    t0 = time.monotonic()
+    with pytest.raises(ed.EmailQueuedForRetry):
+        ed.send_email_interactive("a@example.com", "s", "b")
+    assert time.monotonic() - t0 < 1 and calls          # returned after a single attempt
+    ed.wait_for_queue(5)
+    assert len(calls) == ed.MAX_ATTEMPTS                 # 1 in the request + the rest in the background
+    out = _send_email_or_dev("a@example.com", "s", "b", {"otp": "1"})
+    assert out["email_sent"] is False and out["email_queued"] is True

@@ -46,6 +46,10 @@ class EmailDeliveryError(RuntimeError):
     pass
 
 
+class EmailQueuedForRetry(EmailDeliveryError):
+    """The first attempt failed transiently; remaining retries continue in the background."""
+
+
 class _PermanentEmailError(EmailDeliveryError):
     """Delivery failed in a way retrying will not fix (bad key, rejected sender...)."""
 
@@ -271,7 +275,7 @@ def _update_log(log_id: Optional[int], **fields) -> None:
 
 # --------------------------------------------------------------------------- core
 
-def _deliver(log_id: Optional[int], provider: str, to: str, subject: str, body: str, html: Optional[str]) -> None:
+def _deliver(log_id: Optional[int], provider: str, to: str, subject: str, body: str, html: Optional[str], max_attempts: int = MAX_ATTEMPTS) -> None:
     """Send with retries, updating the log row. Raises EmailDeliveryError on failure."""
     from ..db import utc_now
 
@@ -283,7 +287,7 @@ def _deliver(log_id: Optional[int], provider: str, to: str, subject: str, body: 
     sender = _PROVIDERS[provider]
     last_error: Optional[EmailDeliveryError] = None
     attempts = 0
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         attempts = attempt
         try:
             sender(to, subject, body, html)
@@ -302,7 +306,7 @@ def _deliver(log_id: Optional[int], provider: str, to: str, subject: str, body: 
             last_error = exc
         except Exception as exc:  # defensive: unexpected provider bug
             last_error = EmailDeliveryError(f"{type(exc).__name__}: {_short(str(exc), 200)}")
-        if attempt < MAX_ATTEMPTS:
+        if attempt < max_attempts:
             log.info("Email to %s via %s failed (attempt %d), retrying", to, provider, attempt)
             time.sleep(BACKOFF_SECONDS * attempt)
 
@@ -328,6 +332,36 @@ def send_email(
     _deliver(log_id, provider, to, subject, body, html)
 
 
+def send_email_interactive(
+    to: str,
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    category: str = "general",
+) -> None:
+    """For request handlers (sign-up, password reset): one attempt only, so a slow
+    or flaky provider can't hold the request for several timeouts. On a transient
+    failure the remaining retries run in the background and EmailQueuedForRetry is
+    raised; configuration and permanent errors raise EmailDeliveryError as before."""
+    to = (to or "").strip()
+    if not to:
+        raise EmailDeliveryError("Recipient address is empty")
+    provider = provider_name()
+    log_id = _create_log(to, subject, category, provider)
+    try:
+        _deliver(log_id, provider, to, subject, body, html, max_attempts=1)
+    except _PermanentEmailError:
+        raise
+    except EmailDeliveryError as exc:
+        if provider == "none" or not _provider_ready(provider):
+            raise
+        with _pending_lock:
+            fut = _executor.submit(_background, log_id, provider, to, subject, body, html, MAX_ATTEMPTS - 1)
+            _pending.add(fut)
+            fut.add_done_callback(lambda f: _pending.discard(f))
+        raise EmailQueuedForRetry(str(exc)) from exc
+
+
 # --------------------------------------------------------------------------- background queue
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="email")
@@ -335,9 +369,9 @@ _pending: "set[Future]" = set()
 _pending_lock = threading.Lock()
 
 
-def _background(log_id, provider, to, subject, body, html) -> None:
+def _background(log_id, provider, to, subject, body, html, max_attempts: int = MAX_ATTEMPTS) -> None:
     try:
-        _deliver(log_id, provider, to, subject, body, html)
+        _deliver(log_id, provider, to, subject, body, html, max_attempts=max_attempts)
     except EmailDeliveryError:
         pass  # already logged + recorded in EmailLog
     except Exception as exc:  # pragma: no cover - never let the worker die noisily

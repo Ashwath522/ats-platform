@@ -59,7 +59,7 @@ class GeminiClient:
         self._import_error = None
         self._init_error = None
         try:
-            import google.generativeai as genai  # type: ignore
+            from . import gemini_rest as genai  # REST shim; google.generativeai is deprecated
             try:
                 genai.configure(api_key=self.api_key)
                 self._genai = genai
@@ -343,7 +343,7 @@ Be specific, technical, and thorough. Plain text format only."""
         # Missing SDK
         if not self._available:
             return {"success": False, "error": "Gemini module not installed",
-                    "solution": "Run: pip install google-generativeai"}
+                    "solution": "Gemini client unavailable (httpx missing?)"}
 
         # Missing API key
         if not self.api_key:

@@ -1,5 +1,7 @@
 """Recruiter job posting CRUD + applicant ranking."""
 import json
+
+from ..utils_json import jloads
 import os
 from datetime import datetime
 from typing import Optional
@@ -303,27 +305,34 @@ def list_applicants(
             .order_by(Application.ats_score.desc())
         ).all()
 
+        # Batch-load profiles, accounts and resumes (one query each, not per applicant).
+        cand_ids = {a.candidate_id for a in apps}
+        resume_ids = {a.resume_id for a in apps if a.resume_id}
+        profiles = {p.candidate_id: p for p in session.exec(select(CandidateProfile).where(CandidateProfile.candidate_id.in_(cand_ids))).all()} if cand_ids else {}
+        accounts = {c.id: c for c in session.exec(select(CandidateUser).where(CandidateUser.id.in_(cand_ids))).all()} if cand_ids else {}
+        resumes = {r.id: r for r in session.exec(select(Resume).where(Resume.id.in_(resume_ids))).all()} if resume_ids else {}
+
         results = []
         for app in apps:
-            # Get candidate profile info (without EEO fields — never exposed to recruiters)
-            profile = session.exec(
-                select(CandidateProfile).where(CandidateProfile.candidate_id == app.candidate_id)
-            ).first()
-
-            resume = session.get(Resume, app.resume_id) if app.resume_id else None
+            # Profile info only (EEO fields are never exposed to recruiters)
+            profile = profiles.get(app.candidate_id)
+            resume = resumes.get(app.resume_id) if app.resume_id else None
+            account = accounts.get(app.candidate_id)
+            name = (getattr(profile, "full_name", None) or "").strip() or (account.username.split("@")[0] if account else "") or "Unknown"
 
             results.append({
                 "application_id": app.id,
                 "id": app.id,
-                "candidate_name": profile.headline if profile else "Unknown",
+                "candidate_name": name,
+                "headline": profile.headline if profile else None,
                 "resume_filename": resume.filename if resume else None,
                 "ats_score": app.ats_score,
                 "baseline_ats_score": app.baseline_ats_score,
                 "llm_used": app.llm_used,
-                "matched_skills": json.loads(app.matched_skills_json),
-                "missing_skills": json.loads(app.missing_skills_json),
+                "matched_skills": jloads(app.matched_skills_json),
+                "missing_skills": jloads(app.missing_skills_json),
                 "status": app.status,
-                "applied_at": app.applied_at.isoformat(),
+                "applied_at": app.applied_at.isoformat() if app.applied_at else None,
                 "project_score": app.project_score,
                 "final_score": app.final_score,
                 "priority_level": app.priority_level,

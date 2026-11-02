@@ -1,5 +1,7 @@
 """Candidate job browsing, applying, and application history."""
 import json
+
+from ..utils_json import jloads
 import threading
 from typing import Optional
 
@@ -29,34 +31,45 @@ def browse_jobs(
     lng: Optional[float] = Query(None),
     radius_km: Optional[float] = Query(None),
     sort_by: str = Query("recent"),  # "recent" | "salary" | "distance"
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     candidate: str = Depends(get_current_candidate),
 ):
-    """Browse open job postings with optional filters."""
+    """Browse open job postings with optional filters.
+
+    Text/salary/remote filters run in the database. Distance needs the
+    candidate's coordinates, so it is applied in Python on the filtered rows.
+    Results are paginated with ``limit``/``offset`` (``total`` = all matches).
+    """
+    from sqlalchemy import func, or_
+
     with Session(engine) as session:
         query = select(Job).where(Job.status == "open")
+        if title:
+            query = query.where(func.lower(Job.title).contains(title.strip().lower()))
+        if location:
+            query = query.where(func.lower(func.coalesce(Job.location_text, "")).contains(location.strip().lower()))
+        if salary_min is not None:
+            query = query.where(or_(Job.salary_max.is_(None), Job.salary_max >= salary_min))
+        if salary_max is not None:
+            query = query.where(or_(Job.salary_min.is_(None), Job.salary_min <= salary_max))
+        if remote_type:
+            query = query.where(Job.remote_type == remote_type)
+        if sort_by == "salary":
+            query = query.order_by(func.coalesce(Job.salary_max, 0).desc(), Job.created_at.desc())
+        else:
+            query = query.order_by(Job.created_at.desc())
+        needs_distance = radius_km is not None and lat is not None and lng is not None
+        page_in_sql = not needs_distance and not (sort_by == "distance" and lat is not None and lng is not None)
+        total = None
+        if page_in_sql:
+            total = session.exec(select(func.count()).select_from(query.subquery())).one()
+            query = query.offset(offset).limit(limit)
 
-        jobs = session.exec(query.order_by(Job.created_at.desc())).all()
+        jobs = session.exec(query).all()
 
         results = []
         for job in jobs:
-            # Title filter (case-insensitive substring)
-            if title and title.lower() not in job.title.lower():
-                continue
-
-            # Location filter (case-insensitive substring)
-            if location and location.lower() not in job.location_text.lower():
-                continue
-
-            # Salary filter
-            if salary_min is not None and job.salary_max is not None and job.salary_max < salary_min:
-                continue
-            if salary_max is not None and job.salary_min is not None and job.salary_min > salary_max:
-                continue
-
-            # Remote type filter
-            if remote_type and job.remote_type != remote_type:
-                continue
-
             # Distance filter
             dist = distance_or_none(lat, lng, job.latitude, job.longitude)
             if radius_km is not None and lat is not None and lng is not None:
@@ -66,7 +79,7 @@ def browse_jobs(
             results.append({
                 "id": job.id,
                 "title": job.title,
-                "description": job.description[:300] + ("..." if len(job.description) > 300 else ""),
+                "description": (job.description or "")[:300] + ("..." if len(job.description or "") > 300 else ""),
                 "salary_min": job.salary_min,
                 "salary_max": job.salary_max,
                 "currency": job.currency,
@@ -77,14 +90,14 @@ def browse_jobs(
                 "created_at": job.created_at.isoformat(),
             })
 
-        # Sort
+        # Sort (salary/recent already ordered by the database)
         if sort_by == "distance" and lat is not None and lng is not None:
             results.sort(key=lambda r: r["distance_km"] if r["distance_km"] is not None else float("inf"))
-        elif sort_by == "salary":
-            results.sort(key=lambda r: r["salary_max"] or 0, reverse=True)
-        # default: already sorted by created_at desc
+        if not page_in_sql:
+            total = len(results)
+            results = results[offset:offset + limit]
 
-        return {"jobs": results, "count": len(results)}
+        return {"jobs": results, "count": len(results), "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{job_id}")
@@ -292,9 +305,11 @@ def my_applications(candidate: str = Depends(get_current_candidate)):
             .order_by(Application.applied_at.desc())
         ).all()
 
+        job_ids = {a.job_id for a in apps}
+        jobs = {j.id: j for j in session.exec(select(Job).where(Job.id.in_(job_ids))).all()} if job_ids else {}
         results = []
         for app in apps:
-            job = session.get(Job, app.job_id)
+            job = jobs.get(app.job_id)
             results.append({
                 "application_id": app.id,
                 "job_id": app.job_id,
@@ -303,10 +318,10 @@ def my_applications(candidate: str = Depends(get_current_candidate)):
                 "ats_score": app.ats_score,
                 "baseline_ats_score": app.baseline_ats_score,
                 "llm_used": app.llm_used,
-                "matched_skills": json.loads(app.matched_skills_json),
-                "missing_skills": json.loads(app.missing_skills_json),
+                "matched_skills": jloads(app.matched_skills_json),
+                "missing_skills": jloads(app.missing_skills_json),
                 "status": app.status,
-                "applied_at": app.applied_at.isoformat(),
+                "applied_at": app.applied_at.isoformat() if app.applied_at else None,
                 "project_score": app.project_score,
                 "final_score": app.final_score,
                 "priority_level": app.priority_level,

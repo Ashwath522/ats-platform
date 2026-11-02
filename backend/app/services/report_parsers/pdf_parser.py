@@ -35,7 +35,7 @@ def describe_image_with_gemini(image_bytes: bytes, context: str = '') -> str:
     Returns empty string if Gemini is unavailable.
     """
     try:
-        import google.generativeai as genai
+        from app.services import gemini_rest as genai  # REST shim (SDK deprecated)
         import PIL.Image
 
         api_key = get_gemini_key_from_db()
@@ -43,7 +43,7 @@ def describe_image_with_gemini(image_bytes: bytes, context: str = '') -> str:
             return ''
 
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash'))
         img = PIL.Image.open(io.BytesIO(image_bytes))
 
         prompt = f"""You are an expert engineering project analyzer.

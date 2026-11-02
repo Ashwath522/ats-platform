@@ -1,5 +1,7 @@
 """Candidate profile CRUD + resume upload linked to profile."""
 import json
+
+from ..utils_json import jloads
 import re
 import logging
 from datetime import datetime
@@ -165,10 +167,10 @@ def _profile_to_dict(profile: CandidateProfile, resume: Resume = None, project_c
         "headline": profile.headline,
         "bio": profile.bio,
         "branch": profile.branch,
-        "skills": json.loads(profile.skills_json),
-        "experience": json.loads(profile.experience_json),
-        "education": json.loads(profile.education_json),
-        "certifications": json.loads(profile.certifications_json),
+        "skills": jloads(profile.skills_json),
+        "experience": jloads(profile.experience_json),
+        "education": jloads(profile.education_json),
+        "certifications": jloads(profile.certifications_json),
         "avatar_url": f"/media/{profile.avatar_path}" if profile.avatar_path else None,
         "cover_photo_url": f"/media/{profile.cover_photo_path}" if profile.cover_photo_path else None,
         "contact_email": profile.contact_email,
@@ -581,7 +583,7 @@ def add_candidate_certification(
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
 
-        certifications = json.loads(profile.certifications_json)
+        certifications = jloads(profile.certifications_json)
         new_cert = {
             "name": name.strip(),
             "issuing_organization": issuing_organization.strip(),
@@ -611,7 +613,7 @@ def delete_candidate_certification(
         user = _get_candidate_user(session, candidate)
         profile = _get_or_create_profile(session, user.id)
 
-        certifications = json.loads(profile.certifications_json)
+        certifications = jloads(profile.certifications_json)
         if cert_index < 0 or cert_index >= len(certifications):
             raise HTTPException(status_code=400, detail="Invalid certification index")
 
