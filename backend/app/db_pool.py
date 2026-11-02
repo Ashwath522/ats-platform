@@ -48,9 +48,18 @@ def _flag(name: str, default: str) -> bool:
     return os.environ.get(name, default).strip().lower() not in ("0", "false", "no", "off")
 
 
+# SELECTs with transaction-scoped side effects must run inside a real
+# transaction: in autocommit a pg_advisory_xact_lock() is released the moment
+# the statement ends, silently disabling the lock (this broke proctoring quotas).
+_TXN_FUNCTIONS = ("PG_ADVISORY", "PG_TRY_ADVISORY", "NEXTVAL(", "SETVAL(", "SET_CONFIG(", "TXID_CURRENT", "PG_CURRENT_XACT_ID")
+
+
 def _is_plain_read(statement: str) -> bool:
     head = statement.lstrip()[:12].upper()
     if not head.startswith(_READ_PREFIXES):
+        return False
+    upper = statement.upper()
+    if any(f in upper for f in _TXN_FUNCTIONS):
         return False
     tail = statement[-80:].upper()
     return " FOR UPDATE" not in tail and " FOR SHARE" not in tail and " FOR NO KEY UPDATE" not in tail

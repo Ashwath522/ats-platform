@@ -265,7 +265,8 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
           {proctorError && <p className="text-xs text-amber-300">{proctorError}</p>}
           {proctorReport && <>
             <div className="flex flex-wrap gap-2 text-xs text-slate-300">
-              <span className={`px-2 py-1 rounded border ${getRiskBadge(proctorReport.risk?.risk_level)}`}>Risk: {proctorReport.risk?.risk_level || 'unknown'} ({proctorReport.risk?.risk_score ?? 'N/A'})</span>
+              <span className={`px-2 py-1 rounded border ${getRiskBadge(proctorReport.risk?.risk_level)}`} title={proctorReport.risk?.scoring?.formula}>Server-verified risk: {proctorReport.risk?.risk_level || 'unknown'} ({proctorReport.risk?.risk_score ?? 'N/A'})</span>
+              {proctorReport.risk?.client_reported?.risk_score != null && <span className="px-2 py-1 rounded border border-slate-700 text-slate-400">Browser estimate (unverified, not used): {proctorReport.risk.client_reported.risk_score}</span>}
               <span className="px-2 py-1 rounded border border-slate-700">Session: {proctorReport.session?.status}</span>
               <span className="px-2 py-1 rounded border border-slate-700">Events: {proctorReport.events?.length || 0}</span>
             </div>
@@ -274,7 +275,7 @@ export function UnifiedRecruiterCard({ application, onUpdateStatus, onVerifyRepo
                 const snap = (proctorReport.snapshots || []).find((s) => s.id === event.snapshot_id)
                 return <div key={event.id} className="bg-slate-950 border border-slate-800 rounded-lg p-3 flex gap-3">
                   {snap && <AuthSnapshotImage api={reviewerApi} snapshot={snap} />}
-                  <div className="min-w-0 text-xs"><div className="flex gap-2"><strong className="text-slate-200">{event.type}</strong><span className="text-amber-300 uppercase">{event.severity}</span><span className="text-slate-500">Client-reported</span></div><p className="text-slate-400">{event.at}</p><p className="text-slate-300">{event.details?.detector || event.details?.description || 'Detector event recorded for human review.'}</p></div>
+                  <div className="min-w-0 text-xs"><div className="flex gap-2"><strong className="text-slate-200">{event.type}</strong><span className="text-amber-300 uppercase">{event.severity}</span><span className="text-slate-500">Client-reported</span>{event.server?.late_sync && <span className="text-amber-300">synced after finish</span>}</div><p className="text-slate-400">{event.at} · stored by server {event.server?.received_at || event.received_at}</p><p className="text-slate-300">{event.details?.detector || event.details?.description || 'Detector event recorded for human review.'}</p></div>
                 </div>
               })}
               {!proctorReport.events?.length && <p className="text-xs text-slate-500">No proctoring events were recorded. This does not by itself indicate a problem.</p>}

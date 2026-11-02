@@ -771,11 +771,11 @@ async def finish_interview(request: Request, sid: int, payload: dict = Body(defa
         s = session.get(InterviewSession, sid)
         app_record = session.get(Application, s.application_id)
         stored_events = session.exec(select(ProctorEvent).where(ProctorEvent.session_id == sid)).all()
-        # Server-derived indicator: duplicate client IDs are already prevented by
-        # the database constraint; only persisted rows contribute to this score.
-        weights = {"low": 2, "medium": 8, "high": 18}
-        risk_score = min(100, sum(weights.get(e.severity, 0) for e in stored_events))
-        risk_level = "high" if risk_score >= 60 else "medium" if risk_score >= 30 else "low"
+        # Authoritative risk: computed from persisted rows only (one shared formula);
+        # the browser's own score stays in eval_json as client-reported telemetry.
+        from .proctoring import server_risk
+        _risk = server_risk(stored_events)
+        risk_score, risk_level = _risk["score"], _risk["level"]
         lat = _jl(s.latency_json, [])
         usage = _llm_usage(lat, evaluation, plan_provider)
         evaluation["llm_usage"] = usage

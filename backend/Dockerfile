@@ -10,8 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements.txt requirements-nlp.txt ./
+RUN pip install -r requirements.txt && pip install -r requirements-nlp.txt
 
 # Bake the ONNX embedding model (all-MiniLM-L6-v2, ~90 MB) into the image so
 # cold starts on free hosts don't download it on the first request.
@@ -24,6 +24,6 @@ EXPOSE 8000
 
 # One worker: the embedding model is loaded per process; 512 MB free-tier
 # instances fit exactly one. $PORT is provided by Render/Railway/Fly.
-# Migrations are fail-closed: the application must never start against a
-# partially migrated schema. exec preserves signals for uvicorn.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
+# start.sh is fail-closed: a failed `alembic upgrade head` stops the container
+# before uvicorn starts (tested in tests/test_startup_migrations.py).
+CMD ["sh", "/app/start.sh"]

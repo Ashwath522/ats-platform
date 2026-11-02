@@ -53,6 +53,29 @@ function SnapshotImg({ api, snap, className, alt }) {
   return <img className={className} src={src} alt={alt} width={snap.width || undefined} height={snap.height || undefined} />
 }
 
+/** What the server verified vs. what the candidate's browser reported. */
+function TrustPanel({ risk, events, snaps }) {
+  const server = risk.server_verified || { risk_score: risk.risk_score, persisted_events: events.length }
+  const client = risk.client_reported || { risk_score: risk.client_reported_risk_score, status: risk.status, detectors: risk.detectors }
+  const late = events.filter((e) => e.server?.late_sync).length + snaps.filter((x) => x.late_sync).length
+  const sync = client.sync
+  const outstanding = sync ? (sync.pending_events || 0) + (sync.pending_snapshots || 0) + (sync.failed_events || 0) + (sync.failed_snapshots || 0) : 0
+  return (
+    <div className="pr-trust">
+      <div>
+        <b><ShieldCheck size={14} /> Verified by CoreLink's server</b>
+        <span>Risk {server.risk_score ?? '—'}/100, calculated only from the {server.persisted_events ?? events.length} event(s) stored on the server.</span>
+        <span>{snaps.length} snapshot(s) stored; every item shows when the server received it.{late ? ` ${late} item(s) arrived after the interview ended.` : ''}</span>
+      </div>
+      <div>
+        <b>Reported by the candidate's browser (not verified)</b>
+        <span>Event types and severities come from on-device detectors.{client.risk_score != null ? ` The browser's own risk estimate was ${client.risk_score}/100 — it is not used for scoring.` : ''}</span>
+        {sync && sync.state !== 'unknown' && <span>{sync.state === 'synced' ? 'All evidence was delivered before the interview was submitted.' : `${outstanding} item(s) had not been delivered when the interview was submitted${sync.storage?.mode === 'memory' ? ' (browser storage was unavailable)' : ''}.`}</span>}
+      </div>
+    </div>
+  )
+}
+
 export default function ProctoringReview({ role = 'recruiter', applicationId, sessionId, compact = false }) {
   const api = useApi(role)
   const url = sessionId ? `/api/proctoring/sessions/${sessionId}` : applicationId ? `/api/proctoring/applications/${applicationId}` : null
@@ -86,6 +109,7 @@ export default function ProctoringReview({ role = 'recruiter', applicationId, se
       </div>
 
       {!d.session && <p className="pr-muted">No AI interview session recorded for this application yet.</p>}
+      {d.session && <TrustPanel risk={risk} events={d.events || []} snaps={snaps} />}
 
       {counts.length > 0 && (
         <div className="pr-flags">
@@ -117,7 +141,9 @@ export default function ProctoringReview({ role = 'recruiter', applicationId, se
               <li key={e.id}>
                 <span className="pr-time">{fmtClock(e.at, start)}</span>
                 <Badge tone={SEV_TONE[e.severity]}>{e.severity}</Badge>
-                <span className="pr-ev">{label(e.type)}{e.details?.corroborated ? <small> · corroborated</small> : null}</span>
+                <span className="pr-ev">{label(e.type)}{e.details?.corroborated ? <small> · corroborated</small> : null}
+                  <small className="pr-muted" title="Time the server stored this event"> · stored {fmtClock(e.server?.received_at || e.received_at)}</small>
+                  {e.server?.late_sync && <Badge tone="amber">synced after finish</Badge>}</span>
                 {e.snapshot_id != null && snapIndex[e.snapshot_id] != null && (
                   <button type="button" className="pr-link" onClick={() => setOpen(snapIndex[e.snapshot_id])}><Camera size={13} /> View</button>
                 )}

@@ -89,7 +89,7 @@ def test_upload_and_reviewer_access(client):
         {"type": "paste_detected", "severity": "critical"},
     ]})
     assert ev.status_code == 200, ev.text
-    assert ev.json() == {"stored": 2, "dropped": 2}
+    assert {k: ev.json()[k] for k in ("stored", "dropped")} == {"stored": 2, "dropped": 2}
 
     # Owner recruiter: full report with snapshots + events
     rep = client.get(f"/api/proctoring/applications/{ids['app_id']}", headers=_h("own_rec@ex.com", "recruiter"))
@@ -191,7 +191,7 @@ def test_event_cap(client, monkeypatch):
     monkeypatch.setattr(proctoring, "MAX_EVENTS_PER_SESSION", 3)
     r = client.post(f"/api/interview/{ids['sid']}/proctor/events", headers=_h(*CAND),
                     json={"events": [{"type": "tab_switched", "severity": "medium"}] * 5})
-    assert r.json() == {"stored": 3, "dropped": 2}
+    assert {k: r.json()[k] for k in ("stored", "dropped")} == {"stored": 3, "dropped": 2}
 
 
 def test_retention_cleanup_and_deletion_request(client):

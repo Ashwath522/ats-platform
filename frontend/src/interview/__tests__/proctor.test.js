@@ -222,7 +222,11 @@ describe('Proctor orchestration (mocked detectors)', () => {
 
   function make(opts) {
     let now = 0
-    const api = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ id: 1 }) }))
+    // behaves like the server: acknowledges every event it receives
+    const api = vi.fn(async (url, req) => {
+      const sent = req?.body && typeof req.body === 'string' ? JSON.parse(req.body).events || [] : []
+      return { ok: true, status: 200, json: async () => ({ id: 1, results: sent.map((e) => ({ client_event_id: e.client_event_id, status: 'persisted' })) }) }
+    })
     const notices = []
     const p = new Proctor({ getVideo: () => video, sessionId: 7, api, tier: 'desktop', now: () => now, onNotice: (n) => notices.push(n), ...opts })
     p.detectors.face = 'ok'

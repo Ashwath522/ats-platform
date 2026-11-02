@@ -24,7 +24,6 @@ sentry-sdk[fastapi]
 alembic
 striprtf==0.0.26
 spacy
-en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 groq
 google-generativeai
 google-auth>=2.20      # verifies "Sign in with Google" ID tokens

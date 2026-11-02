@@ -40,3 +40,9 @@
   .pr-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pr-time { min-width: 0; width: 100%; }
 }
+
+.pr-trust { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.pr-trust > div { border: 1px solid var(--cl-line, #e5e7eb); border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; min-width: 0; }
+.pr-trust b { font-size: 12.5px; display: flex; align-items: center; gap: 5px; color: var(--cl-ink, #0f172a); }
+.pr-trust > div:first-child { border-color: #bbf7d0; background: #f0fdf4; }
+.pr-trust span { color: var(--cl-text, #334155); overflow-wrap: anywhere; }

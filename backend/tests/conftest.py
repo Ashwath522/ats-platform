@@ -18,6 +18,9 @@ for _k in ("DATABASE_URL", "ADMIN_EMAIL", "ADMIN_PASSWORD", "GROQ_API_KEY", "GEM
            "BREVO_API_KEY", "RESEND_API_KEY", "INTERVIEW_LLM_BASE_URL", "OLLAMA_BASE_URL", "GITHUB_TOKEN", "SENTRY_DSN"):
     os.environ[_k] = ""
 os.environ["EMAIL_PROVIDER"] = "console"
+# Opt-in: run the suite against a scratch PostgreSQL database (all tables are wiped per test).
+if os.environ.get("ATS_TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["ATS_TEST_DATABASE_URL"]
 os.environ["MEDIA_STORE"] = "disk"
 
 # Clean up any leftover test data directory from previous runs *before* engine starts
@@ -43,7 +46,7 @@ def clean_database():
     # 1. Clear SQLite tables
     with Session(engine) as session:
         for table in reversed(SQLModel.metadata.sorted_tables):
-            session.exec(text(f"DELETE FROM {table.name}"))
+            session.exec(text(f'DELETE FROM "{table.name}"'))
         session.commit()
 
     # 2. Clear ChromaDB collections
