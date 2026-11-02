@@ -123,7 +123,8 @@ def enforce_claims(claims: List[Claim], evidence: List[Evidence], contradictions
     for c in claims:
         c.evidence_ids = [i for i in dict.fromkeys(c.evidence_ids) if i in by_id]
         if c.status == "contradicted":
-            conflict = [i for i in contradictions.get(c.id, []) if i in by_id] or [i for i in c.evidence_ids if by_id[i].source_type == "analysis"]
+            conflict = ([i for i in contradictions.get(c.id, []) if i in by_id]
+                        or [i for i in c.evidence_ids if by_id[i].source_type == "analysis" or by_id[i].strong])
             if not conflict:
                 c.status = "unverified" if not c.evidence_ids else "partially_verified"
             continue

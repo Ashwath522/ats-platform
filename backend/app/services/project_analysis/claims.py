@@ -30,7 +30,8 @@ EXTRACT_SYS = ("You extract checkable claims from a student's engineering projec
 
 VERIFY_SYS = ("You check claims against an evidence list for an engineering project report. For each claim pick a status:\n"
               "verified = evidence directly confirms it; partially_verified = evidence supports part of it or only shows it indirectly; "
-              "unverified = no relevant evidence; contradicted = evidence conflicts with it.\n"
+              "unverified = no relevant evidence; contradicted = evidence conflicts with it (e.g. the files give a different value "
+              "for the same quantity — use contradicted, not partially_verified).\n"
               "Rules: cite only evidence ids from the list. A good-looking video is not proof of how something is implemented. "
               "Never use outside knowledge to fill gaps. Reasoning must be one or two plain sentences a student understands.\n"
               'Reply JSON only: {"results":[{"id":"c1","status":"unverified","evidence_ids":[],"reasoning":""}]}')
@@ -41,7 +42,7 @@ def _sentences(text: str) -> List[str]:
     out = []
     for p in parts:
         s = p.strip(" -*\t")
-        if 25 <= len(s) <= 280 and re.search(r"\b(is|are|uses?|using|built|designed|implemented|achiev\w*|detects?|measures?|controls?|sends?|reads?|displays?|runs?|%|\d)\b", s, re.I):
+        if 25 <= len(s) <= 280 and re.search(r"\b(is|are|uses?|using|built|designed|implemented|achiev\w*|detects?|measures?|controls?|sends?|reads?|displays?|runs?)\b|\d", s, re.I):
             out.append(s)
     return list(dict.fromkeys(out))[:12]
 
@@ -97,7 +98,7 @@ def verify_claims(claims: List[Claim], ctx: Ctx) -> Dict[str, List[str]]:
     """Fill status/evidence/reasoning on claims; return contradiction map {claim_id: [evidence ids]}."""
     if not claims:
         return {}
-    ev_lines = [f"{e.id} | {e.source_type}:{e.source_ref[:40]} | {e.method}/{e.confidence} | {e.fact[:220]}"
+    ev_lines = [f"{e.id} | {e.source_type}:{e.source_ref[:40]} | {e.method}/{e.confidence} | {e.fact[:480]}"
                 for e in ctx.evidence if e.method != "student_claim"][:260]
     user = "CLAIMS:\n" + "\n".join(f"{c.id} ({c.type}): {c.text}" for c in claims) + "\n\nEVIDENCE:\n" + ("\n".join(ev_lines) or "(no evidence)")
     out = None
@@ -132,9 +133,57 @@ def verify_claims(claims: List[Claim], ctx: Ctx) -> Dict[str, List[str]]:
                     c.status, c.evidence_ids = "contradicted", list(dict.fromkeys(c.evidence_ids + [f["id"]] + f["evidence_ids"]))
                     c.reasoning = f["text"]
                     contradictions[c.id] = [f["id"]]
+    # a value the files state differently (e.g. "bore 52 mm" vs drawing "BORE DIA 40")
+    for cid, (ev_id, why) in _value_conflicts(claims, ctx).items():
+        c = next(x for x in claims if x.id == cid)
+        c.status, c.reasoning = "contradicted", why
+        c.evidence_ids = list(dict.fromkeys([ev_id] + c.evidence_ids))
+        contradictions[cid] = [ev_id]
     # civil / structural safety is never verified by us
     for c in claims:
         if ctx.domain == "civil" and SAFETY.search(c.text):
             c.status, c.reasoning = "unverified", "Structural safety and code-compliance claims are not independently checked."
     enforce_claims(claims, ctx.evidence, contradictions)
     return contradictions
+
+
+# ── deterministic value conflicts against parsed CAD/drawing evidence ─────────
+_FEATURES = {"bore": "bore", "hole": "hole", "thick": "thick", "width": "width", "length": "length", "height": "height",
+             "diameter": "dia", "dia": "dia", "radius": "radius", "shaft": "shaft", "pcd": "pcd"}
+_NUM_MM = re.compile(r"(\d+(?:\.\d+)?)\s*mm\b", re.I)
+_NUM = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _feature_values(text: str) -> Dict[str, float]:
+    """feature stem → the mm value written closest to it in the claim."""
+    vals = [(m.start(), float(m.group(1))) for m in _NUM_MM.finditer(text)]
+    out: Dict[str, float] = {}
+    if not vals:
+        return out
+    for m in re.finditer(r"[a-z]+", text.lower()):
+        stem = next((v for k, v in _FEATURES.items() if m.group().startswith(k)), None)
+        if stem and stem not in out:
+            out[stem] = min(vals, key=lambda pv: abs(pv[0] - m.start()))[1]
+    return out
+
+
+def _value_conflicts(claims: List[Claim], ctx: Ctx) -> Dict[str, tuple]:
+    cad = [e for e in ctx.evidence if e.strong and e.source_type == "file"
+           and e.source_ref.lower().rsplit(".", 1)[-1] in {"dxf", "dwg", "step", "stp", "iges", "igs"} and "annotations" in e.fact]
+    if not cad:
+        return {}
+    segments = [(e.id, seg.strip()) for e in cad for seg in e.fact.split("annotations", 1)[1].split(",")]
+    found: Dict[str, tuple] = {}
+    for c in claims:
+        for stem, value in _feature_values(c.text).items():
+            for ev_id, seg in segments:
+                low = seg.lower()
+                if not re.search(rf"\b{stem}", low):
+                    continue
+                nums = [float(n) for n in _NUM.findall(seg)]
+                if nums and all(abs(n - value) > 1e-6 for n in nums):
+                    found[c.id] = (ev_id, f"The drawing gives \u201c{seg}\u201d, which does not match the claimed {value:g} mm.")
+                    break
+            if c.id in found:
+                break
+    return found

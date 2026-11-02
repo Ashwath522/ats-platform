@@ -136,12 +136,15 @@ def gemini_json(parts: List[dict], *, operation: str, cache_key: str, max_tokens
     if not take_budget():
         raise QuotaExceeded()
     api_key = os.environ["GEMINI_API_KEY"].split(",")[0].strip()
-    model = os.environ.get("PROJECT_ANALYSIS_GEMINI_MODEL", "gemini-2.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {"contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1, "maxOutputTokens": max_tokens}}
     try:
-        r = httpx.post(url, params={"key": api_key}, json=body, timeout=timeout)
+        r = httpx.post(_gemini_url(_gemini_model()), params={"key": api_key}, json=body, timeout=timeout)
+        if r.status_code == 404 and not os.environ.get("PROJECT_ANALYSIS_GEMINI_MODEL"):
+            # Google retires model names; pick the current one from the live list and retry once
+            from .. import llm_stream
+            _run(llm_stream.resolve_models())
+            r = httpx.post(_gemini_url(_gemini_model()), params={"key": api_key}, json=body, timeout=timeout)
         if r.status_code == 429:
             raise QuotaExceeded()
         if r.status_code != 200:
@@ -159,6 +162,18 @@ def gemini_json(parts: List[dict], *, operation: str, cache_key: str, max_tokens
     if out:
         cache_put(key, out)
     return out
+
+
+def _gemini_model() -> str:
+    pinned = os.environ.get("PROJECT_ANALYSIS_GEMINI_MODEL")
+    if pinned:
+        return pinned
+    from .. import llm_stream
+    return (llm_stream._RESOLVED.get("gemini") or (None, None))[1] or "gemini-2.5-flash"
+
+
+def _gemini_url(model: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model.split('/')[-1]}:generateContent"
 
 
 def image_part(data: bytes, mime: str = "image/jpeg") -> dict:

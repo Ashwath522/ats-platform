@@ -572,6 +572,24 @@ async def complete_text(
     (seconds). A provider that errors fails over at once; with ``hedge_after``
     a slow provider gets a parallel backup request after that many seconds and
     the first good answer wins. Returns (content, provider, model) or None."""
+    got = await _complete_text_once(messages, smart=smart, max_tokens=max_tokens, timeout=timeout, deadline=deadline,
+                                    json_mode=json_mode, temperature=temperature, operation=operation, providers=providers,
+                                    hedge_after=hedge_after)
+    task = _resolve_state.get("task")
+    if got is None and providers is None and task is not None and not task.done():
+        # a provider reported "model not found" and the live model list is being fetched:
+        # wait for it and retry once with the new models instead of failing this request
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+        except Exception:
+            return None
+        got = await _complete_text_once(messages, smart=smart, max_tokens=max_tokens, timeout=timeout, deadline=deadline,
+                                        json_mode=json_mode, temperature=temperature, operation=operation, providers=None,
+                                        hedge_after=hedge_after)
+    return got
+
+
+async def _complete_text_once(messages, *, smart, max_tokens, timeout, deadline, json_mode, temperature, operation, providers, hedge_after):
     provs = list(providers or providers_by_health())
     if not provs:
         return None

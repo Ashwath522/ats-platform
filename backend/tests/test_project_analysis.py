@@ -394,3 +394,70 @@ def test_project_delete_removes_analysis(client):
         from sqlmodel import select
         from app.db import ProjectFile
         assert not s.exec(select(ProjectAnalysisJob)).all() and not s.exec(select(ProjectFile)).all()
+
+
+def test_sentence_fallback_keeps_multi_digit_numbers_and_percentages():
+    from app.services.project_analysis.claims import _sentences
+    text = ("Topology optimisation reduced the plate weight by 35%. The bore was finally enlarged to 52 mm to fit a larger bearing. "
+            "Nice looking part overall really.")
+    out = _sentences(text)
+    assert any("35%" in s for s in out)
+    assert any("52 mm" in s for s in out)
+    assert not any("Nice looking" in s for s in out)
+
+
+def test_verifier_sees_long_evidence_lines(monkeypatch):
+    from app.services.project_analysis import claims as cm
+    from app.services.project_analysis.context import Ctx
+    from app.services.project_analysis.extractors.base import Fact
+    from app.services.project_analysis.schemas import Claim
+    ctx = Ctx(project_id=1, domain="mechanical", title="t", description="", links=[], challenge_code="", video_url=None)
+    ctx.add_evidence(Fact(fact="x.dxf: annotations " + "A" * 250 + " GENERAL TOLERANCE ISO 2768-m", method="parsed", confidence="high",
+                          source_type="file"), "x.dxf")
+    seen = {}
+    monkeypatch.setattr(cm, "llm_json", lambda sys_, user, **k: seen.setdefault("user", user) and None)
+    cm.verify_claims([Claim(id="c1", text="Follows ISO 2768-m", type="design")], ctx)
+    assert "ISO 2768-m" in seen["user"]
+
+
+def test_complete_text_retries_after_model_list_refresh(monkeypatch):
+    import asyncio
+    from app.services import llm_stream as ls
+    calls = []
+
+    async def once(messages, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            async def refresh():
+                await asyncio.sleep(0.01)
+            ls._resolve_state["task"] = asyncio.get_running_loop().create_task(refresh())
+            return None
+        return ("{}", "groq", "new-model")
+
+    monkeypatch.setattr(ls, "_complete_text_once", once)
+    monkeypatch.setitem(ls._resolve_state, "task", None)
+    assert asyncio.run(ls.complete_text([{"role": "user", "content": "x"}])) == ("{}", "groq", "new-model")
+    assert len(calls) == 2
+
+
+def test_claimed_value_that_differs_from_the_drawing_is_contradicted():
+    from app.services.project_analysis import claims as cm
+    from app.services.project_analysis.context import Ctx
+    from app.services.project_analysis.extractors.base import Fact
+    from app.services.project_analysis.schemas import Claim
+    ctx = Ctx(project_id=1, domain="mechanical", title="t", description="", links=[], challenge_code="", video_url=None)
+    ctx.add_evidence(Fact(fact="p.dxf: annotations MATERIAL: AL 6061-T6, THICKNESS 10 mm, CENTRAL BORE DIA 40 H7 FOR NEMA 23 BEARING, "
+                               "4X DIA 10 THRU ON 90 x 50 PCD PATTERN", method="parsed", confidence="high", source_type="file"), "p.dxf")
+    cs = [Claim(id="c1", text="The bore was finally enlarged to 52 mm to fit a larger bearing", type="design"),
+          Claim(id="c2", text="Central bore of 40 mm (H7 fit) for the bearing", type="design"),
+          Claim(id="c3", text="The plate is 120 x 80 mm and 10 mm thick", type="design"),
+          Claim(id="c4", text="Four 10 mm through holes on a 90 x 50 mm pattern", type="design")]
+    found = cm._value_conflicts(cs, ctx)
+    assert set(found) == {"c1"} and "40" in found["c1"][1]
+
+
+def test_llm_contradiction_backed_by_parsed_file_evidence_is_kept():
+    from app.services.project_analysis.schemas import Claim, Evidence, enforce_claims
+    ev = [Evidence(id="ev1", source_type="file", source_ref="p.dxf", locator={}, fact="BORE DIA 40", method="parsed", confidence="high")]
+    c = Claim(id="c1", text="bore 52 mm", type="design", status="contradicted", evidence_ids=["ev1"])
+    assert enforce_claims([c], ev)[0].status == "contradicted"
