@@ -372,7 +372,7 @@ def test_demo_delete_removes_everything_including_applications(client):
         s.commit()
     slug = demo_companies.demo_slug(DEMO_COMPANIES[0]["key"])
     client.post(f"{D}/{slug}/follow", headers=sh)
-    assert client.get("/api/admin/demo/companies", headers=ah).json() == {"companies": 20, "recruiters": 20, "jobs": 62, "applications": 1}
+    assert client.get("/api/admin/demo/companies", headers=ah).json() == {"companies": 20, "recruiters": 20, "jobs": 62, "applications": 1, "demo_students": 0, "demo_student_applications": 0}
     r = client.delete("/api/admin/demo/companies", headers=ah)
     assert r.status_code == 200 and r.json()["companies"] == 20 and r.json()["applications"] == 1
     with Session(engine) as s:

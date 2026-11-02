@@ -227,14 +227,30 @@ def upload_profile_resume(file: UploadFile = File(...), candidate: str = Depends
 
     with Session(engine) as session:
         user = _get_candidate_user(session, candidate)
-        profile = _get_or_create_profile(session, user.id)
+        cid = user.id
+        profile = _get_or_create_profile(session, cid)
         profile.resume_id = resume_db_id
         profile.updated_at = utc_now()
         session.add(profile)
         session.commit()
 
         resume = session.get(Resume, resume_db_id)
-        return _profile_to_dict(profile, resume)
+        out = _profile_to_dict(profile, resume)
+    _warm_analyses(candidate, cid)
+    return out
+
+
+def _warm_analyses(candidate: str, cid: int) -> None:
+    """New resume → start the resume analysis and best-fit job ranking in the
+    background, so the Resume & Skills page has results waiting."""
+    try:
+        from ..services import precompute
+        from .job_match import rank_best_jobs
+        from .student_portal import refresh_insights
+        precompute.submit(f"insights:{cid}", refresh_insights, candidate)
+        precompute.submit(f"best:{cid}:all", rank_best_jobs, candidate, "all")
+    except Exception as e:  # noqa: BLE001
+        logger.info("warm analyses skipped: %s", e)
 
 @router.post("/project")
 def upload_profile_project(

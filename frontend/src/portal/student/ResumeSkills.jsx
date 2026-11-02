@@ -8,7 +8,8 @@ import { useApi, useQuery } from '../../ui/useApi.js'
 import { useStudent } from './StudentShell.jsx'
 import { useProfileSave, openAuthedFile } from './components/editors.jsx'
 import { CertificationsList, useCertModal } from './components/certs.jsx'
-import JobFit from './components/JobFit.jsx'
+import JobFit, { FreshLine } from './components/JobFit.jsx'
+import { usePersistedResult } from '../../lib/persisted.js'
 import './components/student.css'
 
 const BAR_STYLE = {
@@ -29,7 +30,7 @@ export default function ResumeSkills() {
   const toast = useToast()
   const { profile, setProfile, branch } = useStudent()
   const [save] = useProfileSave()
-  const insights = useQuery(() => api.get('/api/student/resume/insights'), [api])
+  const insights = usePersistedResult('resume-insights', (o = {}) => api.get(`/api/student/resume/insights${o.refresh ? '?refresh=true' : ''}`, { cache: false }))
   const [over, setOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [detail, setDetail] = useState(false)
@@ -63,7 +64,7 @@ export default function ResumeSkills() {
   }
   const reanalyse = async () => {
     setRefreshing(true)
-    try { insights.setData(await api.get('/api/student/resume/insights?refresh=true')); toast('Analysis refreshed', 'success') } catch (e) { toast(e.message, 'error') } finally { setRefreshing(false) }
+    try { await insights.reload({ refresh: true }); toast('Re-analysing your resume — results update here in a moment', 'success') } catch (e) { toast(e.message, 'error') } finally { setRefreshing(false) }
   }
 
   const addSkill = async (raw) => {
@@ -117,8 +118,10 @@ export default function ResumeSkills() {
         </Card>
 
         <Card title={<><Sparkles size={20} />AI Resume Analysis</>}>
-          {insights.loading ? <Skeleton h={250} /> : insights.error ? <Alert tone="error">{insights.error.message}</Alert> : (
+          {!ins && insights.error ? <Alert tone="error">{insights.error.message}</Alert> : !ins ? <Skeleton h={250} /> : (
             <>
+              <FreshLine data={ins} busy={insights.busy} />
+              {ins.resume_changed && <div style={{ marginBottom: 10 }}><Alert>Showing your previous analysis while we analyse your new resume…</Alert></div>}
               <div className="cl-row" style={{ gap: 20, marginBottom: 14, alignItems: 'center' }}>
                 <Ring value={ins.score ?? 0} color={scoreColor} size={118} stroke={11} label={ins.has_resume ? ins.score : '—'} sub="/100" />
                 <div>
@@ -145,7 +148,7 @@ export default function ResumeSkills() {
         </Card>
 
         <Card title={<><Lightbulb size={20} color="#f5a524" />AI Suggestions</>} className="tint" action={ins?.ai_enriched ? <Badge tone="purple">AI</Badge> : null}>
-          {insights.loading ? <Skeleton h={250} /> : (
+          {!ins ? <Skeleton h={250} /> : (
             <>
               {(ins?.suggestions || []).slice(0, 5).map((s) => {
                 const I = SUGG_ICON[s.area] || Wrench

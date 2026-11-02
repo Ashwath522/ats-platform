@@ -492,13 +492,33 @@ def _no_resume_insights(bid: Optional[str]) -> dict:
 
 @router.get("/api/student/resume/insights")
 async def resume_insights(refresh: bool = Query(False), candidate: str = Depends(get_current_candidate)):
-    # DB + CPU work runs in the threadpool; only the optional LLM call is awaited
-    # here, so this endpoint no longer blocks the event loop for other requests.
+    """Always fast: the exact cached analysis if we have it; otherwise the last
+    saved analysis for this student (marked `refreshing`) while a fresh one is
+    computed in the background. Only the very first analysis is computed inline."""
     from starlette.concurrency import run_in_threadpool
+    from ..services import precompute
 
     ctx = await run_in_threadpool(_insights_load, candidate, refresh)
     if "result" in ctx:
-        return ctx["result"]
+        out = ctx["result"]
+        out.setdefault("refreshing", False)
+        return out
+    latest = await run_in_threadpool(_insights_latest_get, ctx["cid"])
+    if latest:
+        await run_in_threadpool(precompute.submit, f"insights:{ctx['cid']}", refresh_insights, candidate)
+        latest.update({"role_skills": ctx["role_skills"], "suggested_skills": ctx["suggested"], "resume": ctx["resume_meta"],
+                       "cached": True, "refreshing": True,
+                       "resume_changed": latest.get("resume_id") != (ctx["resume_meta"] or {}).get("id")})
+        return latest
+    out = await _compute_insights_ctx(ctx)
+    out.update({"role_skills": ctx["role_skills"], "suggested_skills": ctx["suggested"], "resume": ctx["resume_meta"],
+                "cached": False, "refreshing": False})
+    return out
+
+
+async def _compute_insights_ctx(ctx: dict) -> dict:
+    from starlette.concurrency import run_in_threadpool
+
     out = await run_in_threadpool(compute_insights, ctx["text"], ctx["bid"], n_projects=ctx["n_projects"],
                                   n_certs=ctx["n_certs"], n_achievements=ctx["n_ach"])
     ai = await _llm_suggestions(ctx["text"], out["best_role"], ctx["bid"], out["bars"])
@@ -507,8 +527,33 @@ async def resume_insights(refresh: bool = Query(False), candidate: str = Depends
         out["ai_enriched"] = True
     out["computed_at"] = _iso(utc_now())
     await run_in_threadpool(_insights_store, ctx["key"], out)
-    out.update({"role_skills": ctx["role_skills"], "suggested_skills": ctx["suggested"], "resume": ctx["resume_meta"], "cached": False})
+    await run_in_threadpool(_insights_latest_put, ctx["cid"], {**out, "resume_id": (ctx["resume_meta"] or {}).get("id")})
     return out
+
+
+def refresh_insights(candidate: str) -> None:
+    """Background: recompute and save this student's resume analysis."""
+    import asyncio
+
+    ctx = _insights_load(candidate, True)
+    if "result" in ctx:          # no resume any more
+        return
+    asyncio.run(_compute_insights_ctx(ctx))
+
+
+def _insights_latest_get(cid: int) -> Optional[dict]:
+    with Session(engine) as session:
+        row = session.exec(select(AnalysisCache).where(AnalysisCache.cache_key == f"insights_latest:{cid}")).first()
+        if not row:
+            return None
+        try:
+            return json.loads(row.payload_json)
+        except ValueError:
+            return None
+
+
+def _insights_latest_put(cid: int, out: dict) -> None:
+    _insights_store(f"insights_latest:{cid}", out)
 
 
 def _insights_load(candidate: str, refresh: bool) -> dict:
@@ -548,7 +593,7 @@ def _insights_load(candidate: str, refresh: bool) -> dict:
             return {"result": out}
         resume_meta = {"id": resume.id, "filename": resume.filename, "uploaded_at": _iso(resume.uploaded_at)}
     return {"text": text, "bid": bid, "n_projects": n_projects, "n_certs": n_certs, "n_ach": n_ach, "key": key,
-            "role_skills": role_skills, "suggested": suggested, "resume_meta": resume_meta}
+            "role_skills": role_skills, "suggested": suggested, "resume_meta": resume_meta, "cid": core.user.id}
 
 
 def _insights_store(key: str, out: dict) -> None:

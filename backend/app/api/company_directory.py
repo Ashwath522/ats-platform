@@ -13,6 +13,8 @@ Admin (admin token):
   GET    /api/admin/demo/companies    counts of demo data
   POST   /api/admin/demo/companies    create / refresh the 20 demo companies (logins returned ONCE)
   DELETE /api/admin/demo/companies    remove all demo data incl. applications
+  POST   /api/admin/demo/activity     add 24 fictional demo students + applications to demo jobs
+  DELETE /api/admin/demo/activity     remove the demo students
 """
 from __future__ import annotations
 
@@ -295,7 +297,8 @@ def _audit(admin: str, action: str, details: dict) -> None:
 
 @router.get("/api/admin/demo/companies")
 def demo_status(admin: str = Depends(get_current_admin)):
-    return demo_companies.status()
+    from ..services import demo_activity
+    return {**demo_companies.status(), **demo_activity.status()}
 
 
 @router.post("/api/admin/demo/companies")
@@ -311,4 +314,23 @@ async def demo_create(admin: str = Depends(get_current_admin)):
 async def demo_delete(admin: str = Depends(get_current_admin)):
     result = await run_in_threadpool(demo_companies.remove_all)
     _audit(admin, "demo_companies_delete", {k: v for k, v in result.items() if k != "deleted"})
+    return result
+
+
+@router.post("/api/admin/demo/activity")
+async def demo_activity_create(admin: str = Depends(get_current_admin)):
+    """24 fictional students (…@students.demo.corelink) applying to the DEMO companies' jobs."""
+    from ..services import demo_activity
+    result = await run_in_threadpool(demo_activity.create_or_refresh)
+    if result.get("error") == "no_demo_companies":
+        raise HTTPException(status_code=409, detail="Create the demo companies first — demo students only apply to demo jobs.")
+    _audit(admin, "demo_activity_create", {k: v for k, v in result.items() if isinstance(v, int)})
+    return result
+
+
+@router.delete("/api/admin/demo/activity")
+async def demo_activity_delete(admin: str = Depends(get_current_admin)):
+    from ..services import demo_activity
+    result = await run_in_threadpool(demo_activity.remove)
+    _audit(admin, "demo_activity_delete", {k: v for k, v in result.items() if k != "deleted"})
     return result
