@@ -8,7 +8,7 @@ import { useApi, useQuery } from '../../ui/useApi.js'
 import { branchThumb } from '../../branding/branches.js'
 import { mediaUrl } from '../../lib/api.js'
 import { normalizeYouTubeUrl } from '../../lib/projectAnalysis.js'
-import { startAnalysis, capabilities, uploadEvidenceWithRetry, clientStatusPayload } from '../../lib/analysis-engine/engine.js'
+import ProjectAnalysisPanel from './components/ProjectAnalysisPanel.jsx'
 import { useStudent } from './StudentShell.jsx'
 import './components/student.css'
 
@@ -23,7 +23,7 @@ const STATUS = {
   draft: { label: 'Draft', tone: '', icon: Pencil },
   rejected: { label: 'Needs changes', tone: 'red', icon: Info },
 }
-const ATTACH_EXT = ['.zip', '.pdf', '.step', '.stp', '.stl', '.dwg']
+const DOMAIN_LABEL = { electronics: 'Electronics', mechanical: 'Mechanical', civil: 'Civil', software: 'Software', ai_ml: 'AI / ML', robotics_iot: 'Robotics / IoT', other: 'Other' }
 
 function StatusBadge({ status }) {
   const s = STATUS[status] || STATUS.draft
@@ -173,14 +173,14 @@ export default function Projects() {
         </div>
       </div>
 
-      <ProjectModal project={editing} onClose={() => setEditing(null)} onSaved={refresh} />
-      <ProjectView project={viewing} branch={branch} onClose={() => setViewing(null)} onEdit={(p) => { setViewing(null); setEditing(p) }} onSubmit={(p) => { setViewing(null); submit(p) }} />
+      <ProjectModal project={editing} onClose={() => setEditing(null)} onSaved={async (saved) => { await refresh(); if (saved) setViewing(saved) }} />
+      <ProjectView project={viewing} branch={branch} onChanged={refresh} onClose={() => setViewing(null)} onEdit={(p) => { setViewing(null); setEditing(p) }} onSubmit={(p) => { setViewing(null); submit(p) }} />
       <Modal open={learn} onClose={() => setLearn(false)} title="How project verification works" footer={<Button onClick={() => setLearn(false)}>Got it</Button>}>
         <ol className="cl-col" style={{ paddingLeft: 18, margin: 0 }}>
           <li>Add a clear title and a description of at least 30 characters: the problem, your approach and the result.</li>
-          <li>Attach evidence — a photo or render, and files such as ZIP, PDF report, STEP/STL models or DWG drawings (up to 20 MB), or a link to your repository.</li>
-          <li>Choose <b>Submit for verification</b>. The status changes to <i>Under Review</i>.</li>
-          <li>The CoreLink team reviews the evidence and marks the project <i>Verified</i> or asks for changes.</li>
+          <li>Pick the engineering domain, then open the project and add evidence files — circuit files (KiCad, Wokwi, TinkerCAD), code, CAD (STEP, STL, DXF), BIM (IFC), notebooks, datasets or a PDF report — plus a demo video.</li>
+          <li>Press <b>Analyse project</b>. CoreLink reads every file, watches the demo video, checks each claim in your description against the evidence and builds one report with an explainable score.</li>
+          <li>Choose <b>Submit for verification</b>. The CoreLink team reviews the evidence and the report and marks the project <i>Verified</i> or asks for changes.</li>
           <li>Editing the title or description of a verified project sends it back to Draft so it can be re-checked.</li>
         </ol>
       </Modal>
@@ -188,15 +188,14 @@ export default function Projects() {
   )
 }
 
-function ProjectView({ project: p, branch, onClose, onEdit, onSubmit }) {
+function ProjectView({ project: p, branch, onClose, onEdit, onSubmit, onChanged }) {
   if (!p) return null
   return (
     <Modal open onClose={onClose} size="lg" title={p.title}
       footer={<><Button variant="secondary" icon={Pencil} onClick={() => onEdit(p)}>Edit</Button>{(p.status === 'draft' || p.status === 'rejected') && <Button icon={Send} onClick={() => onSubmit(p)}>Submit for verification</Button>}</>}>
       <div className="cl-col" style={{ gap: 14 }}>
         <img src={p.image_url ? mediaUrl(p.image_url) : branchThumb(branch, 0)} alt="" style={{ width: '100%', maxHeight: 300, objectFit: 'cover', borderRadius: 12 }} />
-        <div className="cl-row cl-wrap"><StatusBadge status={p.status} /><Badge>{CAT_LABEL[p.category]}</Badge>{p.month && <Badge>{p.month}</Badge>}<Badge><Users size={12} /> Team of {p.team_size}</Badge></div>
-        <AnalysisPanel project={p} />
+        <div className="cl-row cl-wrap"><StatusBadge status={p.status} /><Badge>{CAT_LABEL[p.category]}</Badge>{p.month && <Badge>{p.month}</Badge>}<Badge><Users size={12} /> Team of {p.team_size}</Badge>{p.domain && p.domain !== 'other' && <Badge tone="blue">{DOMAIN_LABEL[p.domain]}</Badge>}</div>
         {p.verification_note && <Alert tone="warn">{p.verification_note}</Alert>}
         <p className="st-pre">{p.description || 'No description.'}</p>
         <div className="st-tag-row">{[...p.tags, ...p.tools].map((t) => <span key={t} className="st-tag blue">{t}</span>)}</div>
@@ -206,15 +205,10 @@ function ProjectView({ project: p, branch, onClose, onEdit, onSubmit }) {
             {p.file_url && <a href={mediaUrl(p.file_url)} target="_blank" rel="noreferrer"><Paperclip size={14} /> {p.file_name}</a>}
           </div>
         )}
+        <ProjectAnalysisPanel key={p.id} project={p} onChanged={onChanged} />
       </div>
     </Modal>
   )
-}
-
-function AnalysisPanel({ project }) {
-  const api = useApi('candidate'); const [job, setJob] = useState(null); const [files, setFiles] = useState([]); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('')
-  const run = async () => { setBusy(true); setNotice(''); try { const started=await api.post(`/api/student/projects/${project.id}/analyse`); const fs=(await api.get(`/api/student/projects/${project.id}/files`)).files||[]; setFiles(fs.map(f=>({...f,status:'waiting'}))); if(!capabilities().worker || !capabilities().indexedDB){setNotice("Your browser can't run the file reader — only basic checks will be done."); return} const result=await startAnalysis({projectId:project.id,jobId:started.id,files:fs.map(f=>({...f,url:f.media_url})),onProgress:async (m)=>{if(m.file) setFiles(x=>x.map(f=>f.filename===m.file?{...f,status:m.status||'reading'}:f)); if(m.type==='progress') { const done=fs.findIndex(f=>f.filename===m.file); await api.post(`/api/student/projects/${project.id}/analysis/${started.id}/client-status`,clientStatusPayload(((done+1)/Math.max(fs.length,1))*100,m.file)) }}}); for(const f of fs){ const evidence=result.evidence.filter(e=>e.source_ref===f.filename); if(evidence.length) await uploadEvidenceWithRetry({payload:{file_id:f.id,sha256:f.sha256,evidence,warnings:result.warnings},upload:(payload)=>api.post(`/api/student/projects/${project.id}/analysis/${started.id}/evidence`,payload)}) } let latest; for(let n=0;n<100;n+=1){ latest=await api.get(`/api/student/projects/${project.id}/analysis`); setJob(latest); if(latest.status==='failed'||latest.stages?.find(s=>s.name==='extract_files')?.state==='done') break; await new Promise(r=>setTimeout(r,3000)) } } catch(e){setNotice(e.message)} finally{setBusy(false)} }
-  return <div className="cl-col" style={{gap:8}}><div className="cl-row cl-wrap"><Button size="sm" loading={busy} onClick={run}>Analyse project</Button>{notice&&<span className="cl-muted">{notice}</span>}</div>{files.length>0&&<div aria-live="polite">{files.map(f=><div key={f.id} className="cl-row" style={{justifyContent:'space-between',fontSize:13}}><span>{f.filename}</span><span>{f.status}</span></div>)}</div>}{job?.result?.evidence?.length>0&&<div className="cl-col" style={{gap:5}}><strong>Evidence</strong>{job.result.evidence.map(e=><div key={e.id} style={{fontSize:13}}>{e.fact} <Badge>{e.confirmed?'server-checked':'on-device'}</Badge></div>)}</div>}<small className="cl-muted">Keep this tab open while your files are read on your device. If you close it, we'll continue where we stopped.</small></div>
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -225,7 +219,6 @@ function ProjectModal({ project, onClose, onSaved }) {
   const isNew = project && !project.id
   const [f, setF] = useState({})
   const [image, setImage] = useState(null)
-  const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState({})
   React.useEffect(() => {
@@ -238,7 +231,7 @@ function ProjectModal({ project, onClose, onSaved }) {
       link_label: project.links?.[0]?.label || '', link_url: project.links?.[0]?.url || '',
       domain: project.domain || 'other', video_url: project.video_url || '',
     })
-    setImage(null); setFile(null); setErr({})
+    setImage(null); setErr({})
   }, [project])
   if (!project) return null
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }))
@@ -246,14 +239,9 @@ function ProjectModal({ project, onClose, onSaved }) {
     const e = {}
     if (f.title.trim().length < 2) e.title = 'Title is required'
     if (f.link_url && !/^https?:\/\/\S+/i.test(f.link_url)) e.link_url = 'Must start with http:// or https://'
-    if (f.video_url && !normalizeYouTubeUrl(f.video_url)) e.video_url = 'Use a valid HTTPS YouTube watch, Shorts or youtu.be link'
     if (Number(f.team_size) < 1 || Number(f.team_size) > 50) e.team_size = '1–50'
     if (image && image.size > 5 * 1024 * 1024) e.image = 'Image must be ≤ 5 MB'
-    if (file) {
-      const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
-      if (!ATTACH_EXT.includes(ext)) e.file = 'Allowed: ZIP, PDF, STEP, STL, DWG'
-      else if (file.size > 20 * 1024 * 1024) e.file = 'Attachment must be ≤ 20 MB'
-    }
+    if (f.video_url && !normalizeYouTubeUrl(f.video_url)) e.video_url = 'Use a YouTube link (watch, youtu.be or shorts)'
     setErr(e)
     if (Object.keys(e).length) return
     const split = (s) => s.split(',').map((x) => x.trim()).filter(Boolean)
@@ -261,16 +249,15 @@ function ProjectModal({ project, onClose, onSaved }) {
       title: f.title.trim(), description: f.description.trim(), category: f.category, tags: split(f.tags), tools: split(f.tools),
       team_size: Number(f.team_size) || 1, month: f.month ? `${f.month} ${f.year}` : '',
       links: f.link_url ? [{ label: f.link_label.trim() || 'Link', url: f.link_url.trim() }] : [],
-      domain: f.domain || 'other', video_url: f.video_url ? normalizeYouTubeUrl(f.video_url) : null,
+      domain: f.domain || 'other', video_url: f.video_url ? normalizeYouTubeUrl(f.video_url) : '',
     }
     setBusy(true)
     try {
       const p = isNew ? await api.post('/api/student/projects', body) : await api.put(`/api/student/projects/${project.id}`, body)
       if (image) { const fd = new FormData(); fd.append('file', image); await api.post(`/api/student/projects/${p.id}/image`, fd) }
-      if (file) { const fd = new FormData(); fd.append('file', file); await api.post(`/api/student/projects/${p.id}/attachment`, fd) }
-      toast(isNew ? 'Project added' : 'Project updated', 'success')
-      onSaved()
+      toast(isNew ? 'Project added — now add your evidence files' : 'Project updated', 'success')
       onClose()
+      onSaved(p, isNew)
     } catch (x) { toast(x.message, 'error'); onSaved() } finally { setBusy(false) }
   }
   return (
@@ -280,8 +267,8 @@ function ProjectModal({ project, onClose, onSaved }) {
       <div className="cl-grid cl-grid-2" style={{ marginTop: 10 }}>
         <Field label="Project title *" error={err.title} className="span-2"><Input value={f.title || ''} onChange={set('title')} maxLength={160} placeholder="e.g. Design and Analysis of Spur Gearbox" /></Field>
         <Field label="Description" className="span-2" hint="Problem, your approach, tools and measurable results."><Textarea value={f.description || ''} onChange={set('description')} maxLength={4000} /></Field>
+        <Field label="Engineering domain" hint="Decides how files are analysed"><Select value={f.domain || 'other'} onChange={set('domain')} options={Object.entries(DOMAIN_LABEL).map(([value, label]) => ({ value, label }))} /></Field>
         <Field label="Category"><Select value={f.category} onChange={set('category')} options={[{ value: 'academic', label: 'Academic' }, { value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }]} /></Field>
-        <Field label="Engineering domain"><Select value={f.domain || 'other'} onChange={set('domain')} options={[{ value: 'electronics', label: 'Electronics' }, { value: 'mechanical', label: 'Mechanical' }, { value: 'civil', label: 'Civil' }, { value: 'software', label: 'Software' }, { value: 'ai_ml', label: 'AI / ML' }, { value: 'robotics_iot', label: 'Robotics / IoT' }, { value: 'other', label: 'Other' }]} /></Field>
         <Field label="Team size" error={err.team_size}><Input type="number" min={1} max={50} value={f.team_size} onChange={set('team_size')} /></Field>
         <Field label="Tags" hint="Comma separated, e.g. CAD Design, FEA"><Input value={f.tags || ''} onChange={set('tags')} /></Field>
         <Field label="Tools / software" hint="e.g. SolidWorks, ANSYS"><Input value={f.tools || ''} onChange={set('tools')} /></Field>
@@ -289,10 +276,9 @@ function ProjectModal({ project, onClose, onSaved }) {
         <Field label="Year"><Input type="number" min={2000} max={2040} value={f.year} onChange={set('year')} /></Field>
         <Field label="Link label"><Input value={f.link_label || ''} onChange={set('link_label')} placeholder="GitHub / GrabCAD / Report" maxLength={40} /></Field>
         <Field label="Link URL" error={err.link_url}><Input value={f.link_url || ''} onChange={set('link_url')} placeholder="https://…" /></Field>
-        <Field label="Demo video (YouTube)" error={err.video_url} hint="Upload your video to YouTube as Unlisted and paste the link"><Input value={f.video_url || ''} onChange={set('video_url')} placeholder="https://youtu.be/…" /></Field>
-        {!isNew && project.challenge_code && <Alert tone="info">Say or show this code in your video: <strong>{project.challenge_code}</strong></Alert>}
         <Field label={project.image_url ? 'Replace image' : 'Project image'} error={err.image} hint="PNG / JPG / WEBP, max 5 MB"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => setImage(e.target.files?.[0] || null)} /></Field>
-        <Field label={project.file_name ? `Replace attachment (${project.file_name})` : 'Attachment'} error={err.file} hint="ZIP, PDF, STEP, STL or DWG, max 20 MB"><input type="file" accept={ATTACH_EXT.join(',')} onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
+        <Field label="Demo video (YouTube)" error={err.video_url} hint="Upload it as Unlisted on YouTube and paste the link"><Input value={f.video_url || ''} onChange={set('video_url')} placeholder="https://youtu.be/…" /></Field>
+        <Alert>{isNew ? 'After saving, open the project to add evidence files (circuits, code, CAD, reports) and run the AI analysis.' : 'Add or remove evidence files and run the analysis from the project view.'}</Alert>
       </div>
     </Modal>
   )

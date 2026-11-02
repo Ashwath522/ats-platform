@@ -59,7 +59,7 @@ services:
       - key: PROJECT_ANALYSIS_MAX_LLM_CALLS_PER_DAY
         value: "40"
       - key: PROJECT_ANALYSIS_MAX_PER_STUDENT_DAILY
-        value: "3"
+        value: "5"
       - key: DEV_MODE
         value: "false"
       # --- Live jobs & resources (all optional; see DEPLOY.md "Live jobs & resources") ---

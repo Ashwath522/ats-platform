@@ -1,41 +1,129 @@
-import json, os
-from datetime import datetime
-from sqlmodel import Session, select
-from ...db import ProjectAnalysisJob, ProjectFile, StudentProject, engine, utc_now
-from .schemas import Evidence, AnalysisResult, StageStatus
-from .jobs import update_stage, fail_job
+"""Runs one analysis job end to end. Called through services.precompute (a
+background thread; inline in tests). Each stage records its state so the UI
+can show real progress; a failing optional stage never sinks the job."""
+from __future__ import annotations
 
-STAGES = ["validate_files", "extract_files", "analyse_domain", "analyse_video", "verify_claims", "build_report"]
-def run_job(job_id):
+import json
+import logging
+from typing import List, Tuple
+
+from sqlmodel import Session, select
+
+from ...db import CandidateProfile, CandidateUser, ProjectAnalysisJob, ProjectFile, ProjectVideoEvidence, StudentProject, engine
+from . import analysers, claims as claims_mod, jobs, media, report, scoring
+from .ai import QuotaExceeded
+from .context import Ctx
+from .extractors import extract, flatten
+from .extractors.base import Fact
+from .files import read_bytes
+from .schemas import AnalysisResult, StageStatus
+
+logger = logging.getLogger("ats-platform")
+PENDING = "Daily AI limit reached — this step will run on the next analysis."
+
+
+def _load(job_id: int):
     with Session(engine) as s:
-        job=s.get(ProjectAnalysisJob, job_id); project=s.get(StudentProject, job.project_id) if job else None
-        files=s.exec(select(ProjectFile).where(ProjectFile.project_id==project.id)).all() if project else []
-    if not job or not project: return
+        job = s.get(ProjectAnalysisJob, job_id)
+        p = s.get(StudentProject, job.project_id) if job else None
+        if not p:
+            return None
+        files = s.exec(select(ProjectFile).where(ProjectFile.project_id == p.id).order_by(ProjectFile.id)).all()
+        frames = s.exec(select(ProjectVideoEvidence).where(ProjectVideoEvidence.project_id == p.id).order_by(ProjectVideoEvidence.timestamp)).all()
+        prof = s.exec(select(CandidateProfile).where(CandidateProfile.candidate_id == p.candidate_id)).first()
+        user = s.get(CandidateUser, p.candidate_id)
+        names = [x for x in [prof.full_name if prof else None, user.username.split("@")[0] if user else None,
+                             (prof.full_name or "").split()[0] if prof and prof.full_name else None] if x]
+        ctx = Ctx(project_id=p.id, domain=p.domain or "other", title=p.title, description=p.description or "",
+                  links=json.loads(p.links_json or "[]"), challenge_code=p.challenge_code or "", video_url=p.video_url, student_names=names)
+        file_rows = [(f.id, f.filename, f.ext, f.kind, f.media_path) for f in files]
+        frame_rows = [(fr.timestamp, fr.media_path) for fr in frames if fr.media_path]
+        return ctx, file_rows, frame_rows
+
+
+def run_job(job_id: int) -> None:
+    loaded = _load(job_id)
+    if not loaded:
+        jobs.fail(job_id, "The project no longer exists.")
+        return
+    ctx, file_rows, frame_rows = loaded
     try:
-        ev=[]; update_stage(job_id,"validate_files","running",progress=5)
-        for i,f in enumerate(files, 1):
-            path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "media", f.media_path)
-            if not os.path.exists(path) or os.path.getsize(path) != f.size_bytes: raise ValueError("An uploaded project file is unavailable or changed.")
-            ev.append(Evidence(id=f"ev_{i}",source_type="file",source_ref=str(f.id),fact=f"File '{f.filename}' ({f.ext.lstrip('.').upper()} source, {f.size_bytes / 1024:.1f} KB) uploaded",method="parsed",confidence="high"))
-        if (project.description or '').strip(): ev.append(Evidence(id=f"ev_{len(ev)+1}",source_type="description",source_ref="description",fact="Student provided a project description.",method="student_claim",confidence="low"))
-        update_stage(job_id,"validate_files","done",progress=20)
-        domain_data=None; domain_evidence=[]
-        if project.domain == "electronics":
-            from .analysers.electronics import analyse_electronics
-            domain_data, domain_evidence = analyse_electronics(project, files, ev)
-            ev.extend(domain_evidence)
-        elif project.domain in {"software", "ai_ml", "mechanical", "civil", "robotics_iot"}:
-            mod=__import__(f"app.services.project_analysis.analysers.{project.domain if project.domain != 'ai_ml' else 'ai_ml'}",fromlist=['analyse'])
-            domain_data=mod.analyse(files, ev)
-            for n, finding in enumerate(domain_data.get("findings", []), 1):
-                ev.append(Evidence(id=f"domain_{n}",source_type="analysis",source_ref=project.domain,fact=finding["fact"],method="rule",confidence="medium"))
-        stages=[]
-        for name in STAGES:
-            if name == "validate_files": stages.append(StageStatus(name=name,state="done",message="Files validated")); continue
-            msg = "Video analysis coming soon" if name == "analyse_video" and project.video_url else ("Skipped: no video provided — practical functionality will be unverified" if name == "analyse_video" else "Available in a later update")
-            stages.append(StageStatus(name=name,state="skipped",message=msg)); update_stage(job_id,name,"skipped",msg,20)
-        result=AnalysisResult(project_id=project.id,domain=project.domain,stages=stages,evidence=ev,domain_data=domain_data,created_at=utc_now())
-        with Session(engine) as s:
-            j=s.get(ProjectAnalysisJob,job_id); j.status="done"; j.progress=100; j.stage="build_report"; j.result_json=result.model_dump_json(); j.stages_json=json.dumps([x.model_dump(mode="json") for x in stages]); j.finished_at=utc_now(); j.updated_at=utc_now(); s.add(j); s.commit()
+        _run(job_id, ctx, file_rows, frame_rows)
     except Exception:
-        fail_job(job_id,"Analysis could not validate the project files. Please check the uploads and try again.")
+        logger.exception("[project-analysis] job %s crashed", job_id)
+        jobs.fail(job_id, "Something went wrong while analysing this project. Please try again.")
+
+
+def _run(job_id: int, ctx: Ctx, file_rows, frame_rows) -> None:
+    # 1 ── validate
+    jobs.set_stage(job_id, "validate_files", "running", progress=3)
+    blobs: List[Tuple[dict, bytes]] = []
+    for fid, name, ext, kind, path in file_rows:
+        data = read_bytes(path)
+        if data is None:
+            ctx.warnings.append(f"{name}: the stored file could not be found — upload it again.")
+            continue
+        blobs.append(({"id": fid, "filename": name, "ext": ext, "kind": kind}, data))
+    ctx.files = [b[0] for b in blobs]
+    jobs.set_stage(job_id, "validate_files", "done", f"{len(blobs)} file(s) ready" + (f", {len(file_rows) - len(blobs)} missing" if len(blobs) < len(file_rows) else ""), 10)
+
+    # 2 ── extract
+    jobs.set_stage(job_id, "extract_files", "running", progress=12)
+    if ctx.description.strip():
+        ctx.add_evidence(Fact(fact=f"Student says: {ctx.description.strip()[:400]}", method="student_claim", confidence="low",
+                              source_type="description", key="description"), "description")
+    photos = []
+    for i, (meta, data) in enumerate(blobs):
+        ex = extract(meta["filename"], data)
+        ctx.extracted.append(ex)
+        for fact in ex.facts:
+            ctx.add_evidence(fact, meta["filename"])
+        ctx.warnings.extend(ex.warnings)
+        if meta["kind"] == "image":
+            photos.append((meta["filename"], data, "image/png" if meta["ext"] == ".png" else "image/webp" if meta["ext"] == ".webp" else "image/jpeg"))
+        jobs.set_stage(job_id, "extract_files", "running", f"Read {i + 1} of {len(blobs)}: {meta['filename']}", 12 + int(30 * (i + 1) / max(1, len(blobs))))
+    ctx.blocks = flatten(ctx.extracted)
+    n_ev = sum(1 for e in ctx.evidence if e.source_type == "file")
+    jobs.set_stage(job_id, "extract_files", "done" if blobs else "skipped", f"{n_ev} facts read from {len(blobs)} file(s)" if blobs else "No files uploaded", 42)
+
+    # 3 ── domain analysis (+ photos)
+    jobs.set_stage(job_id, "analyse_domain", "running", progress=45)
+    msg = ""
+    try:
+        media.read_photos(ctx, photos)
+    except QuotaExceeded:
+        msg = " Photos not read: " + PENDING
+    ctx.domain_data.update(analysers.run(ctx))
+    jobs.set_stage(job_id, "analyse_domain", "done", f"{len(ctx.findings)} engineering checks.{msg}", 60)
+
+    # 4 ── video
+    jobs.set_stage(job_id, "analyse_video", "running", progress=62)
+    frames = [(ts, d) for ts, path in frame_rows for d in [read_bytes(path)] if d]
+    try:
+        state, _, vmsg = media.analyse_video(ctx, frames).partition(":")
+    except QuotaExceeded:
+        state, vmsg = "skipped", PENDING
+    jobs.set_stage(job_id, "analyse_video", state, vmsg, 75)
+
+    # 5 ── claims
+    jobs.set_stage(job_id, "verify_claims", "running", progress=78)
+    claims = claims_mod.extract_claims(ctx)
+    claims_mod.verify_claims(claims, ctx)
+    counts = {k: sum(1 for c in claims if c.status == k) for k in ("verified", "partially_verified", "unverified", "contradicted")}
+    jobs.set_stage(job_id, "verify_claims", "done",
+                   f"{len(claims)} claims: {counts['verified']} verified, {counts['partially_verified']} partly, {counts['contradicted']} contradicted", 90)
+
+    # 6 ── score + report
+    jobs.set_stage(job_id, "build_report", "running", progress=92)
+    scores = scoring.score(ctx, claims)
+    rep = report.build(ctx, claims, scores)
+    with Session(engine) as s:
+        stages = [StageStatus(**st) for st in json.loads(s.get(ProjectAnalysisJob, job_id).stages_json or "[]")]
+    for st in stages:
+        if st.name == "build_report":
+            st.state, st.message = "done", "Report ready"
+    result = AnalysisResult(project_id=ctx.project_id, domain=ctx.domain, stages=stages, evidence=ctx.evidence, claims=claims,
+                            domain_data={k: v for k, v in ctx.domain_data.items() if not k.startswith("_")} | {"findings": ctx.findings},
+                            video=ctx.video, scores=scores, report=rep, warnings=list(dict.fromkeys(ctx.warnings))[:40], ai_used=ctx.ai_used)
+    jobs.set_stage(job_id, "build_report", "done", "Report ready", 99)
+    jobs.finish(job_id, result.model_dump_json())

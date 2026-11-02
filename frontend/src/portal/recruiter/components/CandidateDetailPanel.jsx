@@ -5,8 +5,9 @@ import {
   MapPin, Medal, MessageSquarePlus, Phone, Send, ShieldCheck, Star, Trash2, Pencil, Wrench, Globe, Briefcase,
 } from 'lucide-react'
 import {
-  Alert, Avatar, Badge, Button, Card, EmptyState, Menu, Skeleton, StatusPill, Tabs, Textarea, fmtDate, fmtTime, timeAgo, useToast,
+  Alert, Avatar, Badge, Button, Card, EmptyState, Menu, Modal, Skeleton, StatusPill, Tabs, Textarea, fmtDate, fmtTime, timeAgo, useToast,
 } from '../../../ui/index.jsx'
+import ProjectReport from '../../shared/ProjectReport.jsx'
 import { mediaUrl } from '../../../lib/api.js'
 import { CollegeLogo, CollegeName } from '../../../ui/CollegePicker.jsx'
 import { branchThumb } from '../../../branding/branches.js'
@@ -90,6 +91,33 @@ function ProjectRow({ p, branch, i }) {
       </div>
       <StatusPill status={p.status} />
     </div>
+  )
+}
+
+function ProjectAnalysisButton({ api, p }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState(null)
+  if (!p.analysis) return null
+  const show = async () => {
+    setOpen(true)
+    if (data) return
+    try { setData(await api.get(`${API}/projects/${p.id}/analysis`)) } catch (e) { setErr(e.message) }
+  }
+  return (
+    <>
+      <div className="cl-row cl-wrap" style={{ gap: 6, alignItems: 'center', fontSize: 12.5 }}>
+        <Badge tone={(p.analysis.overall ?? 0) >= 60 ? 'green' : 'amber'}>Evidence {p.analysis.overall ?? '—'}/100</Badge>
+        <span className="cl-muted">{p.analysis.verified}/{p.analysis.claims} claims verified</span>
+        <button type="button" className="cl-link" onClick={show}>View analysis</button>
+      </div>
+      <Modal open={open} onClose={() => setOpen(false)} size="lg" title={`Project analysis — ${p.title}`}>
+        {err && <Alert tone="error">{err}</Alert>}
+        {!data && !err && <Skeleton h={220} />}
+        {data && <ProjectReport result={{ ...data, domain: data.domain }} hideEvidence={false} />}
+        <p className="cl-muted" style={{ fontSize: 12 }}>Evidence score is separate from the ATS match score. "Verified" claims are backed by the student's uploaded evidence; the project badge is given by a CoreLink reviewer.</p>
+      </Modal>
+    </>
   )
 }
 
@@ -280,6 +308,7 @@ export default function CandidateDetailPanel({ api, c, loading, error, onShortli
                   <div className="rp-skill-chips">{[...(p.tags || []), ...(p.tools || [])].slice(0, 5).map((t) => <span key={t} className="cl-chip soft">{t}</span>)}</div>
                   <div className="cl-meta">{p.month && <span>{p.month}</span>}<span>{p.category}</span>{p.team_size > 1 && <span>Team of {p.team_size}</span>}</div>
                   {p.links?.map((l) => l?.url && <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="cl-link">{l.label || 'Link'}</a>)}
+                  <ProjectAnalysisButton api={api} p={p} />
                 </div>
               </div>
             ))}

@@ -511,11 +511,14 @@ class ProjectAnalysisJob(SQLModel, table=True):
     finished_at: Optional[datetime] = None
 
 class ProjectVideoEvidence(SQLModel, table=True):
+    """Key frames picked in the student's browser from a local demo video.
+    The video itself is never uploaded; frames expire after 90 days."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    job_id: int = Field(index=True)
     project_id: int = Field(index=True)
+    job_id: Optional[int] = Field(default=None, index=True)
     media_path: Optional[str] = None
     timestamp: str = "00:00"
+    sha256: str = ""
     transcript: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now, index=True)
 

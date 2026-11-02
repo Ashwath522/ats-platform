@@ -10,6 +10,7 @@ import { useApi, useQuery } from '../../ui/useApi.js'
 import { mediaUrl } from '../../lib/api.js'
 import { branchThumb } from '../../branding/branches.js'
 import VerificationReport, { VerdictBadge } from '../../components/VerificationReport.jsx'
+import ProjectReport from '../shared/ProjectReport.jsx'
 import { ConfirmModal, MiniStat, NoteModal, fmtNum, qs } from './components/adminKit.jsx'
 
 const TABS = ['requests', 'projects', 'flags']
@@ -181,6 +182,7 @@ function Projects({ api, version, onChanged }) {
   const list = useQuery(() => api.get(`/api/admin/portal/projects${qs({ status })}`), [api, status, version])
   const [decide, setDecide] = useState(null) // {project, verified}
   const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState(null)   // {project, data}
   const submit = async (note) => {
     setBusy(true)
     try {
@@ -189,6 +191,26 @@ function Projects({ api, version, onChanged }) {
       setDecide(null)
       onChanged()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
+  }
+  const openReport = async (project) => {
+    setReport({ project, data: null })
+    try { setReport({ project, data: await api.get(`/api/admin/projects/${project.id}/analysis`, { cache: false }) }) } catch (e) { toast(e.message, 'error'); setReport(null) }
+  }
+  const rerun = async () => {
+    const project = report.project
+    setReport((r) => ({ ...r, rerunning: true }))
+    try {
+      await api.post(`/api/admin/projects/${project.id}/analysis/rerun`)
+      toast('Analysis started — refresh in a minute', 'success')
+      setReport({ project, data: await api.get(`/api/admin/projects/${project.id}/analysis`, { cache: false }) })
+    } catch (e) { toast(e.message, 'error'); setReport((r) => ({ ...r, rerunning: false })) }
+  }
+  const downloadPdf = async () => {
+    const res = await api.get(`/api/admin/projects/${report.project.id}/analysis/report.pdf`, { raw: true })
+    if (!res.ok) return toast('Report not available', 'error')
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a'); a.href = url; a.download = 'project_report.pdf'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
   }
   const items = list.data?.items || []
   return (
@@ -224,9 +246,15 @@ function Projects({ api, version, onChanged }) {
               <span className="cl-muted">Updated {timeAgo(p.updated_at)}</span>
             </div>
             {p.note && <div className="adm-note"><p>{p.note}</p><small>Reviewer note</small></div>}
-            {p.analysis && <div className="adm-note"><strong>Analysis: {p.analysis.status}</strong> · {p.analysis.stage} · {p.analysis.progress}%
-              {!!p.analysis.evidence?.length && <div style={{ marginTop: 6 }}>{p.analysis.evidence.map((e) => <div key={e.id}>{e.fact} <small>({e.method}, {e.confidence})</small></div>)}</div>}
-            </div>}
+            {p.analysis && (
+              <div className="cl-row cl-wrap" style={{ gap: 8, fontSize: 13, alignItems: 'center' }}>
+                {p.analysis.status === 'done'
+                  ? <><Badge tone={(p.analysis.overall ?? 0) >= 60 ? 'green' : 'amber'}>Evidence score {p.analysis.overall ?? '—'}/100</Badge>
+                    <span className="cl-muted">{p.analysis.verified}/{p.analysis.claims} claims verified{p.analysis.contradicted ? ` · ${p.analysis.contradicted} contradicted` : ''} · {p.analysis.coverage}% coverage</span></>
+                  : <Badge>Analysis {p.analysis.status}</Badge>}
+                <button type="button" className="cl-link" onClick={() => openReport(p)}>View analysis report</button>
+              </div>
+            )}
           </div>
           <div className="adm-proj-actions">
             {p.status !== 'verified' && <Button size="sm" icon={Check} onClick={() => setDecide({ project: p, verified: true })}>Verify</Button>}
@@ -234,7 +262,14 @@ function Projects({ api, version, onChanged }) {
           </div>
         </article>
       ))}
-      <NoteModal open={!!decide} busy={busy} danger={decide && !decide.verified}
+      <Modal open={!!report} onClose={() => setReport(null)} size="lg" title={report ? `Analysis — ${report.project.title}` : ''}
+        footer={<><Button variant="secondary" icon={RefreshCw} loading={report?.rerunning} onClick={rerun}>Re-run analysis</Button><Button onClick={() => setReport(null)}>Close</Button></>}>
+        {report && !report.data && <Skeleton h={200} />}
+        {report?.data?.status === 'none' && <EmptyState icon={FolderKanban} title="Not analysed yet" text="The student hasn't run the analysis. You can run it with Re-run analysis." />}
+        {report?.data && report.data.status !== 'done' && report.data.status !== 'none' && <Alert>Analysis is {report.data.status} ({report.data.progress}%).{report.data.error ? ` ${report.data.error}` : ''}</Alert>}
+        {report?.data?.result && <ProjectReport result={report.data.result} videoUrl={report.project.video_url} onDownload={downloadPdf} />}
+      </Modal>
+      <NoteModal open={!!decide} busy={busy} danger={decide && !decide.verified} initial={decide?.project.analysis?.suggested_note || ''}
         title={decide?.verified ? `Verify “${decide?.project.title}”` : `Request changes to “${decide?.project.title}”`}
         label={decide?.verified ? 'Note to the student (optional)' : 'What needs to change?'} required={decide && !decide.verified}
         confirmLabel={decide?.verified ? 'Verify project' : 'Send back'} onSubmit={submit} onClose={() => setDecide(null)} />

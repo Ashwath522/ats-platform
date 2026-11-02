@@ -1,6 +1,6 @@
 # Deploying CoreLink for free
 
-Project analysis defaults: `PROJECT_ANALYSIS_MAX_LLM_CALLS_PER_DAY=40` and `PROJECT_ANALYSIS_MAX_PER_STUDENT_DAILY=3`. Deterministic and browser-side analysis works without AI keys; keep these limits enabled on free-tier deployments.
+Project analysis defaults: `PROJECT_ANALYSIS_MAX_LLM_CALLS_PER_DAY=40` and `PROJECT_ANALYSIS_MAX_PER_STUDENT_DAILY=5`. File reading, engineering checks and scoring work without any AI key; `GEMINI_API_KEY` adds video and photo reading, and `GITHUB_TOKEN` (optional, read-only) raises the GitHub API limit.
 
 | Piece | Free service | Why |
 |---|---|---|

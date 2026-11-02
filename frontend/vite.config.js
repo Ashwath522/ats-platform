@@ -19,10 +19,6 @@ export default defineConfig({
       '/api': 'http://localhost:8000',
     },
   },
-  worker: {
-    format: 'es',
-    rollupOptions: { output: { format: 'es' } },
-  },
   build: {
     rollupOptions: {
       output: {

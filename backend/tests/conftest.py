@@ -11,6 +11,15 @@ os.environ["ATS_DATA_DIR"] = TEST_DATA_DIR
 os.environ["TESTING"] = "1"
 os.environ.setdefault("LIVE_SYNC_AUTO", "false")   # no background syncs during tests
 
+# Never let a developer's backend/.env leak into tests (main.py calls
+# load_dotenv, which does not override variables that already exist): no real
+# database, admin bootstrap, AI keys or email provider.
+for _k in ("DATABASE_URL", "ADMIN_EMAIL", "ADMIN_PASSWORD", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
+           "BREVO_API_KEY", "RESEND_API_KEY", "INTERVIEW_LLM_BASE_URL", "OLLAMA_BASE_URL", "GITHUB_TOKEN", "SENTRY_DSN"):
+    os.environ[_k] = ""
+os.environ["EMAIL_PROVIDER"] = "console"
+os.environ["MEDIA_STORE"] = "disk"
+
 # Clean up any leftover test data directory from previous runs *before* engine starts
 shutil.rmtree(TEST_DATA_DIR, ignore_errors=True)
 os.makedirs(TEST_DATA_DIR, exist_ok=True)

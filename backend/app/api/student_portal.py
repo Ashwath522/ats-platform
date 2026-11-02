@@ -13,20 +13,18 @@ import logging
 import os
 import re
 import shutil
-import uuid
-import hashlib
 import secrets
+import uuid
 from collections import Counter
 from datetime import timedelta
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, Request
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field as PField
 from sqlmodel import Session, select
 
 from ..auth import get_current_candidate
-from ..rate_limit import limiter
 from ..db import (
     AnalysisCache,
     Application,
@@ -47,7 +45,8 @@ from ..db import (
     SavedJob,
     ScheduledInterview,
     StudentProject,
-    ProjectFile, ProjectAnalysisJob,
+    ProjectAnalysisJob,
+    ProjectFile,
     ProjectVideoEvidence,
     User,
     engine,
@@ -630,7 +629,7 @@ class ProjectIn(BaseModel):
     month: Optional[str] = PField(None, max_length=20)
     featured: bool = False
     domain: str = "other"
-    video_url: Optional[str] = None
+    video_url: Optional[str] = PField(None, max_length=300)
 
 
 class ProjectPatch(BaseModel):
@@ -644,23 +643,28 @@ class ProjectPatch(BaseModel):
     month: Optional[str] = PField(None, max_length=20)
     featured: Optional[bool] = None
     domain: Optional[str] = None
-    video_url: Optional[str] = None
+    video_url: Optional[str] = PField(None, max_length=300)
 
-class BrowserEvidenceBody(BaseModel):
-    file_id: int
-    sha256: str
-    evidence: list[dict] = PField(default_factory=list, max_length=2000)
-    warnings: list[str] = PField(default_factory=list, max_length=100)
 
-class ClientStatusBody(BaseModel):
-    percentage: int = PField(ge=0, le=100)
-    current_file: Optional[str] = PField(None, max_length=255)
+_YT_RE = re.compile(r"^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})(?:[?&#/].*)?$")
 
-def _video_url(value):
-    if not value: return None
-    m = re.match(r"^https://(?:www\.)?(?:youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/)([A-Za-z0-9_-]{6,})", value.strip())
-    if not m: raise HTTPException(status_code=400, detail="Video URL must be a valid HTTPS YouTube watch, Shorts or youtu.be link")
+
+def _video_url(value: Optional[str]) -> Optional[str]:
+    """Accept YouTube watch / youtu.be / shorts / live links; store one canonical form. '' clears it."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    m = _YT_RE.match(v)
+    if not m:
+        raise HTTPException(status_code=422, detail="Demo video must be a YouTube link (watch, youtu.be or shorts). Upload it as Unlisted.")
     return f"https://www.youtube.com/watch?v={m.group(1)}"
+
+
+def _domain(value: str) -> str:
+    from ..services.project_analysis.domains import DOMAIN_MAP
+    if value not in DOMAIN_MAP:
+        raise HTTPException(status_code=422, detail="Unknown engineering domain")
+    return value
 
 
 def _clean_list(items, limit=15, maxlen=40) -> List[str]:
@@ -705,16 +709,10 @@ def _project_dict(p: StudentProject) -> dict:
         "featured": bool(p.featured),
         "created_at": _iso(p.created_at),
         "updated_at": _iso(p.updated_at),
-        "domain": p.domain,
+        "domain": p.domain or "other",
         "video_url": p.video_url,
-        "challenge_code": p.challenge_code,
+        "challenge_code": p.challenge_code or None,
     }
-
-def _project_export(session: Session, p: StudentProject) -> dict:
-    """Export project metadata plus analysis JSON, excluding raw media bytes."""
-    out=_project_dict(p); jobs=session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id==p.id).order_by(ProjectAnalysisJob.id)).all()
-    out["analysis"]=[{"id":j.id,"status":j.status,"result":json.loads(j.result_json) if j.result_json else None} for j in jobs]
-    return out
 
 
 def _owned_project(session: Session, pid: int, cid: int) -> StudentProject:
@@ -722,17 +720,6 @@ def _owned_project(session: Session, pid: int, cid: int) -> StudentProject:
     if not p or p.candidate_id != cid:
         raise HTTPException(status_code=404, detail="Project not found")
     return p
-
-def _lazy_project_file(session: Session, p: StudentProject) -> None:
-    """Expose legacy single attachments through the additive file table."""
-    if not p.file_path or session.exec(select(ProjectFile).where(ProjectFile.project_id == p.id)).first():
-        return
-    from ..services.media_utils import MEDIA_DIR
-    path = os.path.join(MEDIA_DIR, os.path.normpath(p.file_path).lstrip("/"))
-    if not path or not os.path.exists(path): return
-    data=open(path,"rb").read(); name=os.path.basename(path).split("_",1)[-1]; ext=os.path.splitext(name)[1].lower()
-    row=ProjectFile(project_id=p.id,candidate_id=p.candidate_id,filename=name,ext=ext,mime="application/octet-stream",size_bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),media_path=p.file_path,kind="archive" if ext==".zip" else "document")
-    session.add(row); session.commit()
 
 
 def _project_stats(projects: List[StudentProject]) -> dict:
@@ -762,21 +749,13 @@ def list_projects(candidate: str = Depends(get_current_candidate)):
         projects = session.exec(
             select(StudentProject).where(StudentProject.candidate_id == user.id).order_by(StudentProject.updated_at.desc())
         ).all()[:MAX_PROJECTS]
-        for p in projects: _lazy_project_file(session, p)
         return {"projects": [_project_dict(p) for p in projects], "stats": _project_stats(projects)}
-
-@router.get("/api/student/projects/domains")
-def project_domains(candidate: str = Depends(get_current_candidate)):
-    from ..services.project_analysis.domains import domain_list
-    return {"domains": domain_list()}
 
 
 @router.post("/api/student/projects", status_code=201)
 def create_project(body: ProjectIn, candidate: str = Depends(get_current_candidate)):
     if body.category not in _CATEGORIES:
         raise HTTPException(status_code=422, detail="category must be academic, personal or team")
-    from ..services.project_analysis.domains import DOMAIN_MAP
-    if body.domain not in DOMAIN_MAP: raise HTTPException(status_code=422, detail="Unknown project domain")
     with Session(engine) as session:
         user = _user(session, candidate)
         count = len(session.exec(select(StudentProject.id).where(StudentProject.candidate_id == user.id)).all())
@@ -794,7 +773,9 @@ def create_project(body: ProjectIn, candidate: str = Depends(get_current_candida
             month=(body.month or "").strip() or None,
             featured=body.featured,
             status="draft",
-            domain=body.domain, video_url=_video_url(body.video_url), challenge_code=f"{secrets.randbelow(10000):04d}",
+            domain=_domain(body.domain),
+            video_url=_video_url(body.video_url),
+            challenge_code=f"{secrets.randbelow(9000) + 1000}",
         )
         session.add(p)
         session.commit()
@@ -809,7 +790,7 @@ def create_project(body: ProjectIn, candidate: str = Depends(get_current_candida
 def get_project(pid: int, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
-        p=_owned_project(session, pid, user.id); _lazy_project_file(session,p); return _project_dict(p)
+        return _project_dict(_owned_project(session, pid, user.id))
 
 
 @router.put("/api/student/projects/{pid}")
@@ -843,10 +824,11 @@ def update_project(pid: int, body: ProjectPatch, candidate: str = Depends(get_cu
             if body.featured:
                 _set_featured(session, user.id, p.id)
         if body.domain is not None:
-            from ..services.project_analysis.domains import DOMAIN_MAP
-            if body.domain not in DOMAIN_MAP: raise HTTPException(status_code=422, detail="Unknown project domain")
-            p.domain = body.domain
-        if body.video_url is not None: p.video_url = _video_url(body.video_url)
+            p.domain = _domain(body.domain)
+        if body.video_url is not None:
+            p.video_url = _video_url(body.video_url)
+        if not p.challenge_code:
+            p.challenge_code = f"{secrets.randbelow(9000) + 1000}"
         # Changing what was verified sends the project back to draft.
         if content_changed and p.status in {"verified", "under_review"}:
             p.status = "draft"
@@ -865,104 +847,18 @@ def delete_project(pid: int, candidate: str = Depends(get_current_candidate)):
     with Session(engine) as session:
         user = _user(session, candidate)
         p = _owned_project(session, pid, user.id)
-        for pf in session.exec(select(ProjectFile).where(ProjectFile.project_id == pid)).all():
-            delete_media_file(pf.media_path); session.delete(pf)
-        for ve in session.exec(select(ProjectVideoEvidence).where(ProjectVideoEvidence.project_id == pid)).all():
-            if ve.media_path: delete_media_file(ve.media_path)
-            session.delete(ve)
-        for aj in session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id == pid)).all(): session.delete(aj)
         for path in (p.image_path, p.file_path):
             if path:
                 delete_media_file(path)
+        for model in (ProjectFile, ProjectVideoEvidence, ProjectAnalysisJob):
+            for row in session.exec(select(model).where(model.project_id == pid)).all():
+                path = getattr(row, "media_path", None)
+                if path and path != p.file_path:
+                    delete_media_file(path)
+                session.delete(row)
         session.delete(p)
         session.commit()
         return {"deleted": True, "id": pid}
-
-@router.post("/api/student/projects/{pid}/challenge-code")
-def regenerate_challenge(pid: int, candidate: str = Depends(get_current_candidate)):
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); p.challenge_code=f"{secrets.randbelow(10000):04d}"; s.add(p); s.commit(); return {"challenge_code":p.challenge_code}
-
-@router.post("/api/student/projects/{pid}/analyse")
-def analyse_project(pid: int, candidate: str = Depends(get_current_candidate)):
-    from ..services import precompute
-    from ..services.project_analysis.jobs import create_or_get_job
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id)
-        files=session_files=s.exec(select(ProjectFile).where(ProjectFile.project_id==pid)).all()
-        if p.domain not in __import__('app.services.project_analysis.domains',fromlist=['DOMAIN_MAP']).DOMAIN_MAP: raise HTTPException(status_code=400, detail="Choose a project domain before analysing")
-        if not files and not p.video_url and len((p.description or '').strip()) < 30: raise HTTPException(status_code=400, detail="Add at least one file, a demo video, or a 30-character description")
-        job=create_or_get_job(p); precompute.submit(f"project-analysis:{job.id}", __import__('app.services.project_analysis.pipeline',fromlist=['run_job']).run_job, job.id)
-        return {"id":job.id,"status":job.status,"stage":job.stage,"progress":job.progress,"stages":json.loads(job.stages_json or '[]')}
-
-@router.get("/api/student/projects/{pid}/analysis")
-def get_analysis(pid: int, candidate: str = Depends(get_current_candidate)):
-    from ..services.project_analysis.jobs import mark_stuck
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); j=s.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id==pid).order_by(ProjectAnalysisJob.id.desc())).first()
-        if not j: raise HTTPException(status_code=404, detail="No project analysis has been started yet")
-        mark_stuck(j); return {"id":j.id,"status":j.status,"stage":j.stage,"progress":j.progress,"stages":json.loads(j.stages_json or '[]'),"error":j.error,"result":json.loads(j.result_json) if j.result_json else None}
-
-@router.post("/api/student/projects/{pid}/analysis/{job_id}/evidence")
-def submit_browser_evidence(pid:int, job_id:int, body:BrowserEvidenceBody, candidate:str=Depends(get_current_candidate)):
-    from ..services.project_analysis.schemas import Evidence
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); job=s.get(ProjectAnalysisJob,job_id)
-        if not job or job.project_id != p.id: raise HTTPException(status_code=404,detail="Analysis job not found")
-        f=s.get(ProjectFile,body.file_id)
-        if not f or f.project_id != p.id: raise HTTPException(status_code=404,detail="Project file not found")
-        if body.sha256 != f.sha256: raise HTTPException(status_code=400,detail="The browser file hash does not match the stored file")
-        try: parsed=[Evidence.model_validate({**item,"origin":"client"}) for item in body.evidence]
-        except Exception as exc: raise HTTPException(status_code=422,detail=f"Invalid evidence: {str(exc)[:180]}")
-        result=json.loads(job.result_json) if job.result_json else {"version":"pa:v1","project_id":pid,"domain":p.domain,"stages":[],"evidence":[],"claims":[],"warnings":[],"scores":{},"created_at":utc_now().isoformat()}
-        import os
-        path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'media', f.media_path)
-        ext=f.ext.lower(); mismatch=False
-        if os.path.exists(path) and ext in {'.txt','.md','.csv','.json','.ino','.c','.cpp','.h','.py','.js','.ts'}:
-            actual=len(open(path,encoding='utf-8',errors='replace').read().splitlines())
-            mismatch=not any(str(actual) in e.fact and 'line' in e.fact.lower() for e in parsed)
-        if os.path.exists(path) and ext == '.pdf':
-            try:
-                import fitz
-                pages=len(fitz.open(path))
-                mismatch=not any(str(pages) in e.fact and 'page' in e.fact.lower() for e in parsed)
-            except Exception:
-                mismatch=False
-        for e in parsed:
-            e.confirmed=not mismatch; e.confidence='low' if mismatch else e.confidence
-        result["evidence"]=[e for e in result.get("evidence",[]) if not (e.get("origin")=="client" and e.get("source_ref") in {str(f.id), f.filename})]+[e.model_dump() for e in parsed]
-        if mismatch: result["warnings"]=list(dict.fromkeys(result.get("warnings",[])+[f"Browser results did not match server check for {f.filename}"]))
-        result["warnings"]=list(dict.fromkeys(result.get("warnings",[])+body.warnings))
-        job.result_json=json.dumps(result); job.updated_at=utc_now(); s.add(job); s.commit()
-        return {"accepted":len(parsed),"warnings":body.warnings}
-
-@router.post("/api/student/projects/{pid}/analysis/{job_id}/client-status")
-@limiter.limit("60/minute")
-def client_analysis_status(request: Request, pid:int, job_id:int, body:ClientStatusBody, candidate:str=Depends(get_current_candidate)):
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); job=s.get(ProjectAnalysisJob,job_id)
-        if not job or job.project_id != p.id: raise HTTPException(status_code=404,detail="Analysis job not found")
-        job.stage="extract_files"; job.progress=min(85,20+int(body.percentage*.65)); job.status="running"; job.updated_at=utc_now(); s.add(job); s.commit()
-        return {"status":job.status,"stage":job.stage,"progress":job.progress,"current_file":body.current_file}
-
-@router.post("/api/student/projects/{pid}/analysis/{job_id}/video-evidence")
-def upload_video_evidence(pid:int, job_id:int, files: list[UploadFile] = File(default=[]), candidate:str=Depends(get_current_candidate)):
-    """Accept browser-selected keyframes only; the original video is never stored."""
-    from ..services.media_utils import MEDIA_DIR, mirror_to_db
-    from ..services.project_analysis.schemas import VideoObservation
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); job=s.get(ProjectAnalysisJob,job_id)
-        if not job or job.project_id != pid: raise HTTPException(status_code=404,detail="Analysis job not found")
-        if len(files)>12: raise HTTPException(status_code=400,detail="Upload at most 12 keyframes")
-        added=[]
-        for upload in files:
-            name=os.path.basename(upload.filename or "frame.jpg"); data=upload.file.read()
-            if len(data)>150*1024: raise HTTPException(status_code=400,detail="Each keyframe must be 150 KB or smaller")
-            if not (name.lower().endswith(('.jpg','.jpeg','.png','.webp')) and (data.startswith(b'\xff\xd8\xff') or data.startswith(b'\x89PNG') or data.startswith(b'RIFF'))): raise HTTPException(status_code=400,detail="Keyframes must be valid JPEG, PNG or WEBP images")
-            rel=f"projects/video/{uuid.uuid4().hex}_{re.sub(r'[^A-Za-z0-9._-]','_',name)}"; dest=os.path.join(MEDIA_DIR,rel); os.makedirs(os.path.dirname(dest),exist_ok=True)
-            with open(dest,'wb') as out: out.write(data)
-            mirror_to_db(rel,dest); row=ProjectVideoEvidence(job_id=job_id,project_id=pid,media_path=rel,timestamp="00:00"); s.add(row); added.append(row)
-        s.commit(); return {"accepted":len(added),"message":"Keyframes received; the original video was not uploaded."}
 
 
 @router.post("/api/student/projects/{pid}/image")
@@ -987,46 +883,6 @@ def upload_project_image(pid: int, file: UploadFile = File(...), candidate: str 
 
 ATTACHMENT_EXTS = {".zip", ".pdf", ".step", ".stp", ".stl", ".dwg"}
 MAX_ATTACHMENT = 20 * 1024 * 1024
-
-@router.get("/api/student/projects/{pid}/files")
-def project_files(pid: int, candidate: str = Depends(get_current_candidate)):
-    with Session(engine) as s:
-        _owned_project(s,pid,_user(s,candidate).id)
-        rows=s.exec(select(ProjectFile).where(ProjectFile.project_id==pid).order_by(ProjectFile.id)).all()
-        return {"files":[{k:getattr(f,k) for k in ("id","filename","ext","mime","size_bytes","sha256","kind","created_at")} | {"media_url": _media(f.media_path)} for f in rows]}
-
-@router.post("/api/student/projects/{pid}/files")
-def add_project_file(pid: int, file: UploadFile = File(...), candidate: str = Depends(get_current_candidate)):
-    from ..services.media_utils import MEDIA_DIR, mirror_to_db
-    from ..services.project_analysis.domains import ALL_EXTENSIONS
-    with Session(engine) as s:
-        p=_owned_project(s,pid,_user(s,candidate).id); rows=s.exec(select(ProjectFile).where(ProjectFile.project_id==pid)).all()
-        if len(rows)>=10: raise HTTPException(status_code=400,detail="A project can have at most 10 files")
-        name=os.path.basename(file.filename or "file"); ext=os.path.splitext(name)[1].lower()
-        if ext not in ALL_EXTENSIONS: raise HTTPException(status_code=400,detail="This file type is not supported for project evidence")
-        data=file.file.read()
-        if not data or len(data)>15*1024*1024: raise HTTPException(status_code=400,detail="Each project file must be between 1 byte and 15 MB")
-        if sum(x.size_bytes for x in rows)+len(data)>60*1024*1024: raise HTTPException(status_code=400,detail="Project files cannot exceed 60 MB total")
-        digest=hashlib.sha256(data).hexdigest(); old=next((x for x in rows if x.sha256==digest),None)
-        if old: return {"id":old.id,"filename":old.filename,"duplicate":True}
-        if ext in {'.pdf'} and not data.startswith(b'%PDF-'): raise HTTPException(status_code=400,detail="File content does not match PDF")
-        if ext in {'.py','.ino','.c','.cpp','.h','.json','.csv','.md','.ifc','.step','.stp','.dxf'}:
-            try: data.decode('utf-8')
-            except UnicodeDecodeError: raise HTTPException(status_code=400,detail="Text-based project files must be valid UTF-8")
-        safe=re.sub(r'[^A-Za-z0-9._-]+','_',name)[-80:]; rel=f"projects/files/{uuid.uuid4().hex}_{safe}"; dest=os.path.join(MEDIA_DIR,rel); os.makedirs(os.path.dirname(dest),exist_ok=True)
-        with open(dest,'wb') as out: out.write(data)
-        mirror_to_db(rel,dest)
-        kind='image' if ext in {'.png','.jpg','.jpeg'} else ('archive' if ext=='.zip' else 'code' if ext in {'.py','.ino','.c','.cpp','.h'} else 'cad' if ext in {'.step','.stp','.stl','.obj','.dxf','.dwg'} else 'document')
-        row=ProjectFile(project_id=pid,candidate_id=p.candidate_id,filename=name,ext=ext,mime=file.content_type or 'application/octet-stream',size_bytes=len(data),sha256=digest,media_path=rel,kind=kind); s.add(row); s.commit(); s.refresh(row)
-        return {"id":row.id,"filename":row.filename,"size_bytes":row.size_bytes,"kind":row.kind}
-
-@router.delete("/api/student/projects/{pid}/files/{fid}")
-def delete_project_file(pid:int,fid:int,candidate:str=Depends(get_current_candidate)):
-    from ..services.media_utils import delete_media_file
-    with Session(engine) as s:
-        _owned_project(s,pid,_user(s,candidate).id); row=s.exec(select(ProjectFile).where(ProjectFile.id==fid,ProjectFile.project_id==pid)).first()
-        if not row: raise HTTPException(status_code=404,detail="Project file not found")
-        delete_media_file(row.media_path); s.delete(row); s.commit(); return {"deleted":True}
 
 
 def _attachment_magic_ok(path: str, ext: str) -> bool:
@@ -1094,6 +950,8 @@ def upload_project_attachment(pid: int, file: UploadFile = File(...), candidate:
     with Session(engine) as session:
         p = session.get(StudentProject, pid)
         if p.file_path and p.file_path != rel:
+            for old in session.exec(select(ProjectFile).where(ProjectFile.project_id == pid, ProjectFile.media_path == p.file_path)).all():
+                session.delete(old)
             delete_media_file(p.file_path)
         p.file_path = rel
         p.updated_at = utc_now()
@@ -1114,7 +972,8 @@ def submit_project(pid: int, candidate: str = Depends(get_current_candidate)):
             raise HTTPException(status_code=409, detail="Project is already under review")
         if len((p.description or "").strip()) < 30:
             raise HTTPException(status_code=400, detail="Add a description of at least 30 characters before submitting")
-        if not (p.image_path or p.file_path or _j(p.links_json, [])):
+        has_files = session.exec(select(ProjectFile.id).where(ProjectFile.project_id == p.id)).first()
+        if not (p.image_path or p.file_path or _j(p.links_json, []) or has_files or p.video_url):
             raise HTTPException(status_code=400, detail="Add an image, attachment or link as evidence before submitting")
         p.status = "under_review"
         p.verification_note = None
@@ -1903,7 +1762,9 @@ def export_data(candidate: str = Depends(get_current_candidate)):
             "exported_at": _iso(utc_now()),
             "account": {"username": user.username, "created_at": _iso(user.created_at), "last_login_at": _iso(user.last_login_at)},
             "profile": _profile_to_dict(profile, resume),
-            "projects": [_project_export(session, p) for p in session.exec(select(StudentProject).where(StudentProject.candidate_id == user.id)).all()],
+            "projects": [_project_dict(p) | {"analyses": [{"id": j.id, "status": j.status, "result": json.loads(j.result_json) if j.result_json else None}
+                                                          for j in session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id == p.id)).all()]}
+                         for p in session.exec(select(StudentProject).where(StudentProject.candidate_id == user.id)).all()],
             "applications": apps,
             "saved_jobs": _saved_list(session, user.id),
             "offers": [{"id": o.id, "application_id": o.application_id, "ctc": o.ctc, "status": o.status, "joining_date": o.joining_date,
@@ -1940,10 +1801,17 @@ def delete_account(body: DeleteAccountIn = Body(...), candidate: str = Depends(g
         projects = session.exec(select(StudentProject).where(StudentProject.candidate_id == cid)).all()
         for p in projects:
             media += [p.image_path, p.file_path]
+        pids = [p.id for p in projects] or [0]
+        extra = (session.exec(select(ProjectFile).where(ProjectFile.project_id.in_(pids))).all()
+                 + session.exec(select(ProjectVideoEvidence).where(ProjectVideoEvidence.project_id.in_(pids))).all())
+        media += [r.media_path for r in extra]
 
         def purge(rows):
             for r in rows:
                 session.delete(r)
+
+        purge(extra)
+        purge(session.exec(select(ProjectAnalysisJob).where(ProjectAnalysisJob.project_id.in_(pids))).all())
 
         purge(session.exec(select(InterviewSession).where(InterviewSession.candidate_id == cid)).all())
         purge(session.exec(select(ScheduledInterview).where(ScheduledInterview.candidate_id == cid)).all())
