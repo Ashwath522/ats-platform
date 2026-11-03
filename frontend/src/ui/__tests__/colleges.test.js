@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import colleges from '../../data/colleges.json'
 import { buildIndex, findCollege, matchColleges, normalize } from '../../lib/collegeMatch.js'
+import { collegeLogoUrl } from '../../lib/colleges.js'
 import { collegeMonogram } from '../CollegePicker.jsx'
 
 const index = buildIndex(colleges)
@@ -8,10 +9,27 @@ const top = (q, n = 8) => matchColleges(index, q, n).map((c) => c.id)
 const first = (q) => matchColleges(index, q, 1)[0]
 
 describe('college matcher', () => {
-  it('finds Atria by prefix and by full name', () => {
+  it('finds Atria by prefix and by full name, and distinguishes Atria University', () => {
     expect(first('Atria').name).toBe('Atria Institute of Technology')
     expect(first('atr').name).toBe('Atria Institute of Technology')
     expect(first('Atria Institute of Technology').city).toBe('Bengaluru')
+    expect(first('Atria University').name).toBe('Atria University')
+    const atriaHits = matchColleges(index, 'Atria', 5).map((c) => c.name)
+    expect(atriaHits).toContain('Atria Institute of Technology')
+    expect(atriaHits).toContain('Atria University')
+    expect(findCollege(index, { id: 'atria' }).name).toBe('Atria Institute of Technology')
+    expect(findCollege(index, { id: 'atria-university' }).name).toBe('Atria University')
+  })
+
+  it('serves distinct custom logos for Atria Institute of Technology and Atria University', () => {
+    const aitLogo = collegeLogoUrl('atria.edu.in')
+    const auLogo = collegeLogoUrl('atriauniversity.edu.in')
+    expect(aitLogo).toBe('/assets/images/colleges/atria.png')
+    expect(auLogo).toBe('/assets/images/colleges/atria-university.png')
+    expect(aitLogo).not.toBe(auLogo)
+    expect(collegeLogoUrl('atria')).toBe('/assets/images/colleges/atria.png')
+    expect(collegeLogoUrl('atria-university')).toBe('/assets/images/colleges/atria-university.png')
+    expect(collegeLogoUrl('rvce.edu.in')).toContain('google.com/s2/favicons')
   })
 
   it('resolves short forms and spaced aliases', () => {

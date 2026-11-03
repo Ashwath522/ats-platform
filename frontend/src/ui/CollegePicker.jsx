@@ -45,19 +45,24 @@ export function CollegeLogo({ name = '', domain, id, size = 32, className = '' }
   const found = useCollegeLookup(needLookup, { id, name })
   const college = found || null
   const host = domain || college?.domain || ''
+  const logoKey = host || id || college?.id || ''
+  const logoSrc = collegeLogoUrl(logoKey)
   const label = college?.name || name
   const [state, setState] = useState('idle') // idle | ok | fail
-  useEffect(() => { setState('idle') }, [host])
+  useEffect(() => { setState('idle') }, [logoSrc])
   const mono = collegeMonogram(label, college || (domain ? lookupCollege({ id, name }) : null))
   const color = COLORS[hash(label) % COLORS.length]
   const style = { width: size, height: size, color, fontSize: Math.max(8, size * ([0, 0.42, 0.38, 0.32, 0.27, 0.22, 0.19][mono.length] || 0.19)) }
   return (
     <span className={`cl-logo cl-college-logo ${className}`} style={style} title={label || undefined} aria-hidden="true">
       {state !== 'ok' && <span className="cl-college-mono">{mono}</span>}
-      {host && state !== 'fail' && (
-        <img src={collegeLogoUrl(host)} alt="" loading="lazy" referrerPolicy="no-referrer"
+      {logoSrc && state !== 'fail' && (
+        <img src={logoSrc} alt="" loading="lazy" referrerPolicy="no-referrer"
           style={state === 'ok' ? undefined : { opacity: 0 }}
-          onLoad={(e) => setState(e.currentTarget.naturalWidth > 16 ? 'ok' : 'fail')}
+          onLoad={(e) => {
+            const isGoogle = (e.currentTarget.currentSrc || e.currentTarget.src || '').includes('google.com/s2/favicons')
+            setState(e.currentTarget.naturalWidth > (isGoogle ? 16 : 0) ? 'ok' : 'fail')
+          }}
           onError={() => setState('fail')} />
       )}
     </span>

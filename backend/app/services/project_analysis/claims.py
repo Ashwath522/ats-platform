@@ -152,6 +152,7 @@ _FEATURES = {"bore": "bore", "hole": "hole", "thick": "thick", "width": "width",
              "diameter": "dia", "dia": "dia", "radius": "radius", "shaft": "shaft", "pcd": "pcd"}
 _NUM_MM = re.compile(r"(\d+(?:\.\d+)?)\s*mm\b", re.I)
 _NUM = re.compile(r"\d+(?:\.\d+)?")
+_QTY = re.compile(r"\b\d+\s?[xX×](?=\s*[A-Za-z])|\b\d+\s*(?:nos?|pcs|off)\b", re.I)
 
 
 def _feature_values(text: str) -> Dict[str, float]:
@@ -180,7 +181,7 @@ def _value_conflicts(claims: List[Claim], ctx: Ctx) -> Dict[str, tuple]:
                 low = seg.lower()
                 if not re.search(rf"\b{stem}", low):
                     continue
-                nums = [float(n) for n in _NUM.findall(seg)]
+                nums = [float(n) for n in _NUM.findall(_QTY.sub(" ", seg))]   # "4X HOLE" is a count, not a size
                 if nums and all(abs(n - value) > 1e-6 for n in nums):
                     found[c.id] = (ev_id, f"The drawing gives \u201c{seg}\u201d, which does not match the claimed {value:g} mm.")
                     break

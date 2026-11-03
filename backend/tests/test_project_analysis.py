@@ -461,3 +461,16 @@ def test_llm_contradiction_backed_by_parsed_file_evidence_is_kept():
     ev = [Evidence(id="ev1", source_type="file", source_ref="p.dxf", locator={}, fact="BORE DIA 40", method="parsed", confidence="high")]
     c = Claim(id="c1", text="bore 52 mm", type="design", status="contradicted", evidence_ids=["ev1"])
     assert enforce_claims([c], ev)[0].status == "contradicted"
+
+
+def test_quantity_prefix_is_not_read_as_a_size():
+    from app.services.project_analysis import claims as cm
+    from app.services.project_analysis.context import Ctx
+    from app.services.project_analysis.extractors.base import Fact
+    from app.services.project_analysis.schemas import Claim
+    ctx = Ctx(project_id=1, domain="mechanical", title="t", description="", links=[], challenge_code="", video_url=None)
+    ctx.add_evidence(Fact(fact="p.dxf: annotations 4X HOLE DIA 8 THRU ON 90 x 50 PATTERN", method="parsed", confidence="high",
+                          source_type="file"), "p.dxf")
+    found = cm._value_conflicts([Claim(id="c1", text="Mounting uses four 4 mm through holes.", type="design"),
+                                 Claim(id="c2", text="Four 8 mm holes on a 90 x 50 mm pattern.", type="design")], ctx)
+    assert set(found) == {"c1"}
