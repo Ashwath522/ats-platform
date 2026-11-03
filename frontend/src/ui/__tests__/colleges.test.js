@@ -32,6 +32,9 @@ describe('college matcher', () => {
     expect(collegeLogoUrl('atria-university')).toBe(auLogo)
     expect(collegeLogoUrl('https://www.atria.edu/')).toBe(aitLogo)
     expect(collegeLogoUrl('rvce.edu.in')).toContain('google.com/s2/favicons')
+    expect(collegeLogoUrl('atria.edu.in', 128, { compact: true })).toMatch(/atria-institute-of-technology-icon.*\.png/)
+    expect(collegeLogoUrl('atria-university', 128, { compact: true })).toMatch(/atria-university-icon.*\.png/)
+    expect(collegeLogoUrl('rvce.edu.in', 128, { compact: true })).toContain('google.com/s2/favicons')
   })
 
   it('finds a saved college even when a place or note is attached to its name', () => {

@@ -4,6 +4,9 @@ import { buildIndex, findCollege, matchColleges } from './collegeMatch.js'
 // logo changes its URL, so browsers and the service worker never show a stale one.
 import atriaInstituteLogo from '../assets/colleges/atria-institute-of-technology.png'
 import atriaUniversityLogo from '../assets/colleges/atria-university.png'
+// tightly cropped versions for small sizes (the full logo's small print is unreadable below ~56 px)
+import atriaInstituteIcon from '../assets/colleges/atria-institute-of-technology-icon.png'
+import atriaUniversityIcon from '../assets/colleges/atria-university-icon.png'
 
 let promise = null
 let index = null
@@ -33,13 +36,17 @@ const LOGO_OVERRIDES = {
   'www.atriauniversity.edu.in': atriaUniversityLogo,
 }
 
-/** Favicon URL or custom logo for a college domain or identifier. */
-export const collegeLogoUrl = (domainOrId, size = 128) => {
+const SMALL_VERSION = new Map([[atriaInstituteLogo, atriaInstituteIcon], [atriaUniversityLogo, atriaUniversityIcon]])
+export const isCustomCollegeLogo = (src) => !!src && !String(src).includes('google.com/s2/favicons')
+
+/** Favicon URL or custom logo for a college domain or identifier.
+ *  `compact: true` picks the tightly cropped version made for small sizes. */
+export const collegeLogoUrl = (domainOrId, size = 128, { compact = false } = {}) => {
   if (!domainOrId) return ''
   const key = String(domainOrId).toLowerCase().trim()
-  if (LOGO_OVERRIDES[key]) return LOGO_OVERRIDES[key]
   const host = key.replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0]   // "https://www.atria.edu/" → "atria.edu"
-  if (LOGO_OVERRIDES[host]) return LOGO_OVERRIDES[host]
+  const custom = LOGO_OVERRIDES[key] || LOGO_OVERRIDES[host]
+  if (custom) return (compact && SMALL_VERSION.get(custom)) || custom
   if (key.startsWith('/') || key.startsWith('http://') || key.startsWith('https://')) return domainOrId
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(key)}&sz=${size}`
 }

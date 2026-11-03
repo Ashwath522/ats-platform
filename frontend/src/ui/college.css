@@ -1,6 +1,8 @@
 /* College picker + logo (see CollegePicker.jsx). */
 .cl-college-logo { position: relative; border-radius: 8px; background: #fff; }
 .cl-college-logo img { position: absolute; inset: 12%; width: 76%; height: 76%; object-fit: contain; }
+/* our own logo files are already trimmed: let them fill the tile */
+.cl-college-logo--custom img { inset: 3%; width: 94%; height: 94%; }
 .cl-college-mono { line-height: 1; letter-spacing: -0.03em; white-space: nowrap; }
 
 .cl-college-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; vertical-align: middle; }

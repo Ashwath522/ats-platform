@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
-import { collegeIndexSync, collegeLogoUrl, loadColleges, lookupCollege, searchColleges } from '../lib/colleges.js'
+import { collegeIndexSync, collegeLogoUrl, isCustomCollegeLogo, loadColleges, lookupCollege, searchColleges } from '../lib/colleges.js'
 import { normalize } from '../lib/collegeMatch.js'
 import './college.css'
 
@@ -46,7 +46,8 @@ export function CollegeLogo({ name = '', domain, id, size = 32, className = '' }
   const college = found || null
   const host = domain || college?.domain || ''
   const logoKey = host || id || college?.id || ''
-  const logoSrc = collegeLogoUrl(logoKey)
+  const logoSrc = collegeLogoUrl(logoKey, 128, { compact: size < 56 })
+  const custom = isCustomCollegeLogo(logoSrc)
   const label = college?.name || name
   // load result for one image URL: when the URL changes the result no longer applies.
   // (A reset in useEffect raced with fast/cached loads and left the logo hidden.)
@@ -57,7 +58,7 @@ export function CollegeLogo({ name = '', domain, id, size = 32, className = '' }
   const color = COLORS[hash(label) % COLORS.length]
   const style = { width: size, height: size, color, fontSize: Math.max(8, size * ([0, 0.42, 0.38, 0.32, 0.27, 0.22, 0.19][mono.length] || 0.19)) }
   return (
-    <span className={`cl-logo cl-college-logo ${className}`} style={style} title={label || undefined} aria-hidden="true">
+    <span className={`cl-logo cl-college-logo${custom ? ' cl-college-logo--custom' : ''} ${className}`} style={style} title={label || undefined} aria-hidden="true">
       {state !== 'ok' && <span className="cl-college-mono">{mono}</span>}
       {logoSrc && state !== 'fail' && (
         <img src={logoSrc} alt="" loading="lazy" referrerPolicy="no-referrer"
