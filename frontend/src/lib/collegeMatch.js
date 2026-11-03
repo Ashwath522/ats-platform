@@ -112,6 +112,32 @@ export function findCollege(index, { id, name } = {}) {
   }
   const qc = compact(name)
   if (!qc) return null
-  const e = index.find((x) => x.keys[0].c === qc) || index.find((x) => x.keys.some((k) => !k.acr && k.c === qc))
+  const exact = (q) => index.find((x) => x.keys[0].c === q) || index.find((x) => x.keys.some((k) => !k.acr && k.c === q))
+  const e = exact(qc) || exact(compact(withoutPlace(index, name)))
   return e ? e.c : null
+}
+
+// Names imported from LinkedIn or typed by hand often carry a place or a note:
+// "Atria Institute of Technology, Bangalore", "… - Bengaluru", "… (AIT)".
+const EXTRA_PLACES = ['bangalore', 'bengaluru', 'blr', 'bombay', 'madras', 'calcutta', 'india', 'campus', 'city']
+const placeSets = new WeakMap()
+function placesOf(index) {
+  let set = placeSets.get(index)
+  if (!set) {
+    set = new Set(EXTRA_PLACES)
+    for (const { c } of index) for (const v of [c.city, c.state]) if (v) set.add(normalize(v))
+    placeSets.set(index, set)
+  }
+  return set
+}
+function withoutPlace(index, name) {
+  let n = normalize(String(name).split(/\s*[,(|]\s*|\s+[-–—]\s+/)[0])
+  const places = placesOf(index)
+  for (let changed = true; changed;) {
+    changed = false
+    for (const p of places) {
+      if (n.endsWith(' ' + p) && n.length > p.length + 6) { n = n.slice(0, -(p.length + 1)).trim(); changed = true }
+    }
+  }
+  return n
 }

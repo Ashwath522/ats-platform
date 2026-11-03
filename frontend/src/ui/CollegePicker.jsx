@@ -48,8 +48,11 @@ export function CollegeLogo({ name = '', domain, id, size = 32, className = '' }
   const logoKey = host || id || college?.id || ''
   const logoSrc = collegeLogoUrl(logoKey)
   const label = college?.name || name
-  const [state, setState] = useState('idle') // idle | ok | fail
-  useEffect(() => { setState('idle') }, [logoSrc])
+  // load result for one image URL: when the URL changes the result no longer applies.
+  // (A reset in useEffect raced with fast/cached loads and left the logo hidden.)
+  const [loaded, setLoaded] = useState({ src: '', state: 'idle' }) // state: idle | ok | fail
+  const state = loaded.src === logoSrc ? loaded.state : 'idle'
+  const setState = (st) => setLoaded({ src: logoSrc, state: st })
   const mono = collegeMonogram(label, college || (domain ? lookupCollege({ id, name }) : null))
   const color = COLORS[hash(label) % COLORS.length]
   const style = { width: size, height: size, color, fontSize: Math.max(8, size * ([0, 0.42, 0.38, 0.32, 0.27, 0.22, 0.19][mono.length] || 0.19)) }

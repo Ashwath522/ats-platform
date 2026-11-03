@@ -30,7 +30,16 @@ describe('college matcher', () => {
     expect(collegeLogoUrl('atria')).toBe(aitLogo)
     expect(collegeLogoUrl('atria.edu')).toBe(aitLogo)
     expect(collegeLogoUrl('atria-university')).toBe(auLogo)
+    expect(collegeLogoUrl('https://www.atria.edu/')).toBe(aitLogo)
     expect(collegeLogoUrl('rvce.edu.in')).toContain('google.com/s2/favicons')
+  })
+
+  it('finds a saved college even when a place or note is attached to its name', () => {
+    for (const n of ['Atria Institute of Technology, Bangalore', 'Atria Institute Of Technology - Bengaluru',
+                     'Atria Institute of Technology (AIT)', 'Atria Institute of Technology Bangalore', 'ATRIA INSTITUTE OF TECHNOLOGY, BENGALURU, KARNATAKA'])
+      expect(findCollege(index, { name: n })?.id).toBe('atria')
+    expect(findCollege(index, { name: 'Atria University, Bengaluru' })?.id).toBe('atria-university')
+    expect(findCollege(index, { name: 'Some Unknown College, Bangalore' })).toBeNull()
   })
 
   it('resolves short forms and spaced aliases', () => {

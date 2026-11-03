@@ -38,6 +38,8 @@ export const collegeLogoUrl = (domainOrId, size = 128) => {
   if (!domainOrId) return ''
   const key = String(domainOrId).toLowerCase().trim()
   if (LOGO_OVERRIDES[key]) return LOGO_OVERRIDES[key]
+  const host = key.replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0]   // "https://www.atria.edu/" → "atria.edu"
+  if (LOGO_OVERRIDES[host]) return LOGO_OVERRIDES[host]
   if (key.startsWith('/') || key.startsWith('http://') || key.startsWith('https://')) return domainOrId
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(key)}&sz=${size}`
 }
