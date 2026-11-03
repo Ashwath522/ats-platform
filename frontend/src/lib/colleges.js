@@ -1,5 +1,9 @@
 /** Lazy loader for the college dataset (src/data/colleges.json is its own chunk). */
 import { buildIndex, findCollege, matchColleges } from './collegeMatch.js'
+// Imported (not in /public) so Vite gives each file a content hash: replacing a
+// logo changes its URL, so browsers and the service worker never show a stale one.
+import atriaInstituteLogo from '../assets/colleges/atria-institute-of-technology.png'
+import atriaUniversityLogo from '../assets/colleges/atria-university.png'
 
 let promise = null
 let index = null
@@ -18,11 +22,15 @@ export const lookupCollege = (ref) => (index ? findCollege(index, ref) : null)
 
 /** Custom logo overrides for institutions where external favicon bots fail or have low-res icons. */
 const LOGO_OVERRIDES = {
-  'atria.edu.in': '/assets/images/colleges/atria.png',
-  'atria.edu': '/assets/images/colleges/atria.png',
-  'atria': '/assets/images/colleges/atria.png',
-  'atriauniversity.edu.in': '/assets/images/colleges/atria-university.png',
-  'atria-university': '/assets/images/colleges/atria-university.png',
+  'atria.edu.in': atriaInstituteLogo,
+  'atria.edu': atriaInstituteLogo,
+  'atria': atriaInstituteLogo,
+  'www.atria.edu': atriaInstituteLogo,
+  'www.atria.edu.in': atriaInstituteLogo,
+  'atriauniversity.edu.in': atriaUniversityLogo,
+  'atria-university': atriaUniversityLogo,
+  'atriauniversity.edu': atriaUniversityLogo,
+  'www.atriauniversity.edu.in': atriaUniversityLogo,
 }
 
 /** Favicon URL or custom logo for a college domain or identifier. */

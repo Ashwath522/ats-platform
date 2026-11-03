@@ -24,11 +24,12 @@ describe('college matcher', () => {
   it('serves distinct custom logos for Atria Institute of Technology and Atria University', () => {
     const aitLogo = collegeLogoUrl('atria.edu.in')
     const auLogo = collegeLogoUrl('atriauniversity.edu.in')
-    expect(aitLogo).toBe('/assets/images/colleges/atria.png')
-    expect(auLogo).toBe('/assets/images/colleges/atria-university.png')
+    expect(aitLogo).toMatch(/atria-institute-of-technology.*\.png/)
+    expect(auLogo).toMatch(/atria-university.*\.png/)
     expect(aitLogo).not.toBe(auLogo)
-    expect(collegeLogoUrl('atria')).toBe('/assets/images/colleges/atria.png')
-    expect(collegeLogoUrl('atria-university')).toBe('/assets/images/colleges/atria-university.png')
+    expect(collegeLogoUrl('atria')).toBe(aitLogo)
+    expect(collegeLogoUrl('atria.edu')).toBe(aitLogo)
+    expect(collegeLogoUrl('atria-university')).toBe(auLogo)
     expect(collegeLogoUrl('rvce.edu.in')).toContain('google.com/s2/favicons')
   })
 

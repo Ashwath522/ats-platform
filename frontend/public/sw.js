@@ -6,7 +6,7 @@
  * - Anything else, and every request to another origin (the API), is left alone.
  * Bump VERSION to drop old caches.
  */
-const VERSION = 'corelink-v2'
+const VERSION = 'corelink-v3'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest']
 
 self.addEventListener('install', (e) => {
